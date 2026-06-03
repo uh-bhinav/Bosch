@@ -1,0 +1,41 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Runtime libraries required by VTK/PyVista imports inside Streamlit.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        xvfb \
+        xauth \
+        libgl1 \
+        libglib2.0-0 \
+        libxext6 \
+        libxrender1 \
+        libsm6 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    streamlit==1.33.0 \
+    requests==2.32.3 \
+    plotly==5.21.0 \
+    vtk==9.3.1 \
+    pyvista==0.44.1 \
+    stpyvista==0.0.11 \
+    numpy==1.26.4
+
+RUN python -c "import pyvista; import stpyvista; print('Frontend viewer deps OK')"
+
+COPY frontend ./frontend
+
+ENV PYVISTA_OFF_SCREEN=true
+
+EXPOSE 8501
+
+CMD ["/bin/sh", "-lc", \
+     "echo 'Starting Streamlit frontend on :8501'; \
+      python -c 'import streamlit, requests; print(\"Frontend Python deps OK\")'; \
+      xvfb-run -a streamlit run frontend/app.py \
+        --server.port=8501 \
+        --server.address=0.0.0.0 \
+        --server.headless=true \
+        --server.fileWatcherType=none"]

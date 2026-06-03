@@ -1,0 +1,13 @@
+dfm:
+  draft:
+    good_threshold_deg: 1.5
+    marginal_threshold_deg: 0.5
+  direction_search:
+    angular_step_deg: 15.0
+    max_candidates: 54
+  core_cavity:
+    cavity_color: [0.2, 0.8, 0.3]
+    core_color: [0.2, 0.45, 0.9]
+agent:
+  model: "gpt-4o-mini"
+  temperature: 0.1

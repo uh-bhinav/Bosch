@@ -1,0 +1,83 @@
+# =============================================================================
+# DfM Agent — Backend Dockerfile
+# =============================================================================
+# Uses conda-forge to get pythonocc-core (OCC via pip is unreliable).
+# Multi-stage: builder installs OCC + deps; final stage is lean.
+# =============================================================================
+
+FROM continuumio/miniconda3:24.1.2-0 AS builder
+
+WORKDIR /app
+
+# System libraries required by CadQuery/OCP and VTK/PyVista.
+# libgl1 provides libGL.so.1; the X/GLib libs are common runtime dependencies
+# for OpenCascade/VTK imports even in headless Streamlit containers.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libxext6 \
+        libxrender1 \
+        libsm6 && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── 1. Create conda env with pythonOCC ────────────────────────────────────
+COPY environment.yml .
+RUN conda config --set channel_priority strict && \
+    conda config --set remote_connect_timeout_secs 60 && \
+    conda config --set remote_read_timeout_secs 120 && \
+    conda config --set remote_max_retries 10 && \
+    conda env create -f environment.yml && \
+    conda clean -afy
+
+# ── 2. Copy project files ─────────────────────────────────────────────────
+COPY . .
+
+# ── 3. Install remaining pip deps inside the conda env ────────────────────
+SHELL ["conda", "run", "-n", "dfm_agent", "/bin/bash", "-c"]
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ── 4. Fail fast if CAD/viewer runtime deps are missing ───────────────────
+# These imports are required for the Bosch demo:
+#   OCC       → exact STEP B-Rep loader
+#   cadquery  → high-level CAD wrapper around OCC shapes
+#   pyvista   → VTK 3D viewer
+#   stpyvista → Streamlit/PyVista bridge
+RUN python -c "import OCC; import cadquery; import pyvista; import stpyvista; print('CAD/viewer deps OK')"
+
+# =============================================================================
+# Final stage
+# =============================================================================
+FROM continuumio/miniconda3:24.1.2-0
+
+WORKDIR /app
+
+# Runtime system libraries required after copying the conda env from builder.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libxext6 \
+        libxrender1 \
+        libsm6 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the entire conda env from builder
+COPY --from=builder /opt/conda/envs/dfm_agent /opt/conda/envs/dfm_agent
+COPY --from=builder /app /app
+
+# Make conda env the default Python
+ENV PATH /opt/conda/envs/dfm_agent/bin:$PATH
+ENV CONDA_DEFAULT_ENV dfm_agent
+
+# Create directories for outputs
+RUN mkdir -p /app/reports /app/data/parts
+
+# Expose API + Streamlit ports
+EXPOSE 8000 8501
+
+# Default: start the Streamlit frontend
+CMD ["streamlit", "run", "frontend/app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true"]

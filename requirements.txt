@@ -1,0 +1,50 @@
+# =============================================================================
+# DfM Agent — Python Dependencies
+# =============================================================================
+# IMPORTANT: pythonocc-core must be installed via conda (not pip) for
+# reliable builds.  See README.md for setup instructions.
+#
+# conda install -c conda-forge pythonocc-core=7.7.2
+#
+# All other packages can be installed via pip after OCC is available.
+# =============================================================================
+
+# ── CAD / Geometry (conda-managed — listed here for documentation) ────────
+# pythonocc-core==7.7.2     ← install via conda, NOT pip
+# cadquery==2.4.0            ← install via conda: conda install -c cadquery cadquery
+
+# ── Visualization ─────────────────────────────────────────────────────────
+pyvista==0.44.1
+# VTK is installed by conda in the backend and pinned in Dockerfile.frontend.
+streamlit==1.33.0
+stpyvista==0.0.11           # Streamlit + PyVista integration widget
+plotly==5.21.0
+
+# ── AI Agent ──────────────────────────────────────────────────────────────
+langchain==0.1.20
+langchain-openai==0.1.7
+langchain-community==0.0.38
+openai==1.25.0               # Also used for Grok API (compatible endpoint)
+
+# ── Data / API ─────────────────────────────────────────────────────────────
+pydantic==2.7.1
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+numpy==1.26.4
+
+# ── Report generation ─────────────────────────────────────────────────────
+reportlab==4.1.0             # PDF generation
+Pillow==10.3.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────
+PyYAML==6.0.1
+rich==13.7.1                 # Pretty terminal output
+click==8.1.7
+python-dotenv==1.0.1
+networkx==3.3                # Graph algorithms for Hou 2018 parting line
+
+# ── Testing ───────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-cov==5.0.0
+pytest-asyncio==0.23.6
+requests==2.32.3

@@ -1,0 +1,75 @@
+# =============================================================================
+# DfM Agent — docker-compose.yml
+# One command:  docker compose up
+# Judge/Bosch opens:  http://localhost:8501  (Streamlit UI)
+#                     http://localhost:8000  (FastAPI backend docs)
+# =============================================================================
+
+# version: "3.9"
+
+services:
+
+  # ── Backend FastAPI service ──────────────────────────────────────────────
+  backend:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: >
+      uvicorn backend.api.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data          # Mount .stp files here
+      - ./reports:/app/reports    # Generated DFM reports here
+      - ./backend:/app/backend    # Live-reload during development
+    environment:
+      - DFM_CONFIG=/app/config.yaml
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROK_API_KEY=${GROK_API_KEY:-}
+      - LOG_LEVEL=INFO
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Frontend Streamlit service ───────────────────────────────────────────
+  frontend:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    command: >
+      /bin/sh -lc "echo 'Starting Streamlit frontend on :8501';
+      python -c 'import streamlit, requests; print(\"Frontend Python deps OK\")';
+      xvfb-run -a streamlit run frontend/app.py
+      --server.port=8501
+      --server.address=0.0.0.0
+      --server.headless=true
+      --server.fileWatcherType=none"
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./frontend:/app/frontend
+    environment:
+      - DFM_BACKEND_URL=http://backend:8000
+      - DFM_CONFIG=/app/config.yaml
+      - PYVISTA_OFF_SCREEN=true
+      - LOG_LEVEL=INFO
+    depends_on:
+      - backend
+
+volumes:
+  reports_data:
