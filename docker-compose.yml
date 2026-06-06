@@ -26,6 +26,7 @@ services:
       - ./data:/app/data          # Mount .stp files here
       - ./reports:/app/reports    # Generated DFM reports here
       - ./backend:/app/backend    # Live-reload during development
+      - ./config.yaml:/app/config.yaml:ro  # Live config without image rebuild
     environment:
       - DFM_CONFIG=/app/config.yaml
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -63,6 +64,7 @@ services:
       - ./data:/app/data
       - ./reports:/app/reports
       - ./frontend:/app/frontend
+      - ./config.yaml:/app/config.yaml:ro
     environment:
       - DFM_BACKEND_URL=http://backend:8000
       - DFM_CONFIG=/app/config.yaml

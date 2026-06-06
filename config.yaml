@@ -5,6 +5,42 @@ dfm:
   direction_search:
     angular_step_deg: 15.0
     max_candidates: 54
+    prefilter_skip_score_factor: 2.0
+    prefilter_survivor_top_count: 8
+    prefilter_min_boolean_candidates: 1
+    prefilter_zero_score_margin: 1.0
+    prefilter_low_undercut_area_pct: 5.0
+    prefilter_low_bad_area_pct: 5.0
+    prefilter_principal_axis_keep_count: 2
+    prefilter_uncertainty_score_margin: 0.10
+    boolean_refine_top_candidates: 5
+    boolean_refine_max_faces: 80
+    boolean_refine_score_margin: 0.25
+    boolean_interference_weight: 4000.0
+    boolean_offset_factor: 0.00001
+    boolean_min_offset_mm: 0.0001
+    boolean_max_offset_mm: 0.25
+    boolean_retry_offset_multipliers: [1.0, 5.0, 25.0]
+    boolean_sweep_distance_factor: 2.0
+    boolean_min_sweep_distance_mm: 1.0
+    boolean_fuzzy_factor: 0.1
+    boolean_max_fuzzy_value_mm: 0.05
+    boolean_volume_tolerance_factor: 0.000000001
+    boolean_min_volume_tolerance_mm3: 0.000001
+    boolean_min_face_area_mm2: 0.00001
+    boolean_min_face_area_factor: 0.0000000001
+    boolean_feature_seed_faces_per_group: 1
+    boolean_grouping_proximity_factor: 0.15
+    boolean_grouping_min_proximity_mm: 0.25
+  parting_line:
+    dot_tolerance: 0.01
+    boundary_dot_tolerance: 0.15
+    point_tolerance: 0.0001
+    smoothing_iterations: 6
+    display_resample_min_points: 96
+    max_refined_display_points: 32000
+    refined_curve_color: [0.0, 0.72, 1.0]
+    raw_curve_color: [1.0, 0.72, 0.0]
   core_cavity:
     cavity_color: [0.2, 0.8, 0.3]
     core_color: [0.2, 0.45, 0.9]

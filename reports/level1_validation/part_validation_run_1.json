@@ -1,0 +1,31 @@
+{
+  "status": "warning",
+  "parts_dir": "/app/data/parts",
+  "expected_files": [
+    "Part1.stp",
+    "Part2.stp"
+  ],
+  "discovered_files": [
+    "Part1.stp"
+  ],
+  "missing_expected_files": [
+    "Part2.stp"
+  ],
+  "part_results": [
+    {
+      "filename": "Part1.stp",
+      "path": "/app/data/parts/Part1.stp",
+      "status": "skipped",
+      "steps": [
+        {
+          "name": "load_step",
+          "status": "skipped",
+          "elapsed_s": 0.0167,
+          "message": "Runtime dependency unavailable: pythonOCC (pythonocc-core) is required but not installed.\nInstall via conda:  conda install -c conda-forge pythonocc-core\nPip builds are unreliable \u2014 conda is strongly recommended.",
+          "metrics": {}
+        }
+      ],
+      "warnings": []
+    }
+  ]
+}

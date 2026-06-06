@@ -44,7 +44,26 @@ def test_raw_mesh_payload_can_include_geometry():
 
 
 def test_build_display_mesh_alias_exists():
-    from backend.geometry.visualize_raw import build_display_mesh, build_raw_mesh
+    from backend.geometry.visualize_raw import (
+        build_display_mesh,
+        build_raw_mesh,
+        build_shape_display_mesh,
+    )
 
     assert build_display_mesh is not None
     assert build_raw_mesh is not None
+    assert build_shape_display_mesh is not None
+
+
+def test_empty_shape_display_mesh_is_json_safe_without_occ():
+    from backend.geometry.visualize_raw import build_shape_display_mesh
+
+    mesh = build_shape_display_mesh(None)
+    payload = mesh.to_payload(include_geometry=True)
+
+    assert payload["point_count"] == 0
+    assert payload["triangle_count"] == 0
+    assert payload["face_count"] == 0
+    assert payload["face_ids"] == []
+    assert payload["points"] == []
+    assert payload["faces"] == []

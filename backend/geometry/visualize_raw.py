@@ -158,28 +158,17 @@ def _center_of_points(points: list[Vec3]) -> Vec3:
     )
 
 
-def build_raw_mesh(
-    part: PartGeometry,
-    linear_deflection: float = 0.5,
-    angular_deflection: float = 0.5,
+def _triangulate_occ_shape(
+    shape: object,
+    linear_deflection: float,
+    angular_deflection: float,
+    face_center_fallback: Optional[dict[int, Vec3]] = None,
 ) -> RawMeshData:
     """
-    Triangulate a loaded STEP part for raw 3D visualization.
+    Triangulate any OCC shape into a JSON-safe display mesh.
 
-    Parameters
-    ----------
-    part
-        Loaded `PartGeometry` from `step_loader.load_step`.
-    linear_deflection
-        OCC mesh linear tolerance in model units (normally mm). Smaller values
-        look smoother but create more triangles.
-    angular_deflection
-        OCC mesh angular tolerance in radians.
-
-    Returns
-    -------
-    RawMeshData
-        Display mesh with triangle-to-STEP-face mapping.
+    This helper is intentionally generic so the main part and smaller Boolean
+    intersection regions use the same display-only conversion path.
     """
     _require_occ()
 
@@ -189,7 +178,7 @@ def build_raw_mesh(
         raise ValueError("angular_deflection must be > 0")
 
     mesher = BRepMesh_IncrementalMesh(
-        part.occ_shape,
+        shape,
         linear_deflection,
         False,
         angular_deflection,
@@ -204,16 +193,17 @@ def build_raw_mesh(
     triangle_face_ids: list[int] = []
     face_centers: dict[int, Vec3] = {}
 
+    fallback_centers = face_center_fallback or {}
     face_index = 0
-    exp = TopExp_Explorer(part.occ_shape, TopAbs_FACE)
+    exp = TopExp_Explorer(shape, TopAbs_FACE)
     while exp.More():
         face = _as_face(exp.Current())
         location = face.Location()
         triangulation = BRep_Tool.Triangulation(face, location)
 
         if triangulation is None:
-            logger.warning("Face %d has no triangulation; skipping in raw view.", face_index)
-            face_centers[face_index] = part.faces[face_index].centroid
+            logger.warning("Face %d has no triangulation; skipping in display view.", face_index)
+            face_centers[face_index] = fallback_centers.get(face_index, (0.0, 0.0, 0.0))
             face_index += 1
             exp.Next()
             continue
@@ -249,6 +239,58 @@ def build_raw_mesh(
         faces=triangles,
         face_ids=triangle_face_ids,
         face_centers=face_centers,
+    )
+
+
+def build_raw_mesh(
+    part: PartGeometry,
+    linear_deflection: float = 0.5,
+    angular_deflection: float = 0.5,
+) -> RawMeshData:
+    """
+    Triangulate a loaded STEP part for raw 3D visualization.
+
+    Parameters
+    ----------
+    part
+        Loaded `PartGeometry` from `step_loader.load_step`.
+    linear_deflection
+        OCC mesh linear tolerance in model units (normally mm). Smaller values
+        look smoother but create more triangles.
+    angular_deflection
+        OCC mesh angular tolerance in radians.
+
+    Returns
+    -------
+    RawMeshData
+        Display mesh with triangle-to-STEP-face mapping.
+    """
+    return _triangulate_occ_shape(
+        shape=part.occ_shape,
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
+        face_center_fallback={face.face_id: face.centroid for face in part.faces},
+    )
+
+
+def build_shape_display_mesh(
+    shape: object | None,
+    linear_deflection: float = 0.5,
+    angular_deflection: float = 0.5,
+) -> RawMeshData:
+    """
+    Triangulate a non-part OCC shape for visualization.
+
+    Boolean intersection regions are exact B-Rep shapes inside the analysis
+    engine.  This function creates a display-only mesh for those regions so the
+    API/frontend can show real undercut volumes without exposing OCC objects.
+    """
+    if shape is None:
+        return RawMeshData(points=[], faces=[], face_ids=[], face_centers={})
+    return _triangulate_occ_shape(
+        shape=shape,
+        linear_deflection=linear_deflection,
+        angular_deflection=angular_deflection,
     )
 
 

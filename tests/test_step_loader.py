@@ -214,6 +214,8 @@ class TestConfig:
         assert s.dfm.draft.good_threshold_deg == 1.5
         assert s.dfm.draft.marginal_threshold_deg == 0.5
         assert s.dfm.direction_search.angular_step_deg == 15.0
+        assert s.dfm.direction_search.boolean_refine_top_candidates == 5
+        assert s.dfm.direction_search.boolean_refine_max_faces == 80
         assert s.agent.temperature == 0.1
 
     def test_settings_from_project_yaml(self):
@@ -222,6 +224,7 @@ class TestConfig:
         # These match our config.yaml values
         assert settings.dfm.draft.good_threshold_deg == 1.5
         assert settings.dfm.direction_search.max_candidates == 54
+        assert settings.dfm.direction_search.boolean_refine_score_margin == 0.25
         assert settings.dfm.core_cavity.cavity_color == (0.2, 0.8, 0.3)
 
     def test_settings_frozen(self):
