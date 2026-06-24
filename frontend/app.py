@@ -1,4 +1,5 @@
 import os
+import sys
 
 # VTK/PyVista must render off-screen on macOS when embedded in Streamlit.
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
@@ -1066,13 +1067,36 @@ def _marker_points_to_pyvista(points_payload: list[list[float]]) -> Any:
     return pv.PolyData(np.asarray(points_payload, dtype=float))
 
 
+def _resolve_mesh_color_values(
+    mesh_payload: dict[str, Any],
+    color_key: str,
+) -> list[list[float]] | None:
+    faces_payload = mesh_payload.get("faces") or []
+    if not faces_payload:
+        return None
+    expected = len(faces_payload)
+    for key in (
+        color_key,
+        "draft_rgb",
+        "undercut_rgb",
+        "parting_rgb",
+        "core_cavity_rgb",
+    ):
+        color_values = mesh_payload.get(key)
+        if isinstance(color_values, list) and len(color_values) == expected:
+            return color_values
+    return None
+
+
 def _show_mesh_offscreen(plotter: Any, key: str = "mesh") -> None:
+    """Render PyVista plotter — Linux/Docker only. Never call on macOS (VTK thread crash)."""
     try:
         from stpyvista import stpyvista as _stpyvista_fn
         _stpyvista_fn(plotter, key=key)
     except Exception:
         try:
             img = plotter.screenshot(return_img=True)
+            plotter.close()
             st.image(img, use_container_width=True)
         except Exception as shot_err:
             st.error(f"3D render failed: {shot_err}")
@@ -1089,6 +1113,18 @@ def _show_mesh(
     marker_points: list[dict[str, Any]] | None = None,
     viewer_key: str | None = None,
 ) -> bool:
+    # macOS + Streamlit runs scripts on worker threads; VTK Cocoa crashes if used there.
+    if sys.platform == "darwin":
+        return _show_mesh_plotly(
+            mesh_payload,
+            color_key=color_key,
+            region_meshes=region_meshes,
+            line_paths=line_paths,
+            region_opacity=region_opacity,
+            marker_points=marker_points,
+            viewer_key=viewer_key,
+        )
+
     try:
         import pyvista as pv
     except ImportError as exc:
@@ -1233,11 +1269,13 @@ def _show_mesh_plotly(
         "flatshading": True,
         "name": "part",
     }
-    color_values = mesh_payload.get(color_key)
-    if isinstance(color_values, list) and len(color_values) == len(faces_payload):
+    color_values = _resolve_mesh_color_values(mesh_payload, color_key)
+    if color_values is not None:
         mesh_kwargs["facecolor"] = [_rgb_to_hex(c) for c in color_values]
+        mesh_kwargs["opacity"] = 1.0
     else:
         mesh_kwargs["color"] = "#b8c0cc"
+        mesh_kwargs["opacity"] = 1.0
     traces.append(go.Mesh3d(**mesh_kwargs))
 
     for region in region_meshes or []:
@@ -1301,10 +1339,21 @@ def _show_mesh_plotly(
     fig.update_layout(
         height=720,
         margin=dict(l=0, r=0, t=0, b=0),
-        scene=dict(aspectmode="data", bgcolor="#f6f7f9"),
-        showlegend=False,
+        scene=dict(
+            aspectmode="data",
+            bgcolor="#f6f7f9",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+        ),
+        showlegend=True,
     )
-    st.plotly_chart(fig, use_container_width=True, key=viewer_key)
+    chart_key = viewer_key or f"dfm-mesh-{color_key}-{len(faces_payload)}"
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=chart_key,
+    )
     return True
 
 
@@ -3136,7 +3185,11 @@ with center:
             c4.metric("Severity", draft["severity"].title())
 
             if include_mesh and "display_mesh" in result:
-                shown = _show_mesh(result["display_mesh"], color_key="draft_rgb")
+                shown = _show_mesh(
+                    result["display_mesh"],
+                    color_key="draft_rgb",
+                    viewer_key=f"draft-{selected_part}",
+                )
                 if not shown:
                     st.json({
                         "display_mesh": {
