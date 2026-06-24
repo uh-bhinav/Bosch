@@ -1,5 +1,4 @@
 import os
-import sys
 
 # VTK/PyVista must render off-screen on macOS when embedded in Streamlit.
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
@@ -1067,6 +1066,19 @@ def _marker_points_to_pyvista(points_payload: list[list[float]]) -> Any:
     return pv.PolyData(np.asarray(points_payload, dtype=float))
 
 
+def _show_mesh_offscreen(plotter: Any, key: str = "mesh") -> None:
+    try:
+        from stpyvista import stpyvista as _stpyvista_fn
+        _stpyvista_fn(plotter, key=key)
+    except Exception:
+        try:
+            img = plotter.screenshot(return_img=True)
+            st.image(img, use_container_width=True)
+        except Exception as shot_err:
+            st.error(f"3D render failed: {shot_err}")
+            st.info("Mesh data available but cannot render in this environment.")
+
+
 def _show_mesh(
     mesh_payload: dict[str, Any],
     color_key: str = "draft_rgb",
@@ -1077,20 +1089,8 @@ def _show_mesh(
     marker_points: list[dict[str, Any]] | None = None,
     viewer_key: str | None = None,
 ) -> bool:
-    if sys.platform == "darwin":
-        return _show_mesh_plotly(
-            mesh_payload,
-            color_key=color_key,
-            region_meshes=region_meshes,
-            line_paths=line_paths,
-            region_opacity=region_opacity,
-            marker_points=marker_points,
-            viewer_key=viewer_key,
-        )
-
     try:
         import pyvista as pv
-        from stpyvista import stpyvista
     except ImportError as exc:
         st.warning(f"PyVista viewer dependencies are unavailable: {exc}")
         return False
@@ -1180,7 +1180,7 @@ def _show_mesh(
             )
         plotter.add_axes()
         plotter.camera_position = "iso"
-        stpyvista(
+        _show_mesh_offscreen(
             plotter,
             key=viewer_key or (
                 f"viewer-{color_key}-{len(region_meshes or [])}-"
