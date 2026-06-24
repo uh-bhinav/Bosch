@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from backend.geometry.core_cavity import classify_core_cavity
 from backend.geometry.draft_analyzer import analyze_draft
 from backend.geometry.direction_optimizer import optimize_mold_direction
 from backend.geometry.parting_line import detect_parting_line_candidates
@@ -47,78 +48,72 @@ BOOLEAN_REGION_STYLES = {
 PARTING_LINE_STYLES = {
     "raw": {
         "label": "Raw selected parting wire",
-        "rgb": [1.0, 0.72, 0.0],
-        "hex": "#ffb800",
-        "width": 3,
+        "rgb": [1.0, 0.65, 0.0],
+        "hex": "#ffa500",
+        "width": 1,
     },
     "refined": {
-        "label": "Refined parting curve candidate",
-        "rgb": [0.0, 0.72, 1.0],
-        "hex": "#00b8ff",
-        "width": 11,
+        "label": "Parting Line (Refined)",
+        "rgb": [0.0, 0.75, 1.0],
+        "hex": "#00BFFF",
+        "width": 4,
     },
 }
+
+
+def _rgb_byte_triplet(red: int, green: int, blue: int) -> list[float]:
+    return [red / 255.0, green / 255.0, blue / 255.0]
 
 
 UNDERCUT_FACE_VISUAL_STYLES = {
     "critical_boolean_confirmed": {
         "label": "Critical Boolean-confirmed undercut",
-        "rgb": [1.0, 0.04, 0.02],
+        "rgb": _rgb_byte_triplet(255, 50, 50),
         "priority": 100,
     },
-    "critical_proxy_fallback": {
-        "label": "Critical proxy/fallback undercut",
-        "rgb": [1.0, 0.70, 0.25],
-        "priority": 85,
+    "high_boolean_confirmed": {
+        "label": "High Boolean-confirmed undercut",
+        "rgb": _rgb_byte_triplet(255, 50, 50),
+        "priority": 95,
     },
-    "critical_proxy": {
-        "label": "Critical proxy undercut",
-        "rgb": [1.0, 0.62, 0.22],
-        "priority": 80,
+    "medium_boolean_confirmed": {
+        "label": "Medium Boolean-confirmed undercut",
+        "rgb": _rgb_byte_triplet(255, 120, 50),
+        "priority": 70,
     },
     "moderate_boolean_confirmed": {
         "label": "Moderate Boolean-confirmed undercut",
-        "rgb": [1.0, 0.48, 0.04],
-        "priority": 70,
+        "rgb": _rgb_byte_triplet(255, 120, 50),
+        "priority": 68,
     },
-    "moderate_proxy_fallback": {
-        "label": "Moderate proxy/fallback undercut",
-        "rgb": [1.0, 0.82, 0.38],
-        "priority": 55,
-    },
-    "moderate_proxy": {
-        "label": "Moderate proxy undercut",
-        "rgb": [1.0, 0.78, 0.34],
-        "priority": 50,
+    "low_boolean_confirmed": {
+        "label": "Low Boolean-confirmed undercut",
+        "rgb": _rgb_byte_triplet(255, 165, 50),
+        "priority": 45,
     },
     "minor_boolean_confirmed": {
         "label": "Minor Boolean-confirmed undercut",
-        "rgb": [1.0, 0.76, 0.18],
-        "priority": 45,
-    },
-    "minor_proxy_fallback": {
-        "label": "Minor proxy/fallback undercut",
-        "rgb": [1.0, 0.88, 0.42],
-        "priority": 30,
-    },
-    "minor_proxy": {
-        "label": "Minor proxy undercut",
-        "rgb": [1.0, 0.82, 0.30],
-        "priority": 28,
+        "rgb": _rgb_byte_triplet(255, 165, 50),
+        "priority": 43,
     },
     "proxy_undercut": {
         "label": "Proxy undercut evidence",
-        "rgb": [0.94, 0.70, 0.24],
+        "rgb": _rgb_byte_triplet(255, 230, 150),
         "priority": 25,
     },
     "parting": {
         "label": "Parting/silhouette face",
-        "rgb": [0.12, 0.34, 0.88],
+        "rgb": _rgb_byte_triplet(180, 180, 180),
         "priority": 10,
     },
     "accessible": {
         "label": "Accessible / no undercut evidence",
-        "rgb": [0.74, 0.79, 0.84],
+        "rgb": _rgb_byte_triplet(180, 180, 180),
+        "priority": 5,
+    },
+    "neutral": {
+        "label": "Neutral base face",
+        "rgb": _rgb_byte_triplet(210, 210, 210),
         "priority": 0,
     },
 }
@@ -301,60 +296,76 @@ def _as_int_set(value: object) -> set[int]:
     return result
 
 
-def _undercut_style_key(feature: object | None, face_id: int, *, fallback: bool) -> str:
-    if feature is None:
-        return "proxy_undercut"
+def _undercut_result_value(result: object, name: str, default: Any = None) -> Any:
+    if isinstance(result, dict):
+        return result.get(name, default)
+    return getattr(result, name, default)
 
-    severity = _normalised_token(_feature_value(feature, "severity", "minor"), "minor")
-    if severity not in {"critical", "moderate", "minor"}:
-        severity = "minor"
 
-    confirmed_ids = _as_int_set(_feature_value(feature, "boolean_confirmed_face_ids", []))
-    failed_ids = _as_int_set(_feature_value(feature, "boolean_failed_face_ids", []))
-    skipped_ids = _as_int_set(_feature_value(feature, "boolean_skipped_face_ids", []))
-    evidence_source = _normalised_token(_feature_value(feature, "evidence_source", ""))
-    has_fallback_evidence = (
-        face_id in failed_ids
-        or face_id in skipped_ids
-        or "failure" in evidence_source
-        or "skip" in evidence_source
-        or fallback
-    )
+def _undercut_confirmed_face_ids(result: object) -> set[int]:
+    refinement = _undercut_result_value(result, "boolean_refinement", {}) or {}
+    if isinstance(refinement, dict):
+        confirmed = refinement.get("confirmed_face_ids", [])
+    else:
+        confirmed = getattr(result, "boolean_confirmed_face_ids", [])
+    confirmed_ids = _as_int_set(confirmed)
+    if confirmed_ids:
+        return confirmed_ids
 
-    if face_id in confirmed_ids:
-        return f"{severity}_boolean_confirmed"
-    if has_fallback_evidence:
-        return f"{severity}_proxy_fallback"
-    return f"{severity}_proxy" if f"{severity}_proxy" in UNDERCUT_FACE_VISUAL_STYLES else "proxy_undercut"
+    fallback_ids: set[int] = set()
+    for feature in list(_undercut_result_value(result, "features", []) or []):
+        evidence_source = _normalised_token(_feature_value(feature, "evidence_source", "proxy"))
+        action_confidence = _safe_float(_feature_value(feature, "action_confidence", 0.0))
+        if evidence_source != "proxy" or action_confidence > 0.5:
+            fallback_ids.update(_as_int_set(_feature_value(feature, "face_ids", [])))
+            fallback_ids.update(_as_int_set(_feature_value(feature, "boolean_confirmed_face_ids", [])))
+    return fallback_ids
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _confirmed_undercut_style_key(feature: object | None) -> str:
+    severity = _normalised_token(_feature_value(feature, "severity", "low"), "low")
+    if severity in {"critical", "high"}:
+        return "critical_boolean_confirmed" if severity == "critical" else "high_boolean_confirmed"
+    if severity in {"medium", "moderate"}:
+        return "medium_boolean_confirmed" if severity == "medium" else "moderate_boolean_confirmed"
+    return "low_boolean_confirmed" if severity == "low" else "minor_boolean_confirmed"
 
 
 def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, list]:
     """
     Build feature-aware visualization arrays for undercut meshes.
 
-    The detector intentionally retains proxy faces when OCC Boolean fails, but
-    display should not paint every retained proxy face as critical red.  This
-    adapter keeps Boolean-confirmed severe evidence visually dominant while
-    rendering fallback evidence with less alarming amber/orange colors.
+    Boolean-confirmed faces use severity-based red/orange coloring. Proxy-only
+    faces use light yellow so the whole body is not painted critical red.
     """
-    undercut_ids = _as_int_set(getattr(result, "undercut_face_ids", []))
-    parting_ids = _as_int_set(getattr(result, "parting_face_ids", []))
+    undercut_ids = _as_int_set(_undercut_result_value(result, "undercut_face_ids", []))
+    parting_ids = _as_int_set(_undercut_result_value(result, "parting_face_ids", []))
+    accessible_ids = _as_int_set(_undercut_result_value(result, "accessible_face_ids", []))
+    confirmed_ids = _undercut_confirmed_face_ids(result)
     feature_by_face: dict[int, object] = {}
     feature_ids_by_face: dict[int, list[int]] = {}
 
-    for feature in list(getattr(result, "features", []) or []):
+    for feature in list(_undercut_result_value(result, "features", []) or []):
         feature_id = int(_feature_value(feature, "feature_id", -1) or -1)
         feature_face_ids = _as_int_set(_feature_value(feature, "face_ids", []))
         feature_face_ids.update(_as_int_set(_feature_value(feature, "boolean_confirmed_face_ids", [])))
-        feature_face_ids.update(_as_int_set(_feature_value(feature, "boolean_failed_face_ids", [])))
         for face_id in feature_face_ids:
-            candidate_key = _undercut_style_key(feature, face_id, fallback=False)
-            candidate_priority = UNDERCUT_FACE_VISUAL_STYLES.get(candidate_key, {}).get("priority", 0)
             existing = feature_by_face.get(face_id)
-            existing_key = _undercut_style_key(existing, face_id, fallback=False) if existing is not None else ""
-            existing_priority = UNDERCUT_FACE_VISUAL_STYLES.get(existing_key, {}).get("priority", -1)
-            if candidate_priority >= existing_priority:
+            if existing is None:
                 feature_by_face[face_id] = feature
+            else:
+                existing_severity = _normalised_token(_feature_value(existing, "severity", "low"))
+                candidate_severity = _normalised_token(_feature_value(feature, "severity", "low"))
+                severity_rank = {"critical": 4, "high": 3, "medium": 2, "moderate": 2, "low": 1, "minor": 1}
+                if severity_rank.get(candidate_severity, 0) >= severity_rank.get(existing_severity, 0):
+                    feature_by_face[face_id] = feature
             feature_ids_by_face.setdefault(face_id, [])
             if feature_id >= 0 and feature_id not in feature_ids_by_face[face_id]:
                 feature_ids_by_face[face_id].append(feature_id)
@@ -364,14 +375,16 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
     visual_priorities: list[int] = []
     feature_ids: list[list[int]] = []
     for face_id in mesh.face_ids:
-        if face_id in undercut_ids:
+        if face_id in confirmed_ids:
             feature = feature_by_face.get(face_id)
-            style_key = _undercut_style_key(feature, face_id, fallback=feature is None)
-        elif face_id in parting_ids:
-            style_key = "parting"
+            style_key = _confirmed_undercut_style_key(feature)
+        elif face_id in undercut_ids:
+            style_key = "proxy_undercut"
+        elif face_id in parting_ids or face_id in accessible_ids:
+            style_key = "parting" if face_id in parting_ids else "accessible"
         else:
-            style_key = "accessible"
-        style = UNDERCUT_FACE_VISUAL_STYLES.get(style_key, UNDERCUT_FACE_VISUAL_STYLES["accessible"])
+            style_key = "neutral"
+        style = UNDERCUT_FACE_VISUAL_STYLES.get(style_key, UNDERCUT_FACE_VISUAL_STYLES["neutral"])
         classifications.append(style_key)
         rgb_values.append(style["rgb"])
         visual_priorities.append(int(style["priority"]))
@@ -389,6 +402,7 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
         "undercut_visual_summary": {
             "counts": summary_counts,
             "legend": UNDERCUT_FACE_VISUAL_STYLES,
+            "confirmed_face_count": len(confirmed_ids),
         },
     }
 
@@ -484,27 +498,32 @@ def _parting_line_paths_payload(parting_line: dict[str, Any]) -> dict[str, Any]:
     raw_color = [float(value) for value in cfg.raw_curve_color]
     refined_color = [float(value) for value in cfg.refined_curve_color]
 
+    effective_refined = refined_points if len(refined_points) >= 3 else raw_points
     return {
+        "raw_wire_points": raw_points,
+        "refined_points": effective_refined,
         "raw": {
             "label": PARTING_LINE_STYLES["raw"]["label"],
             "points": raw_points,
             "point_count": len(raw_points),
             "rgb": raw_color,
-            "hex": _rgb_float_to_hex(raw_color),
+            "hex": PARTING_LINE_STYLES["raw"]["hex"],
             "width": PARTING_LINE_STYLES["raw"]["width"],
-            "visible_by_default": False,
+            "opacity": 0.4,
+            "visible_by_default": True,
         },
         "refined": {
             "label": PARTING_LINE_STYLES["refined"]["label"],
-            "points": refined_points or raw_points,
-            "point_count": len(refined_points or raw_points),
+            "points": effective_refined,
+            "point_count": len(effective_refined),
             "rgb": refined_color,
-            "hex": _rgb_float_to_hex(refined_color),
+            "hex": PARTING_LINE_STYLES["refined"]["hex"],
             "width": PARTING_LINE_STYLES["refined"]["width"],
             "visible_by_default": True,
             "smoothing_iterations": int(refinement.get("smoothing_iterations", 0) or 0),
             "quality": refinement.get("quality", "unknown"),
             "display_metrics": display_metrics,
+            "fallback_to_raw": len(refined_points) < 3,
         },
         "legend": {
             "raw": {
@@ -883,6 +902,88 @@ def part_parting_line(
                 "refined_point_count": len(result.refinement.refined_points),
                 "raw_point_count": len(result.wire_points),
             }
+            payload["display_mesh"] = mesh_payload
+
+        return payload
+    except ImportError as exc:
+        _raise_dependency_error(exc, operation)
+    except ValueError as exc:
+        _raise_value_error(exc, operation)
+    except STEPLoadError as exc:
+        _raise_step_error(exc, operation)
+
+
+@app.get("/parts/{filename}/core-cavity")
+def part_core_cavity(
+    filename: str,
+    use_optimal_direction: bool = Query(default=True),
+    threshold: float = Query(default=0.05, ge=0.0, le=1.0),
+    include_faces: bool = Query(default=False),
+    include_mesh: bool = Query(default=True),
+    mesh_deflection: float = Query(default=0.5, gt=0.0),
+):
+    """
+    Classify faces as cavity, core, or parting relative to the pull direction.
+
+    Level 1 face classification only — full Boolean solid split is Level 2.
+    """
+    operation = "core/cavity classification"
+    _, path = _part_path_or_raise(filename, operation)
+
+    try:
+        part = load_step(path)
+        pull_direction = (0.0, 0.0, 1.0)
+        pull_direction_source = "default_plus_z"
+
+        if use_optimal_direction:
+            direction = optimize_mold_direction(part)
+            pull_direction = direction.best_direction
+            pull_direction_source = "optimal_mold_direction"
+            part.optimal_pull_direction = pull_direction
+
+        result = classify_core_cavity(
+            part,
+            pull_direction=pull_direction,
+            threshold=threshold,
+            mutate=True,
+        )
+        payload: dict[str, Any] = {
+            "part": part.to_dict(include_faces=include_faces),
+            "core_cavity": result.to_dict(),
+            "pull_direction_source": pull_direction_source,
+        }
+
+        if include_mesh:
+            mesh = build_display_mesh(part, linear_deflection=mesh_deflection)
+            mesh_payload = mesh.to_payload(include_geometry=True)
+            cavity_ids = set(result.cavity_face_ids)
+            core_ids = set(result.core_face_ids)
+            parting_ids = set(result.parting_face_ids)
+            skipped_ids = set(result.skipped_face_ids)
+            class_to_color = {
+                "cavity": _rgb_byte_triplet(50, 200, 100),
+                "core": _rgb_byte_triplet(50, 100, 200),
+                "parting": _rgb_byte_triplet(220, 200, 50),
+                "skipped": _rgb_byte_triplet(160, 160, 160),
+                "neutral": _rgb_byte_triplet(210, 210, 210),
+            }
+            classifications: list[str] = []
+            rgb_values: list[list[float]] = []
+            for face_id in mesh.face_ids:
+                if face_id in cavity_ids:
+                    classification = "cavity"
+                elif face_id in core_ids:
+                    classification = "core"
+                elif face_id in parting_ids:
+                    classification = "parting"
+                elif face_id in skipped_ids:
+                    classification = "skipped"
+                else:
+                    classification = "neutral"
+                classifications.append(classification)
+                rgb_values.append(class_to_color[classification])
+            mesh_payload["core_cavity_classification"] = classifications
+            mesh_payload["core_cavity_rgb"] = rgb_values
             payload["display_mesh"] = mesh_payload
 
         return payload

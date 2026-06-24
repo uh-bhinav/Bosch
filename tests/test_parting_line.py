@@ -256,7 +256,7 @@ def test_orders_closed_loop_wire_and_marks_it_closed():
     assert result.refinement.quality == "refined_closed"
     assert result.refinement.refined_edge_ids == [0, 1, 2, 3]
     assert len(result.refinement.refined_points) > len(result.selected_wire.points)
-    assert result.refinement.smoothing_iterations == 6
+    assert result.refinement.smoothing_iterations == 8
     assert result.refinement.display_metrics["raw_point_count"] == 5
     assert result.refinement.display_metrics["resampled_point_count"] >= 96
     assert (

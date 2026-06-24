@@ -36,7 +36,7 @@ dfm:
     dot_tolerance: 0.01
     boundary_dot_tolerance: 0.15
     point_tolerance: 0.0001
-    smoothing_iterations: 6
+    smoothing_iterations: 8
     display_resample_min_points: 96
     max_refined_display_points: 32000
     refined_curve_color: [0.0, 0.72, 1.0]

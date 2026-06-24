@@ -1,6 +1,12 @@
+import os
+import sys
+
+# VTK/PyVista must render off-screen on macOS when embedded in Streamlit.
+os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
+os.environ.setdefault("VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN", "1")
+
 import streamlit as st
 import requests
-import os
 import time
 import json
 from typing import Any
@@ -336,8 +342,28 @@ def _safe_table_rows(rows: object) -> object:
     return rows
 
 
+def _prepare_safe_dataframe(data: list[dict[str, Any]]) -> Any:
+    import pandas as pd
+
+    df = pd.DataFrame(data)
+    for col in df.columns:
+        df[col] = df[col].replace(["-", "—", "N/A", "n/a", ""], None)
+        try:
+            numeric = pd.to_numeric(df[col], errors="coerce")
+            if numeric.notna().sum() > len(df) * 0.5:
+                df[col] = numeric
+        except Exception:
+            pass
+        if df[col].dtype == object:
+            df[col] = df[col].astype(str).replace("None", "—")
+    return df
+
+
 def _safe_dataframe(rows: object, **kwargs: Any) -> None:
-    st.dataframe(_safe_table_rows(rows), **kwargs)
+    if isinstance(rows, list) and rows and all(isinstance(row, dict) for row in rows):
+        st.dataframe(_prepare_safe_dataframe(rows), **kwargs)
+    else:
+        st.dataframe(_safe_table_rows(rows), **kwargs)
 
 
 def _feature_list(undercuts: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -406,7 +432,8 @@ def _undercut_counts(undercuts: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _format_undercut_count(count: int) -> str:
-    return f"{count} feature(s)"
+    label = "feature" if count == 1 else "features"
+    return f"{count} undercut {label}"
 
 
 def _format_undercut_evidence(counts: dict[str, Any]) -> str:
@@ -704,13 +731,15 @@ def _draft_legend() -> None:
 
 def _undercut_legend(*, important_only: bool = False) -> None:
     items = [
-        ("Boolean-confirmed face overlay", "#ff0a05"),
-        ("Boolean volume / major feature overlay", "#ff0a05"),
-        ("Proxy fallback evidence", "#ffb84d"),
-        ("Neutral base part", "#b8c7d6"),
+        ("Boolean-confirmed critical/high", "#ff3232"),
+        ("Boolean-confirmed medium", "#ff7832"),
+        ("Boolean-confirmed low/minor", "#ffa532"),
+        ("Proxy-only evidence", "#ffe696"),
+        ("Parting / accessible", "#b4b4b4"),
+        ("Neutral base", "#d2d2d2"),
     ]
     if important_only:
-        items.append(("Proxy fallback faces muted by default", "#bfc7d1"))
+        items.append(("Proxy faces muted in high-confidence view", "#bfc7d1"))
     _render_color_legend(items)
 
 
@@ -745,7 +774,8 @@ def _filtered_undercut_mesh_payload(
         return mesh_payload
 
     filtered = dict(mesh_payload)
-    muted_rgb = [0.74, 0.79, 0.84]
+    muted_rgb = [0.824, 0.824, 0.824]
+    proxy_rgb = [1.0, 0.902, 0.588]
     filtered_classes: list[str] = []
     filtered_rgb: list[list[float]] = []
     hidden_count = 0
@@ -760,7 +790,7 @@ def _filtered_undercut_mesh_payload(
         )
         if is_undercut_evidence and not _is_important_undercut_style(value):
             filtered_classes.append("filtered_proxy_evidence")
-            filtered_rgb.append(muted_rgb)
+            filtered_rgb.append(muted_rgb if important_only else proxy_rgb)
             hidden_count += 1
         else:
             filtered_classes.append(value)
@@ -1037,6 +1067,42 @@ def _marker_points_to_pyvista(points_payload: list[list[float]]) -> Any:
     return pv.PolyData(np.asarray(points_payload, dtype=float))
 
 
+def _resolve_mesh_color_values(
+    mesh_payload: dict[str, Any],
+    color_key: str,
+) -> list[list[float]] | None:
+    faces_payload = mesh_payload.get("faces") or []
+    if not faces_payload:
+        return None
+    expected = len(faces_payload)
+    for key in (
+        color_key,
+        "draft_rgb",
+        "undercut_rgb",
+        "parting_rgb",
+        "core_cavity_rgb",
+    ):
+        color_values = mesh_payload.get(key)
+        if isinstance(color_values, list) and len(color_values) == expected:
+            return color_values
+    return None
+
+
+def _show_mesh_offscreen(plotter: Any, key: str = "mesh") -> None:
+    """Render PyVista plotter — Linux/Docker only. Never call on macOS (VTK thread crash)."""
+    try:
+        from stpyvista import stpyvista as _stpyvista_fn
+        _stpyvista_fn(plotter, key=key)
+    except Exception:
+        try:
+            img = plotter.screenshot(return_img=True)
+            plotter.close()
+            st.image(img, use_container_width=True)
+        except Exception as shot_err:
+            st.error(f"3D render failed: {shot_err}")
+            st.info("Mesh data available but cannot render in this environment.")
+
+
 def _show_mesh(
     mesh_payload: dict[str, Any],
     color_key: str = "draft_rgb",
@@ -1047,9 +1113,20 @@ def _show_mesh(
     marker_points: list[dict[str, Any]] | None = None,
     viewer_key: str | None = None,
 ) -> bool:
+    # macOS + Streamlit runs scripts on worker threads; VTK Cocoa crashes if used there.
+    if sys.platform == "darwin":
+        return _show_mesh_plotly(
+            mesh_payload,
+            color_key=color_key,
+            region_meshes=region_meshes,
+            line_paths=line_paths,
+            region_opacity=region_opacity,
+            marker_points=marker_points,
+            viewer_key=viewer_key,
+        )
+
     try:
         import pyvista as pv
-        from stpyvista import stpyvista
     except ImportError as exc:
         st.warning(f"PyVista viewer dependencies are unavailable: {exc}")
         return False
@@ -1061,7 +1138,7 @@ def _show_mesh(
             pass
 
         poly = _mesh_to_pyvista(mesh_payload, color_key=color_key)
-        plotter = pv.Plotter(window_size=(1100, 720))
+        plotter = pv.Plotter(window_size=(1100, 720), off_screen=True)
         plotter.set_background("#f6f7f9")
         try:
             plotter.enable_anti_aliasing("fxaa")
@@ -1139,7 +1216,7 @@ def _show_mesh(
             )
         plotter.add_axes()
         plotter.camera_position = "iso"
-        stpyvista(
+        _show_mesh_offscreen(
             plotter,
             key=viewer_key or (
                 f"viewer-{color_key}-{len(region_meshes or [])}-"
@@ -1158,6 +1235,126 @@ def _rgb_to_hex(rgb: list[float]) -> str:
         for component in rgb[:3]
     ]
     return f"#{values[0]:02x}{values[1]:02x}{values[2]:02x}"
+
+
+def _show_mesh_plotly(
+    mesh_payload: dict[str, Any],
+    color_key: str = "draft_rgb",
+    region_meshes: list[dict[str, Any]] | None = None,
+    line_paths: list[dict[str, Any]] | None = None,
+    region_opacity: float = 0.55,
+    marker_points: list[dict[str, Any]] | None = None,
+    viewer_key: str | None = None,
+) -> bool:
+    """Browser-based 3D viewer for macOS (avoids VTK Cocoa thread crashes)."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError as exc:
+        st.warning(f"Plotly viewer is unavailable: {exc}")
+        return False
+
+    points_payload = mesh_payload.get("points") or []
+    faces_payload = mesh_payload.get("faces") or []
+    if not points_payload or not faces_payload:
+        return False
+
+    traces: list[Any] = []
+    mesh_kwargs: dict[str, Any] = {
+        "x": [float(p[0]) for p in points_payload],
+        "y": [float(p[1]) for p in points_payload],
+        "z": [float(p[2]) for p in points_payload],
+        "i": [int(f[0]) for f in faces_payload],
+        "j": [int(f[1]) for f in faces_payload],
+        "k": [int(f[2]) for f in faces_payload],
+        "flatshading": True,
+        "name": "part",
+    }
+    color_values = _resolve_mesh_color_values(mesh_payload, color_key)
+    if color_values is not None:
+        mesh_kwargs["facecolor"] = [_rgb_to_hex(c) for c in color_values]
+        mesh_kwargs["opacity"] = 1.0
+    else:
+        mesh_kwargs["color"] = "#b8c0cc"
+        mesh_kwargs["opacity"] = 1.0
+    traces.append(go.Mesh3d(**mesh_kwargs))
+
+    for region in region_meshes or []:
+        region_payload = region.get("mesh", {})
+        region_points = region_payload.get("points") or []
+        region_faces = region_payload.get("faces") or []
+        if not region_points or not region_faces:
+            continue
+        visual_style = region.get("visual_style", {})
+        region_kwargs: dict[str, Any] = {
+            "x": [float(p[0]) for p in region_points],
+            "y": [float(p[1]) for p in region_points],
+            "z": [float(p[2]) for p in region_points],
+            "i": [int(f[0]) for f in region_faces],
+            "j": [int(f[1]) for f in region_faces],
+            "k": [int(f[2]) for f in region_faces],
+            "opacity": float(visual_style.get("opacity", region_opacity)),
+            "flatshading": True,
+            "name": str(region.get("label", "region")),
+        }
+        region_colors = region_payload.get("region_rgb")
+        if isinstance(region_colors, list) and len(region_colors) == len(region_faces):
+            region_kwargs["facecolor"] = [_rgb_to_hex(c) for c in region_colors]
+        else:
+            region_kwargs["color"] = "#f97316"
+        traces.append(go.Mesh3d(**region_kwargs))
+
+    for line_path in line_paths or []:
+        points = line_path.get("points", [])
+        if len(points) < 2:
+            continue
+        traces.append(
+            go.Scatter3d(
+                x=[float(p[0]) for p in points],
+                y=[float(p[1]) for p in points],
+                z=[float(p[2]) for p in points],
+                mode="lines",
+                line=dict(color=str(line_path.get("hex", "#00b8ff")), width=6),
+                name=str(line_path.get("label", "parting-line")),
+            )
+        )
+
+    marker_coords = [
+        marker.get("point")
+        for marker in (marker_points or [])
+        if isinstance(marker.get("point"), list) and len(marker.get("point")) == 3
+    ]
+    if marker_coords:
+        traces.append(
+            go.Scatter3d(
+                x=[float(p[0]) for p in marker_coords],
+                y=[float(p[1]) for p in marker_coords],
+                z=[float(p[2]) for p in marker_coords],
+                mode="markers",
+                marker=dict(size=5, color="#ff3b30"),
+                name="undercut-conflict-markers",
+            )
+        )
+
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        height=720,
+        margin=dict(l=0, r=0, t=0, b=0),
+        scene=dict(
+            aspectmode="data",
+            bgcolor="#f6f7f9",
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+        ),
+        showlegend=True,
+    )
+    chart_key = viewer_key or f"dfm-mesh-{color_key}-{len(faces_payload)}"
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=chart_key,
+    )
+    return True
 
 
 def _show_boolean_region_status(boolean_regions: dict[str, Any], label: str) -> None:
@@ -1432,6 +1629,50 @@ def _action_recommendation_rows(features: list[dict[str, Any]]) -> list[dict[str
             "Why": feature.get("action_explanation") or feature.get("action_reason"),
         })
     return rows
+
+
+def _highest_severity_feature(undercuts: dict[str, Any]) -> dict[str, Any] | None:
+    severity_rank = {"critical": 5, "high": 4, "medium": 3, "moderate": 2, "low": 1, "minor": 1}
+    features = _feature_list(undercuts)
+    if not features:
+        return None
+    return max(
+        features,
+        key=lambda feature: (
+            severity_rank.get(_normalised_token(feature.get("severity")), 0),
+            _safe_float(feature.get("interference_volume_mm3", 0.0)),
+            _safe_float(feature.get("depth_proxy_mm", 0.0)),
+        ),
+    )
+
+
+def _render_prominent_undercut_callout(undercuts: dict[str, Any]) -> None:
+    features = _feature_list(undercuts)
+    major_count = sum(1 for feature in features if feature.get("is_major_feature"))
+    highest = _highest_severity_feature(undercuts)
+    if not highest:
+        return
+    severity = str(highest.get("severity", "unknown")).title()
+    volume = _safe_float(highest.get("interference_volume_mm3", 0.0))
+    depth = _safe_float(highest.get("depth_proxy_mm", 0.0))
+    action = highest.get("recommended_mold_action", "review")
+    confidence = _safe_float(highest.get("action_confidence", 0.0))
+    feature_type = highest.get("geometric_feature_type", highest.get("undercut_type", "unknown"))
+    headline = (
+        f"⚠️ {severity} Undercut Detected — "
+        f"{str(action).replace('-', ' ').title()} "
+        f"({volume:,.0f} mm³ volume, {depth:.1f}mm depth)"
+    )
+    st.warning(headline)
+    st.info(
+        f"Major undercut features: {major_count} | "
+        f"Highest severity feature ID {highest.get('feature_id')} | "
+        f"Type: {feature_type} | "
+        f"Recommended action: {action} | "
+        f"Confidence: {confidence:.2f} | "
+        f"Depth proxy: {depth:.2f} mm | "
+        f"Interference volume: {volume:,.0f} mm³"
+    )
 
 
 def _major_undercut_rows(undercuts: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1742,6 +1983,7 @@ RESULT_KEYS = (
     "undercut_result",
     "direction_result",
     "parting_line_result",
+    "core_cavity_result",
 )
 
 STEP_RESULT_KEYS = {
@@ -1750,6 +1992,7 @@ STEP_RESULT_KEYS = {
     "Undercuts": "undercut_result",
     "Direction": "direction_result",
     "Parting Line": "parting_line_result",
+    "Core/Cavity": "core_cavity_result",
 }
 
 STEP_ORDER = tuple(STEP_RESULT_KEYS)
@@ -1872,7 +2115,9 @@ def _journey_prompt() -> str:
         return "Undercuts are mapped. Next I will compare mold-opening candidates and select the best direction."
     if next_step == "Parting Line":
         return "Best direction is ready. Next I will detect and refine the main parting-line candidate."
-    return "Level 1 checks are complete. Review Direction and Parting Line for the mold-opening recommendation and split candidate."
+    if next_step == "Core/Cavity":
+        return "Parting line is ready. Next I will classify cavity, core, and parting faces for Level 1."
+    return "Level 1 checks are complete. Review Direction, Parting Line, and Core/Cavity for the mold-opening recommendation."
 
 
 def _show_backend_error(
@@ -2067,6 +2312,27 @@ def _fetch_direction(
     )
 
 
+def _fetch_core_cavity(
+    selected_part: str,
+    *,
+    include_faces: bool,
+    include_mesh: bool,
+    mesh_deflection: float,
+) -> dict[str, Any] | None:
+    return _backend_get(
+        f"/parts/{selected_part}/core-cavity",
+        params={
+            "use_optimal_direction": True,
+            "threshold": 0.05,
+            "include_faces": include_faces,
+            "include_mesh": include_mesh,
+            "mesh_deflection": mesh_deflection,
+        },
+        timeout=240,
+        failure_label="Core/cavity classification failed",
+    )
+
+
 def _fetch_parting_line(
     selected_part: str,
     *,
@@ -2186,10 +2452,11 @@ def _render_level1_snapshot() -> None:
 
     if undercuts:
         undercut_counts = _undercut_counts(undercuts)
+        face_count = _safe_int(undercuts.get("face_counts", {}).get("undercut", 0))
         tiles.append((
-            "Undercuts",
+            "Undercut Features",
             _format_undercut_count(undercut_counts["total"]),
-            _format_undercut_evidence(undercut_counts),
+            f"{face_count} faces | {_format_undercut_evidence(undercut_counts)}",
         ))
     elif "Undercuts" in failures:
         tiles.append(("Undercuts", "Failed", failures["Undercuts"].get("message", "Retry step")))
@@ -2221,6 +2488,21 @@ def _render_level1_snapshot() -> None:
         tiles.append(("Parting Line", "Failed", failures["Parting Line"].get("message", "Retry step")))
     else:
         tiles.append(("Parting Line", "Pending", "Split candidate"))
+
+    core_cavity = st.session_state.get("core_cavity_result", {}).get("core_cavity")
+    if core_cavity:
+        tiles.append((
+            "Core/Cavity",
+            f"{core_cavity.get('face_counts', {}).get('cavity', 0)} cavity",
+            (
+                f"{core_cavity.get('percentages', {}).get('cavity_pct', 0)}% cavity | "
+                f"{core_cavity.get('percentages', {}).get('core_pct', 0)}% core"
+            ),
+        ))
+    elif "Core/Cavity" in failures:
+        tiles.append(("Core/Cavity", "Failed", failures["Core/Cavity"].get("message", "Retry step")))
+    else:
+        tiles.append(("Core/Cavity", "Pending", "Face classification"))
 
     _render_summary_grid(tiles)
 
@@ -2396,7 +2678,7 @@ def _render_level1_result_summary() -> None:
             f"{display_draft.get('percentages', {}).get('bad_pct', 0)}% bad area",
         ),
         (
-            "Detected Undercuts",
+            "Detected Undercut Features",
             _format_undercut_count(initial_counts["total"]),
             _format_undercut_evidence(initial_counts),
         ),
@@ -2436,6 +2718,127 @@ def _render_level1_result_summary() -> None:
         ),
         use_container_width=True,
     )
+
+
+def _render_dfm_summary_report(selected_part: str) -> None:
+    summary = st.session_state.get("summary_result")
+    draft_result = st.session_state.get("draft_result", {})
+    undercut_result = st.session_state.get("undercut_result", {})
+    direction_result = st.session_state.get("direction_result", {})
+    parting_result = st.session_state.get("parting_line_result", {})
+    core_cavity_result = st.session_state.get("core_cavity_result", {})
+
+    if not (summary and draft_result and undercut_result and direction_result):
+        return
+
+    draft = draft_result.get("draft", {})
+    undercuts = undercut_result.get("undercuts", {})
+    direction = direction_result.get("direction", {})
+    parting = parting_result.get("parting_line", {}) if parting_result else {}
+    core_cavity = core_cavity_result.get("core_cavity", {}) if core_cavity_result else {}
+    optimal_draft = direction.get("optimal_draft", draft)
+    initial_draft = direction.get("initial_draft", draft)
+    initial_undercuts = undercuts
+    optimal_undercuts = direction.get("optimal_undercuts", undercuts)
+    bbox = summary.get("bounding_box", {}) or {}
+    today = time.strftime("%Y-%m-%d")
+
+    with st.expander("📋 Full DfM Summary Report", expanded=True):
+        st.markdown(f"## DfM Analysis Report — {selected_part}")
+        st.write(f"**Analysis Date:** {today}")
+        st.write("**Analysis Level:** Level 1")
+
+        st.markdown("### Part Geometry")
+        st.write(
+            f"- File: {selected_part}\n"
+            f"- Faces: {summary.get('face_count', 0)} | "
+            f"Edges: {summary.get('edge_count', 0)} | "
+            f"Solids: {summary.get('solid_count', 0)}\n"
+            f"- Bounding box (mm): "
+            f"X {bbox.get('x_mm', bbox.get('dx', '—'))}, "
+            f"Y {bbox.get('y_mm', bbox.get('dy', '—'))}, "
+            f"Z {bbox.get('z_mm', bbox.get('dz', '—'))}\n"
+            f"- Surface types: {summary.get('surface_type_counts', {})}"
+        )
+
+        st.markdown("### Draft Analysis Results")
+        st.write(
+            f"- Initial pull: {direction.get('initial_label', '+Z')}\n"
+            f"- Optimal pull: {direction.get('best_label', 'unknown')} {_vector_text(direction.get('best_direction'))}\n"
+            f"- Good/Marginal/Bad faces: "
+            f"{optimal_draft.get('face_counts', {}).get('good', 0)}/"
+            f"{optimal_draft.get('face_counts', {}).get('marginal', 0)}/"
+            f"{optimal_draft.get('face_counts', {}).get('bad', 0)}\n"
+            f"- Bad area %: {optimal_draft.get('percentages', {}).get('bad_pct', 0)}%\n"
+            f"- Severity: {optimal_draft.get('severity', 'unknown')}"
+        )
+        suggestions = (optimal_draft.get("suggestions") or draft.get("suggestions") or [])[:3]
+        if suggestions:
+            st.write("**Top suggestions:**")
+            for suggestion in suggestions:
+                st.write(f"- {suggestion.get('action_text', suggestion)}")
+
+        st.markdown("### Undercut Detection Results")
+        st.write(f"- Undercut features: {undercuts.get('feature_count', 0)}")
+        for feature in _feature_list(undercuts):
+            if not feature.get("is_major_feature"):
+                continue
+            st.write(
+                f"- Feature {feature.get('feature_id')}: "
+                f"{feature.get('severity')} | {feature.get('undercut_type')} | "
+                f"{feature.get('recommended_mold_action')} | "
+                f"depth {feature.get('depth_proxy_mm')} mm | "
+                f"volume {feature.get('interference_volume_mm3')} mm³"
+            )
+
+        st.markdown("### Mold Direction Optimization")
+        before_bad = _safe_float(initial_draft.get("percentages", {}).get("bad_pct", 0.0))
+        after_bad = _safe_float(optimal_draft.get("percentages", {}).get("bad_pct", 0.0))
+        improvement = before_bad - after_bad
+        st.write(
+            f"- Initial bad draft %: {before_bad:.2f}%\n"
+            f"- Optimal bad draft %: {after_bad:.2f}%\n"
+            f"- Improvement: {improvement:.2f}%\n"
+            f"- Boolean-refined candidates: {direction.get('boolean_refined_candidate_count', 0)}"
+        )
+
+        st.markdown("### Parting Line")
+        readiness = parting.get("readiness", {}) if parting else {}
+        refinement = parting.get("refinement", {}) if parting else {}
+        st.write(
+            f"- Readiness: {readiness.get('status', 'not run')}\n"
+            f"- Selected edges: {parting.get('edge_counts', {}).get('selected', 0) if parting else 0}\n"
+            f"- Wire quality: {refinement.get('quality', 'unknown')}"
+        )
+
+        st.markdown("### Core/Cavity Split (Level 1)")
+        if core_cavity:
+            st.write(
+                f"- Cavity faces: {core_cavity.get('face_counts', {}).get('cavity', 0)} "
+                f"({core_cavity.get('percentages', {}).get('cavity_pct', 0)}%)\n"
+                f"- Core faces: {core_cavity.get('face_counts', {}).get('core', 0)} "
+                f"({core_cavity.get('percentages', {}).get('core_pct', 0)}%)\n"
+                f"- Pull direction: {_vector_text(core_cavity.get('pull_direction'))}"
+            )
+        else:
+            st.write("- Core/cavity classification not run yet.")
+
+        st.markdown("### Limitations (Honest)")
+        st.write(
+            "> Current limitations: Parting line is a candidate-level silhouette detection "
+            "(final production optimization planned). Core/cavity is face classification "
+            "only — full Boolean solid split is Level 2. LangChain AI agent and automated "
+            "PDF export are planned for Level 2. Boolean refinement is selective (top "
+            "undercut candidates only)."
+        )
+
+        st.markdown("### Action Items")
+        action_suggestions = draft.get("suggestions", []) or optimal_draft.get("suggestions", []) or []
+        if action_suggestions:
+            for index, suggestion in enumerate(action_suggestions, start=1):
+                st.write(f"ACTION {index}: {suggestion.get('action_text', suggestion)}")
+        else:
+            st.write("No draft correction actions required.")
 
 
 st.title("DfM Agent")
@@ -2478,9 +2881,9 @@ with left:
     include_mesh = st.checkbox("Build display mesh", value=True)
     include_boolean_regions = st.checkbox("Boolean volumes", value=True)
     important_undercuts_only = st.checkbox(
-        "Show only Boolean-confirmed faces",
+        "Show only high-confidence undercuts (Boolean-confirmed)",
         value=True,
-        help="Default demo view: mute proxy fallback faces so confirmed interference and major features stay readable.",
+        help="Default demo view: mute proxy fallback faces so confirmed interference stays readable.",
     )
     show_proxy_undercut_faces = st.checkbox(
         "Show proxy fallback faces",
@@ -2488,7 +2891,7 @@ with left:
         help="Turn this on for audit/debug views. It can make large fallback features visually noisy.",
     )
     show_refined_parting_line = st.checkbox("Refined parting curve", value=True)
-    show_raw_parting_line = st.checkbox("Raw parting wire", value=False)
+    show_raw_parting_line = st.checkbox("Raw parting wire", value=True)
     region_opacity = 0.55
     show_region_edges = True
     if include_boolean_regions:
@@ -2524,6 +2927,7 @@ with left:
     run_undercuts = st.button("Detect Undercuts", use_container_width=True)
     run_direction = st.button("Find Best Direction", use_container_width=True)
     run_parting_line = st.button("Detect Parting Line", use_container_width=True)
+    run_core_cavity = st.button("Classify Core/Cavity", use_container_width=True)
 
 
 if reset_journey:
@@ -2594,6 +2998,16 @@ def _run_parting_line_step() -> bool:
     return _store_step_result("Parting Line", "parting_line_result", result)
 
 
+def _run_core_cavity_step() -> bool:
+    result = _fetch_core_cavity(
+        selected_part,
+        include_faces=include_faces,
+        include_mesh=include_mesh,
+        mesh_deflection=mesh_deflection,
+    )
+    return _store_step_result("Core/Cavity", "core_cavity_result", result)
+
+
 def _run_named_step(step_name: str) -> bool:
     runners = {
         "Load STEP": _run_summary_step,
@@ -2601,6 +3015,7 @@ def _run_named_step(step_name: str) -> bool:
         "Undercuts": _run_undercut_step,
         "Direction": _run_direction_step,
         "Parting Line": _run_parting_line_step,
+        "Core/Cavity": _run_core_cavity_step,
     }
     runner = runners.get(step_name)
     if runner is None:
@@ -2663,6 +3078,9 @@ if run_direction:
 if run_parting_line:
     with st.spinner("Detecting parting line..."):
         _run_named_step("Parting Line")
+if run_core_cavity:
+    with st.spinner("Classifying core/cavity faces..."):
+        _run_named_step("Core/Cavity")
 
 if run_next_step:
     next_step = _next_step_name()
@@ -2683,12 +3101,13 @@ with center:
     _render_direction_before_after_from_state(compact=True)
     _render_level1_result_summary()
 
-    raw_tab, draft_tab, undercut_tab, direction_tab, parting_tab = st.tabs([
+    raw_tab, draft_tab, undercut_tab, direction_tab, parting_tab, core_cavity_tab = st.tabs([
         "Raw",
         "Draft",
         "Undercuts",
         "Direction",
         "Parting Line",
+        "Core/Cavity",
     ])
 
     with raw_tab:
@@ -2766,7 +3185,11 @@ with center:
             c4.metric("Severity", draft["severity"].title())
 
             if include_mesh and "display_mesh" in result:
-                shown = _show_mesh(result["display_mesh"], color_key="draft_rgb")
+                shown = _show_mesh(
+                    result["display_mesh"],
+                    color_key="draft_rgb",
+                    viewer_key=f"draft-{selected_part}",
+                )
                 if not shown:
                     st.json({
                         "display_mesh": {
@@ -2795,6 +3218,11 @@ with center:
         else:
             _undercut_legend(important_only=important_undercuts_only)
             undercuts = result["undercuts"]
+            high_confidence_only = st.toggle(
+                "Show only high-confidence undercuts (Boolean-confirmed)",
+                value=important_undercuts_only,
+                help="When enabled, proxy-only faces are muted in the 3D overlay.",
+            )
             features = undercuts.get("features", []) or []
             critical_features = sum(
                 1 for feature in features
@@ -2839,10 +3267,11 @@ with center:
             ])
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Undercut Faces", undercuts["face_counts"]["undercut"])
-            c2.metric("Features", undercuts["feature_count"])
+            c2.metric("Undercut Features", undercuts["feature_count"])
             c3.metric("Undercut Area", f"{undercuts['percentages']['undercut_area_pct']}%")
             c4.metric("Parting Faces", undercuts["face_counts"]["parting"])
             st.caption(undercuts["method"])
+            _render_prominent_undercut_callout(undercuts)
             _render_major_undercut_callout(undercuts)
             _render_boolean_refinement_visibility(
                 undercuts,
@@ -2856,14 +3285,14 @@ with center:
                 _show_boolean_region_legend(boolean_regions)
 
             if include_mesh and "display_mesh" in result:
-                if important_undercuts_only and not show_proxy_undercut_faces:
+                if high_confidence_only and not show_proxy_undercut_faces:
                     st.caption(
-                        "3D overlay is in confirmed-evidence mode: Boolean-confirmed faces and Boolean volumes "
-                        "are emphasized; proxy fallback faces remain in the tables and diagnostics."
+                        "3D overlay is in confirmed-evidence mode: Boolean-confirmed faces are emphasized; "
+                        "proxy fallback faces remain in the tables and diagnostics."
                     )
                 display_mesh = _filtered_undercut_mesh_payload(
                     result["display_mesh"],
-                    important_only=important_undercuts_only,
+                    important_only=high_confidence_only,
                     show_proxy_faces=show_proxy_undercut_faces,
                 )
                 face_overlay = _undercut_face_overlay_region(
@@ -2893,7 +3322,7 @@ with center:
                     viewer_key=(
                         f"undercuts-{selected_part}-{len(viewer_regions)}-"
                         f"{region_opacity:.2f}-{show_region_edges}-"
-                        f"important-{important_undercuts_only}-proxy-{show_proxy_undercut_faces}"
+                        f"important-{high_confidence_only}-proxy-{show_proxy_undercut_faces}"
                     ),
                 )
                 if not shown:
@@ -2934,6 +3363,12 @@ with center:
             best = direction["best_direction"]
             optimal = direction["optimal_draft"]
             undercuts = direction["optimal_undercuts"]
+            initial = direction["initial_draft"]
+            st.markdown(
+                f"### 🎯 Best Mold Opening Direction: {direction.get('best_label', 'unknown')}\n"
+                f"**Vector:** `{_vector_text(best)}`  \n"
+                f"**Score:** `{direction.get('best_score', 0):.4f}`"
+            )
             initial_undercut_result = st.session_state.get("undercut_result", {})
             initial_undercuts = (
                 initial_undercut_result.get("undercuts")
@@ -2975,6 +3410,23 @@ with center:
                 f"= ({best[0]:+.3f}, {best[1]:+.3f}, {best[2]:+.3f})"
             )
             st.caption(direction["method"])
+            before_col, after_col = st.columns(2)
+            with before_col:
+                st.markdown("#### Before (Default +Z Direction)")
+                st.metric("Bad Draft Area", f"{initial['percentages']['bad_pct']}%")
+                st.metric("Undercut Features", initial_counts["total"])
+                st.metric("Severity", str(initial.get("severity", "unknown")).title())
+            with after_col:
+                st.markdown("#### After (Optimal Direction Found)")
+                st.metric("Bad Draft Area", f"{optimal['percentages']['bad_pct']}%")
+                st.metric("Undercut Features", optimal_counts["total"])
+                st.metric("Severity", str(optimal.get("severity", "unknown")).title())
+                bad_delta = _safe_float(optimal["percentages"]["bad_pct"]) - _safe_float(initial["percentages"]["bad_pct"])
+                feature_delta = optimal_counts["total"] - initial_counts["total"]
+                st.markdown(
+                    f"**Improvement:** bad draft `{bad_delta:+.2f}%`, "
+                    f"undercut features `{feature_delta:+d}`"
+                )
             _render_before_after_story(
                 direction,
                 initial_undercuts,
@@ -3348,6 +3800,18 @@ with center:
 
             raw_path = paths.get("raw", {})
             refined_path = paths.get("refined", {})
+            if refined_path.get("fallback_to_raw"):
+                st.warning(
+                    "Refined curve had fewer than 3 points; displaying raw wire as fallback."
+                )
+            readiness_score = _safe_float(readiness.get("score", 0.0))
+            wire_closed = refinement.get("display_metrics", {}).get("closed", refinement.get("closed"))
+            st.write(
+                f"Wire points: raw {raw_path.get('point_count', 0)} | "
+                f"refined {refined_path.get('point_count', 0)} | "
+                f"closed: {wire_closed if wire_closed is not None else 'unknown'} | "
+                f"readiness score: {readiness_score:.3f}"
+            )
             line_paths = _visible_parting_line_paths(
                 raw_path,
                 refined_path,
@@ -3443,3 +3907,52 @@ with center:
 
             with st.expander("Parting Line JSON"):
                 st.json(parting)
+
+    with core_cavity_tab:
+        st.subheader("Core/Cavity Classification")
+        result = st.session_state.get("core_cavity_result")
+        if result is None:
+            st.info("Run core/cavity classification after direction optimization to view the Level 1 face split.")
+        else:
+            core_cavity = result.get("core_cavity", {})
+            counts = core_cavity.get("face_counts", {})
+            percentages = core_cavity.get("percentages", {})
+            pull = core_cavity.get("pull_direction", [0.0, 0.0, 1.0])
+            _render_color_legend([
+                ("Cavity (upper mold half)", "#32c864"),
+                ("Core (lower mold half)", "#3264c8"),
+                ("Parting zone", "#dcc832"),
+            ])
+            c1, c2, c3 = st.columns(3)
+            c1.metric(
+                "Cavity Faces",
+                counts.get("cavity", 0),
+                f"{percentages.get('cavity_pct', 0)}%",
+            )
+            c2.metric(
+                "Core Faces",
+                counts.get("core", 0),
+                f"{percentages.get('core_pct', 0)}%",
+            )
+            c3.metric("Parting Faces", counts.get("parting", 0))
+            st.write(f"Pull direction used: `{_vector_text(pull)}`")
+            st.caption(
+                "Core/cavity classification uses the optimal mold direction found in Step 4."
+            )
+            if include_mesh and "display_mesh" in result:
+                shown = _show_mesh(
+                    result["display_mesh"],
+                    color_key="core_cavity_rgb",
+                    viewer_key=f"core-cavity-{selected_part}",
+                )
+                if not shown:
+                    st.json({
+                        "display_mesh": {
+                            "point_count": result["display_mesh"].get("point_count"),
+                            "triangle_count": result["display_mesh"].get("triangle_count"),
+                        }
+                    })
+            with st.expander("Core/Cavity JSON"):
+                st.json(core_cavity)
+
+    _render_dfm_summary_report(selected_part)
