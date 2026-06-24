@@ -54,40 +54,177 @@ The script saves validation and performance JSON files under
 
 ## Local Development (without Docker)
 
+You can run the full app locally without Docker. The stack is two processes:
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **FastAPI backend** | `8000` | STEP loading, draft/undercut/direction/parting-line APIs |
+| **Streamlit frontend** | `8501` | Interactive UI and 3D visualization |
+
+Place STEP files in `data/parts/` (e.g. `data/parts/Part1.stp`).
+
 ### Prerequisites
 
-- Anaconda or Miniconda
-- Python 3.11
+- **Git** — clone the repo
+- **curl** and **tar** — for micromamba install (Option A)
+- **Python 3.11** — provided by the conda environment
+- **pythonOCC** — must come from conda-forge (not pip); see `environment.yml`
 
-### Setup
+> **Why conda/micromamba?**  
+> `pythonocc-core` has C++ extensions that are reliably available only on
+> conda-forge. Pip builds often fail on macOS and Linux.
+
+---
+
+### Option A — Micromamba (recommended, no system conda required)
+
+Micromamba installs into `.micromamba/` inside the project. This folder is
+gitignored — recreate it on each machine.
+
+#### 1. One-time environment setup
 
 ```bash
-# 1. Create conda environment with pythonOCC
-conda env create -f environment.yml
-conda activate dfm_agent
+cd Bosch
 
-# 2. Verify pythonOCC is working
-python -c "from OCC.Core.STEPControl import STEPControl_Reader; print('OCC OK')"
+# macOS Apple Silicon
+mkdir -p .micromamba
+curl -Ls https://micro.mamba.pm/api/micromamba/osx-arm64/latest \
+  | tar -xj -C .micromamba bin/micromamba
 
-# 3. Run the STEP loader directly
-python -m backend.geometry.step_loader data/parts/Part1.stp --json
+# Linux x86_64 (use this instead on Linux)
+# curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
+#   | tar -xj -C .micromamba bin/micromamba
 
-# 4. Run tests
-pytest tests/ -v
-
-# 5. Validate available STEP demo files
-python -m backend.validation.part_validation --json
-
-# 6. Profile available STEP demo files
-python -m backend.validation.performance_profile --json
-
-# 7. Start Streamlit frontend
-streamlit run frontend/app.py
+export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
+./.micromamba/bin/micromamba create -y -f environment.yml -n dfm_agent -r "$MAMBA_ROOT_PREFIX"
 ```
 
-> **Why conda?**  
-> `pythonocc-core` has C++ extension modules that are reliably available only
-> on conda-forge.  Pip builds exist but often fail on certain platforms.
+First create takes **5–15 minutes** and ~2–5 GB disk (pythonOCC, VTK, CadQuery).
+
+#### 2. Verify the environment
+
+```bash
+export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
+export PYTHONPATH="$PWD"
+
+./.micromamba/bin/micromamba run -r "$MAMBA_ROOT_PREFIX" -n dfm_agent \
+  python -c "from OCC.Core.STEPControl import STEPControl_Reader; print('OCC OK')"
+
+./.micromamba/bin/micromamba run -r "$MAMBA_ROOT_PREFIX" -n dfm_agent \
+  python -m backend.geometry.step_loader data/parts/Part1.stp --json
+```
+
+#### 3. Run the application (two terminals)
+
+**Terminal 1 — backend:**
+```bash
+cd Bosch
+export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
+export PYTHONPATH="$PWD"
+./.micromamba/bin/micromamba run -r "$MAMBA_ROOT_PREFIX" -n dfm_agent \
+  uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 — frontend:**
+```bash
+cd Bosch
+export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
+export PYTHONPATH="$PWD"
+./.micromamba/bin/micromamba run -r "$MAMBA_ROOT_PREFIX" -n dfm_agent \
+  streamlit run frontend/app.py --server.port 8501
+```
+
+#### 4. Open in browser
+
+```bash
+open http://localhost:8501     # Streamlit UI — select Part1.stp, run analysis steps
+open http://localhost:8000/docs  # FastAPI interactive docs
+```
+
+In the Streamlit sidebar: confirm **Backend connected**, select **Part1.stp**,
+then step through **Load STEP → Draft → Undercuts → Direction → Parting Line**.
+
+---
+
+### Option B — Miniconda / Miniforge
+
+If you already have conda installed:
+
+```bash
+cd Bosch
+conda env create -f environment.yml
+conda activate dfm_agent
+export PYTHONPATH="$PWD"
+
+python -c "from OCC.Core.STEPControl import STEPControl_Reader; print('OCC OK')"
+```
+
+**Terminal 1 — backend:**
+```bash
+cd Bosch
+conda activate dfm_agent
+export PYTHONPATH="$PWD"
+uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
+```
+
+**Terminal 2 — frontend:**
+```bash
+cd Bosch
+conda activate dfm_agent
+export PYTHONPATH="$PWD"
+streamlit run frontend/app.py --server.port 8501
+```
+
+---
+
+### Optional checks and dev commands
+
+```bash
+# Run tests
+pytest tests/ -v
+
+# Validate STEP demo files
+python -m backend.validation.part_validation --json
+
+# Profile STEP demo files
+python -m backend.validation.performance_profile --json
+
+# Desktop PyVista window (local inspection only, not Streamlit)
+python -m backend.geometry.visualize_raw data/parts/Part1.stp
+```
+
+---
+
+### Platform notes
+
+| Platform | 3D viewer in Streamlit |
+|----------|------------------------|
+| **macOS** | Uses **Plotly** in the browser (avoids VTK Cocoa thread crashes) |
+| **Linux / Docker** | Uses **PyVista + stpyvista** |
+
+### Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| `ModuleNotFoundError: OCC` | Environment not activated, or create env from `environment.yml` |
+| `Backend unavailable` in UI | Start the FastAPI server on port 8000 first |
+| Micromamba lock error | Wait a few seconds and retry, or `rm -f ~/.cache/mamba/proc/proc.lock` |
+| Empty parts list | Add a `.stp` file under `data/parts/` |
+| `PYTHONPATH` errors | Always `export PYTHONPATH="$PWD"` from the `Bosch` repo root |
+
+### Helper alias (optional)
+
+Add to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+bosch-env() {
+  cd /path/to/Bosch
+  export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
+  export PYTHONPATH="$PWD"
+}
+```
+
+Then run `bosch-env` in each terminal before the `micromamba run` commands.
 
 ---
 
