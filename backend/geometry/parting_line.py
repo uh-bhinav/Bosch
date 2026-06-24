@@ -2657,7 +2657,7 @@ def detect_parting_line_candidates(
     point_tolerance: float = 1e-4,
     include_boundary: bool = True,
     refine: bool = True,
-    smoothing_iterations: int = 6,
+    smoothing_iterations: int = 8,
     display_resample_min_points: int = 96,
     max_refined_display_points: int = 32_000,
     mutate: bool = True,

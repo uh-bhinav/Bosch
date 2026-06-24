@@ -65,7 +65,7 @@ class PartingLineSettings:
     dot_tolerance: float = 0.01
     boundary_dot_tolerance: float = 0.15
     point_tolerance: float = 1e-4
-    smoothing_iterations: int = 6
+    smoothing_iterations: int = 8
     display_resample_min_points: int = 96
     max_refined_display_points: int = 32_000
     refined_curve_color: tuple[float, float, float] = (0.0, 0.72, 1.0)
