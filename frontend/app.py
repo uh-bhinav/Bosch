@@ -5,6 +5,13 @@ import sys
 os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
 os.environ.setdefault("VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN", "1")
 
+# pyarrow's bundled mimalloc (3.3.x) segfaults (SIGSEGV) the very first time a
+# Streamlit ScriptRunner thread performs an Arrow allocation (st.dataframe /
+# Table.from_pandas) after the thread that first touched libarrow has exited.
+# This is upstream mimalloc bug microsoft/mimalloc#1287 / apache/arrow#50471.
+# Forcing the system allocator instead of mimalloc avoids the crash entirely.
+os.environ.setdefault("ARROW_DEFAULT_MEMORY_POOL", "system")
+
 import streamlit as st
 import requests
 import time
@@ -18,6 +25,7 @@ st.set_page_config(
 )
 
 BACKEND_URL = os.environ.get("DFM_BACKEND_URL", "http://localhost:8000")
+_USE_PLOTLY_VIEWER = sys.platform == "darwin" or os.environ.get("DFM_FORCE_PLOTLY") == "1"
 
 
 def _inject_app_styles() -> None:
@@ -1114,7 +1122,7 @@ def _show_mesh(
     viewer_key: str | None = None,
 ) -> bool:
     # macOS + Streamlit runs scripts on worker threads; VTK Cocoa crashes if used there.
-    if sys.platform == "darwin":
+    if _USE_PLOTLY_VIEWER:
         return _show_mesh_plotly(
             mesh_payload,
             color_key=color_key,

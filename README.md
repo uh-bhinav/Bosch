@@ -130,6 +130,7 @@ export PYTHONPATH="$PWD"
 cd Bosch
 export MAMBA_ROOT_PREFIX="$PWD/.micromamba/root"
 export PYTHONPATH="$PWD"
+export ARROW_DEFAULT_MEMORY_POOL=system   # avoids pyarrow/mimalloc SIGSEGV — see Troubleshooting
 ./.micromamba/bin/micromamba run -r "$MAMBA_ROOT_PREFIX" -n dfm_agent \
   streamlit run frontend/app.py --server.port 8501
 ```
@@ -172,6 +173,7 @@ uvicorn backend.api.main:app --host 0.0.0.0 --port 8000
 cd Bosch
 conda activate dfm_agent
 export PYTHONPATH="$PWD"
+export ARROW_DEFAULT_MEMORY_POOL=system   # avoids pyarrow/mimalloc SIGSEGV — see Troubleshooting
 streamlit run frontend/app.py --server.port 8501
 ```
 
