@@ -39,22 +39,32 @@
     "PostToolUse": [
       {
         "matcher": "Bash",
-        "pattern": "pytest",
-        "script": "grep -E '(FAILED|ERROR|PASSED|failed|error|warnings summary|short test summary)' || true"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'pytest'; then echo \"$TOOL_OUTPUT\" | grep -E '(FAILED|ERROR|PASSED|failed|error|warnings summary|short test summary)' || true; fi"
+          }
+        ]
       }
     ],
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "pattern": "pip install pythonocc",
-        "action": "block",
-        "message": "pythonocc-core must be installed via conda/micromamba, not pip. Use: conda install -c conda-forge pythonocc-core=7.7.2"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'pip install pythonocc'; then echo '{\"decision\": \"block\", \"reason\": \"pythonocc-core must be installed via conda/micromamba, not pip. Use: conda install -c conda-forge pythonocc-core=7.7.2\"}' && exit 2; fi"
+          }
+        ]
       },
       {
-        "matcher": "Edit",
-        "pattern": "data/parts/*.stp",
-        "action": "block",
-        "message": "STEP fixture files in data/parts/ are read-only inputs. Do not modify them."
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'data/parts/.*\\.stp'; then echo '{\"decision\": \"block\", \"reason\": \"STEP fixture files in data/parts/ are read-only inputs. Do not modify them.\"}' && exit 2; fi"
+          }
+        ]
       }
     ]
   }
