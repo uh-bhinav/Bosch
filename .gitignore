@@ -29,5 +29,8 @@ conda-meta/
 .env
 .streamlit/secrets.toml
 
+# Claude Code — local overrides only (settings.json IS committed)
+.claude/settings.local.json
+
 # Logs
 *.log
