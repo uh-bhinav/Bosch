@@ -298,6 +298,7 @@ def build_display_mesh(
     part: PartGeometry,
     linear_deflection: float = 0.5,
     angular_deflection: float = 0.5,
+    max_triangle_count: Optional[int] = None,
 ) -> RawMeshData:
     """
     Preferred public name for display triangulation.
@@ -305,12 +306,44 @@ def build_display_mesh(
     `build_raw_mesh` remains as a backwards-compatible alias from the first
     scaffold pass.  This name is clearer: the result is a display-only mesh,
     not a substitute for exact B-Rep analysis.
+
+    Parameters
+    ----------
+    max_triangle_count
+        Upper bound on triangles in the returned mesh.  When ``None``, the
+        limit is read from ``settings.dfm.display.max_triangle_count``.
+        Pass ``0`` to disable the ceiling entirely.  When the initial
+        triangulation exceeds the limit, a proportionally coarser
+        ``linear_deflection`` is computed and the mesh is re-triangulated once.
+        This prevents unbounded memory growth in the Streamlit session state.
     """
-    return build_raw_mesh(
+    from backend.config import settings as _settings  # local to avoid circular import at module init
+
+    mesh = build_raw_mesh(
         part=part,
         linear_deflection=linear_deflection,
         angular_deflection=angular_deflection,
     )
+
+    limit = max_triangle_count if max_triangle_count is not None else _settings.dfm.display.max_triangle_count
+    if limit > 0 and mesh.triangle_count > limit:
+        scale = (mesh.triangle_count / limit) ** 0.5
+        coarser = linear_deflection * scale
+        logger.warning(
+            "Display mesh has %d triangles (ceiling %d); re-triangulating with "
+            "linear_deflection=%.3f mm (was %.3f mm).",
+            mesh.triangle_count,
+            limit,
+            coarser,
+            linear_deflection,
+        )
+        mesh = build_raw_mesh(
+            part=part,
+            linear_deflection=coarser,
+            angular_deflection=angular_deflection,
+        )
+
+    return mesh
 
 
 def to_pyvista(mesh: RawMeshData) -> object:

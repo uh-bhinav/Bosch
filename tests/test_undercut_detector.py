@@ -65,7 +65,10 @@ def test_detect_undercuts_flags_zero_draft_face():
     face = _make_face(0, (1.0, 0.0, 0.0))
     part = _make_part([face])
 
-    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True)
+    # boolean_refine=False: occ_face is a MagicMock; without this guard the
+    # mock would be fed into real BRepAlgoAPI_Common calls in a Docker/conda
+    # environment with pythonocc-core installed, stalling for minutes.
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
 
     assert result.undercut_face_ids == [0]
     assert result.has_undercuts is True
@@ -177,7 +180,8 @@ def test_detect_undercuts_groups_adjacent_faces():
     ]
     part = _make_part(faces, adjacency={0: [1], 1: [0], 2: []})
 
-    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True)
+    # boolean_refine=False: mock OCC objects must not reach real Boolean calls.
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
 
     assert result.undercut_face_ids == [0, 1]
     assert len(result.features) == 1
@@ -352,7 +356,8 @@ def test_detect_undercuts_mutate_false_preserves_faces():
     face = _make_face(0, (1.0, 0.0, 0.0))
     part = _make_part([face])
 
-    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False)
+    # boolean_refine=False: mock OCC objects must not reach real Boolean calls.
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
 
     assert result.undercut_face_ids == [0]
     assert face.is_undercut is None

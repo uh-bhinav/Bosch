@@ -90,6 +90,11 @@ class CoreCavitySettings:
     threshold: float = 0.05
     cavity_color: tuple[float, float, float] = (0.2, 0.8, 0.3)
     core_color: tuple[float, float, float] = (0.2, 0.45, 0.9)
+    # Milestone 1.10: Boolean solid split
+    blank_margin_factor: float = 0.25
+    solid_split_enabled: bool = True
+    export_dir: str = "output/mold_halves"
+    split_fuzzy_factor: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,49 @@ class PartingLineSettings:
     max_refined_display_points: int = 32_000
     refined_curve_color: tuple[float, float, float] = (0.0, 0.72, 1.0)
     raw_curve_color: tuple[float, float, float] = (1.0, 0.72, 0.0)
+    # Milestone 1.7: component bridging via real B-Rep edges
+    bridge_penalty_factor: float = 4.0
+    boundary_bridge_factor: float = 0.6
+    # Milestone 1.8: closure guarantee
+    max_closure_error_mm: float = 0.05
+    max_components_exact_cycle: int = 8
+
+
+@dataclass(frozen=True)
+class PartingSurfaceSettings:
+    """
+    Parameters for parting surface generation (Milestone 1.9).
+
+    planar_tolerance_mm
+        Maximum deviation of loop points from PCA best-fit plane before the
+        planar-extrusion strategy is abandoned in favour of BRepFill_Filling.
+    extension_factor
+        How far to extrude the surface past the part bounding box (multiplier
+        of the bbox diagonal). Must be > 1.0 to fully contain the blank.
+    filling_max_degree
+        Maximum polynomial degree for BRepFill_Filling patches.
+    filling_tolerance_mm
+        Geometric tolerance for BRepFill_Filling.
+    """
+    planar_tolerance_mm: float = 0.25
+    extension_factor: float = 1.5
+    filling_max_degree: int = 3
+    filling_tolerance_mm: float = 0.01
+
+
+@dataclass(frozen=True)
+class DisplaySettings:
+    """
+    Frontend rendering limits.
+
+    max_triangle_count
+        Hard ceiling on triangles in any display mesh. When the initial
+        triangulation exceeds this, `build_display_mesh` re-triangulates with a
+        proportionally coarser linear deflection. This prevents unbounded memory
+        growth in the Streamlit session state, which stores up to 6 mesh copies
+        simultaneously (one per analysis step). Set to 0 to disable.
+    """
+    max_triangle_count: int = 100_000
 
 
 @dataclass(frozen=True)
@@ -115,8 +163,10 @@ class DFMSettings:
     draft: DraftSettings = DraftSettings()
     direction_search: DirectionSearchSettings = DirectionSearchSettings()
     parting_line: PartingLineSettings = PartingLineSettings()
+    parting_surface: PartingSurfaceSettings = PartingSurfaceSettings()
     core_cavity: CoreCavitySettings = CoreCavitySettings()
     undercut: UndercutSettings = UndercutSettings()
+    display: DisplaySettings = DisplaySettings()
 
 
 @dataclass(frozen=True)
@@ -222,6 +272,16 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
     undercut_raw = (
         dfm_raw.get("undercut", {})
         if isinstance(dfm_raw.get("undercut", {}), dict)
+        else {}
+    )
+    display_raw = (
+        dfm_raw.get("display", {})
+        if isinstance(dfm_raw.get("display", {}), dict)
+        else {}
+    )
+    parting_surface_raw = (
+        dfm_raw.get("parting_surface", {})
+        if isinstance(dfm_raw.get("parting_surface", {}), dict)
         else {}
     )
     agent_raw = raw.get("agent", {}) if isinstance(raw.get("agent", {}), dict) else {}
@@ -503,6 +563,18 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             core_raw.get("core_color", base.dfm.core_cavity.core_color),
             base.dfm.core_cavity.core_color,
         ),
+        blank_margin_factor=float(
+            core_raw.get("blank_margin_factor", base.dfm.core_cavity.blank_margin_factor)
+        ),
+        solid_split_enabled=bool(
+            core_raw.get("solid_split_enabled", base.dfm.core_cavity.solid_split_enabled)
+        ),
+        export_dir=str(
+            core_raw.get("export_dir", base.dfm.core_cavity.export_dir)
+        ),
+        split_fuzzy_factor=float(
+            core_raw.get("split_fuzzy_factor", base.dfm.core_cavity.split_fuzzy_factor)
+        ),
     )
     parting_line = replace(
         base.dfm.parting_line,
@@ -547,6 +619,18 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             parting_raw.get("raw_curve_color", base.dfm.parting_line.raw_curve_color),
             base.dfm.parting_line.raw_curve_color,
         ),
+        bridge_penalty_factor=float(
+            parting_raw.get("bridge_penalty_factor", base.dfm.parting_line.bridge_penalty_factor)
+        ),
+        boundary_bridge_factor=float(
+            parting_raw.get("boundary_bridge_factor", base.dfm.parting_line.boundary_bridge_factor)
+        ),
+        max_closure_error_mm=float(
+            parting_raw.get("max_closure_error_mm", base.dfm.parting_line.max_closure_error_mm)
+        ),
+        max_components_exact_cycle=int(
+            parting_raw.get("max_components_exact_cycle", base.dfm.parting_line.max_components_exact_cycle)
+        ),
     )
     undercut = replace(
         base.dfm.undercut,
@@ -563,13 +647,36 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             )
         ),
     )
+    display = replace(
+        base.dfm.display,
+        max_triangle_count=int(
+            display_raw.get("max_triangle_count", base.dfm.display.max_triangle_count)
+        ),
+    )
+    parting_surface = replace(
+        base.dfm.parting_surface,
+        planar_tolerance_mm=float(
+            parting_surface_raw.get("planar_tolerance_mm", base.dfm.parting_surface.planar_tolerance_mm)
+        ),
+        extension_factor=float(
+            parting_surface_raw.get("extension_factor", base.dfm.parting_surface.extension_factor)
+        ),
+        filling_max_degree=int(
+            parting_surface_raw.get("filling_max_degree", base.dfm.parting_surface.filling_max_degree)
+        ),
+        filling_tolerance_mm=float(
+            parting_surface_raw.get("filling_tolerance_mm", base.dfm.parting_surface.filling_tolerance_mm)
+        ),
+    )
     dfm = replace(
         base.dfm,
         draft=draft,
         direction_search=direction,
         parting_line=parting_line,
+        parting_surface=parting_surface,
         core_cavity=core_cavity,
         undercut=undercut,
+        display=display,
     )
     agent = replace(
         base.agent,

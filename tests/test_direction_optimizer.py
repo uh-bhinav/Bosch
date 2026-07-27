@@ -93,8 +93,13 @@ def test_generate_candidate_directions_are_unit_vectors():
         assert abs(mag - 1.0) < 1e-9
 
 
-def test_optimize_mold_direction_mutates_part_to_best_direction():
+def test_optimize_mold_direction_mutates_part_to_best_direction(monkeypatch):
+    import backend.geometry.undercut_detector as undercut_module
     from backend.geometry.direction_optimizer import optimize_mold_direction
+
+    # Disable real OCC Boolean calls: occ_face/occ_shape are MagicMocks and
+    # would stall for minutes against a real pythonocc-core installation.
+    monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
 
     # Face normal +X is bad for +Z pull and good for +X pull.
     face = _make_face(0, (1.0, 0.0, 0.0))

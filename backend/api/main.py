@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from backend.geometry.core_cavity import classify_core_cavity
+from backend.geometry.core_cavity import classify_core_cavity, export_mold_halves, split_core_cavity_solids
 from backend.geometry.draft_analyzer import analyze_draft
 from backend.geometry.direction_optimizer import optimize_mold_direction
 from backend.geometry.parting_line import detect_parting_line_candidates
@@ -918,6 +918,7 @@ def part_core_cavity(
     filename: str,
     use_optimal_direction: bool = Query(default=True),
     threshold: float | None = Query(default=None, ge=0.0, le=1.0),
+    solid_split: bool = Query(default=False),
     include_faces: bool = Query(default=False),
     include_mesh: bool = Query(default=True),
     mesh_deflection: float = Query(default=0.5, gt=0.0),
@@ -925,7 +926,9 @@ def part_core_cavity(
     """
     Classify faces as cavity, core, or parting relative to the pull direction.
 
-    Level 1 face classification only — full Boolean solid split is Level 2.
+    Level 1: face classification (always returned).
+    Milestone 1.10: set ``solid_split=true`` to also run the Boolean mold-half split
+    using the parting surface from the parting-line endpoint.
     """
     operation = "core/cavity classification"
     _, path = _part_path_or_raise(filename, operation)
@@ -952,6 +955,26 @@ def part_core_cavity(
             "core_cavity": result.to_dict(),
             "pull_direction_source": pull_direction_source,
         }
+
+        # Milestone 1.10: optional Boolean solid split.
+        if solid_split:
+            from backend.geometry.parting_line import detect_parting_line_candidates
+            parting_result = detect_parting_line_candidates(
+                part,
+                pull_direction=pull_direction,
+                mutate=False,
+            )
+            parting_sheet = (
+                parting_result.parting_surface.occ_shape
+                if parting_result.parting_surface.status.startswith("generated")
+                else None
+            )
+            solid_result = split_core_cavity_solids(
+                part,
+                parting_sheet,
+                pull_direction=pull_direction,
+            )
+            payload["solid_split"] = solid_result.to_dict()
 
         if include_mesh:
             mesh = build_display_mesh(part, linear_deflection=mesh_deflection)
@@ -987,6 +1010,65 @@ def part_core_cavity(
             payload["display_mesh"] = mesh_payload
 
         return payload
+    except ImportError as exc:
+        _raise_dependency_error(exc, operation)
+    except ValueError as exc:
+        _raise_value_error(exc, operation)
+    except STEPLoadError as exc:
+        _raise_step_error(exc, operation)
+
+
+@app.post("/parts/{filename}/export/mold-halves")
+def export_mold_halves_endpoint(
+    filename: str,
+    output_dir: str | None = Query(default=None),
+):
+    """
+    Export cavity and core mold-half solids as a multi-body AP214 STEP file (Milestone 1.11).
+
+    Runs the full pipeline: load → direction → parting line → parting surface →
+    solid split → export. Writes to ``output/mold_halves/`` by default (never to
+    ``data/parts/``). Returns the output file path and status.
+    """
+    operation = "mold-half STEP export"
+    _, path = _part_path_or_raise(filename, operation)
+
+    try:
+        from backend.geometry.parting_line import detect_parting_line_candidates
+
+        part = load_step(path)
+        direction = optimize_mold_direction(part)
+        pull_direction = direction.best_direction
+        part.optimal_pull_direction = pull_direction
+
+        parting_result = detect_parting_line_candidates(
+            part,
+            pull_direction=pull_direction,
+            mutate=False,
+        )
+        parting_sheet = (
+            parting_result.parting_surface.occ_shape
+            if parting_result.parting_surface.status.startswith("generated")
+            else None
+        )
+        solid_result = split_core_cavity_solids(
+            part,
+            parting_sheet,
+            pull_direction=pull_direction,
+        )
+        prefix = filename.replace(".stp", "").replace(".step", "")
+        export_result = export_mold_halves(
+            solid_result,
+            output_dir=output_dir,
+            filename_prefix=f"{prefix}_mold_halves",
+        )
+        return {
+            "filename": filename,
+            "pull_direction": list(pull_direction),
+            "parting_surface_status": parting_result.parting_surface.status,
+            "solid_split": solid_result.to_dict(),
+            "export": export_result,
+        }
     except ImportError as exc:
         _raise_dependency_error(exc, operation)
     except ValueError as exc:

@@ -84,7 +84,9 @@ def test_parting_line_paths_payload_is_json_safe():
 
     assert payload["raw"]["point_count"] == 2
     assert payload["refined"]["point_count"] == 3
-    assert payload["raw"]["visible_by_default"] is False
+    # Both raw and refined are shown by default (matching the sidebar checkboxes).
+    assert payload["raw"]["visible_by_default"] is True
     assert payload["refined"]["visible_by_default"] is True
     assert payload["legend"]["raw"]["label"] == "Raw selected parting wire"
-    assert payload["legend"]["refined"]["label"] == "Refined parting curve candidate"
+    # Label matches PARTING_LINE_STYLES["refined"]["label"] in main.py.
+    assert payload["legend"]["refined"]["label"] == "Parting Line (Refined)"

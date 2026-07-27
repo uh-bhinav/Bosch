@@ -54,10 +54,27 @@ dfm:
     max_refined_display_points: 32000
     refined_curve_color: [0.0, 0.72, 1.0]
     raw_curve_color: [1.0, 0.72, 0.0]
+    # Milestone 1.7: component bridging
+    bridge_penalty_factor: 4.0
+    boundary_bridge_factor: 0.6
+    # Milestone 1.8: closure guarantee
+    max_closure_error_mm: 0.05
+    max_components_exact_cycle: 8
   core_cavity:
     threshold: 0.05
     cavity_color: [0.2, 0.8, 0.3]
     core_color: [0.2, 0.45, 0.9]
+    blank_margin_factor: 0.25
+    solid_split_enabled: true
+    export_dir: "output/mold_halves"
+    split_fuzzy_factor: 0.1
+  display:
+    max_triangle_count: 100000
+  parting_surface:
+    planar_tolerance_mm: 0.25
+    extension_factor: 1.5
+    filling_max_degree: 3
+    filling_tolerance_mm: 0.01
   undercut:
     convexity_tangent_tolerance: 0.01
     convexity_suppression_enabled: true

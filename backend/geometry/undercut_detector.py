@@ -435,6 +435,27 @@ BooleanVolumeCache = dict[tuple[int, int, int, int], Optional[BooleanInterferenc
 
 @dataclass(frozen=True)
 class UndercutFeature:
+    """
+    Feature-level undercut representation (Sangolli 2021 adaptation).
+
+    Notes on ``depth_proxy_mm``:
+    This field deliberately takes the *largest* plausible depth estimate across
+    multiple methods (Boolean-vertex evidence, centroid-projection proxy, and
+    bounding-box spans), rather than preferring the most precise one.  This is
+    an intentional conservative safety margin for mold engineering: it is safer
+    to over-estimate undercut depth (leading to conservative tooling allowance)
+    than to under-estimate it (leading to stuck parts at demold time).
+
+    This contrasts with the *per-face* ``BooleanInterferenceMetrics.depth_mm``,
+    which deliberately prefers the most precise evidence (exact Boolean-vertex
+    reference first, then falling back to volume/area ratios).  Both are tested
+    and reconciled as-designed — see ``docs/ARCHITECTURE_ROADMAP.md`` Milestone
+    1.3 note and ``TODO.md`` for the team-decision record.
+
+    Use ``boolean_depth_proxy_mm`` when you need the Boolean-geometry-grounded
+    depth estimate for a specific feature.
+    """
+
     feature_id: int
     face_ids: list[int]
     undercut_type: str

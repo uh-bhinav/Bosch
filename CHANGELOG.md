@@ -4,6 +4,270 @@
 
 ---
 
+### 2026-07-27 — Phase 2c/2d/2e: Depth design decision, overclaim check, Part3 audit
+
+**Phase 2c — Undercut depth: precision vs. conservative max (team decision documented):**
+- Added a comprehensive class docstring to `UndercutFeature` in
+  `backend/geometry/undercut_detector.py` explaining the intentional design:
+  `depth_proxy_mm` takes the *largest* plausible estimate (conservative safety margin)
+  while `BooleanInterferenceMetrics.depth_mm` prefers the most precise. This
+  difference is documented as intentional (better to over-estimate than under-estimate
+  undercut depth for mold engineering). An attempted "prefer precision" fix was reverted
+  after breaking 3 tests (Milestone 1.3). The docstring references the relevant ARCHITECTURE_ROADMAP
+  section and TODO decision record.
+- Decision: keep feature-level as conservative upper bound. No code change.
+
+**Phase 2d — SUBMISSION_REPORT.md overclaim check:**
+- Verified `docs/SUBMISSION_REPORT.md` is already correctly qualified:
+  - Parting line: "Candidate/foundation" (accurate)
+  - Core/cavity: "Complete for face classification only" (accurate; now also has solid split)
+  - Honest limitations section (lines 46-50) correctly qualified
+- Checked off in `TODO.md`. No further action needed.
+
+**Phase 2e — Part3.stp undercut count 0 domain analysis:**
+- Updated STATUS.md with explicit domain reasoning: if ALL 16 originally flagged faces sit
+  on external convex features (bosses, ribs with all-convex edge transitions), suppression
+  to 0 is geometrically correct — those faces have no concave edges, so they cannot form
+  genuine pockets. The suppression logic is verified correct on synthetic test cases.
+- A 100% swing on a real part still needs Docker verification (compare `face_ids` +
+  `surface_type` + edge convexity classifications with suppression on/off) and mold
+  engineer sign-off before using the 0-undercut result in demo claims.
+- Documented in STATUS.md as a known pending domain review.
+
+---
+
+### 2026-07-27 — Milestone 1.11: Multi-solid STEP export via STEPControl_Writer
+
+- New `export_mold_halves()` function in `backend/geometry/core_cavity.py`:
+  - `STEPControl_Writer` with `Interface_Static.SetCVal("write.step.schema", "AP214")` —
+    matching the source file schema (locked decision from 2026-07-27).
+  - Transfers cavity and core solids via `writer.Transfer(solid, STEPControl_AsIs)`.
+  - Writes to `output/mold_halves/` (never `data/parts/` — invariant #2 explicitly enforced
+    with a path guard: if the resolved export path is a subdirectory of `data/parts/`, the
+    function returns `status="failed"` with a clear reason).
+  - Returns JSON-safe dict: `status`, `output_path`, `file_size_bytes`, `schema`, `solid_count`.
+  - Gracefully handles missing OCC writer, failed solid result, and write errors.
+- New API endpoint `POST /parts/{filename}/export/mold-halves` in `backend/api/main.py`:
+  - Runs the full pipeline (load → direction → parting line → solid split → export).
+  - Returns: `filename`, `pull_direction`, `parting_surface_status`, `solid_split`, `export`.
+  - Accepts optional `output_dir` query param to override the default export directory.
+- `.gitignore` updated: added `output/mold_halves/` to exclude generated STEP artifacts.
+- OCC imports extended in `core_cavity.py`: `Interface_Static`, `IFSelect_RetDone`,
+  `STEPControl_Writer`, `STEPControl_AsIs`.
+- **Verification**: 28 tests pass. STEP export with real OCC requires Docker.
+  Round-trip verification (reload exported file, count 2 solids) is the Docker gate.
+
+---
+
+### 2026-07-27 — Milestone 1.10: Core/cavity Boolean solid split
+
+- New `CoreCavitySolidResult` dataclass and `split_core_cavity_solids()` function in
+  `backend/geometry/core_cavity.py`:
+  - Step 1: `BRepPrimAPI_MakeBox` mold blank (bbox + `blank_margin_factor × diagonal` on each side).
+  - Step 2: `BRepAlgoAPI_Cut(blank, part.occ_shape)` → tooling volume, with fuzzy-tolerance
+    retry ladder `[1.0, 5.0, 25.0] × split_fuzzy_factor`.
+  - Step 3: `BRepAlgoAPI_Splitter(tooling, parting_sheet)` → two mold halves.
+  - Step 4: `GProp_GProps` centre-of-mass for each solid; classify by
+    `sign(dot(CoM − parting_centroid, pull_direction))` → cavity / core.
+  - Graceful degradation: `solid_split_status` = "blocked_by_parting_line" (no sheet),
+    "failed" (OCC error, with `failure_reason`), or "split_ok" (2 solids returned).
+  - `split_solid_count` is always reported even on failure (actual count, not assumed 2).
+  - `cavity_solid` / `core_solid` are raw `TopoDS_Shape` objects for Milestone 1.11 export;
+    not serialized in `to_dict()`.
+- OCC imports added with guard: `BRepAlgoAPI_Cut`, `BRepAlgoAPI_Splitter`,
+  `BRepBndLib`, `BRepGProp`, `BRepPrimAPI_MakeBox`, `TopExp_Explorer`,
+  `GProp_GProps`, `gp_Pnt`.
+- `backend/api/main.py`: `/core-cavity` endpoint now accepts `solid_split: bool = False`.
+  When `True`, runs `detect_parting_line_candidates` to get the parting surface, then
+  `split_core_cavity_solids`; result in `payload["solid_split"]`.
+- New config keys: `dfm.core_cavity.blank_margin_factor: 0.25`, `solid_split_enabled: true`,
+  `export_dir: "output/mold_halves"`, `split_fuzzy_factor: 0.1` — all in `config.yaml` and
+  `CoreCavitySettings`.
+- `IMPLEMENTATION_STATUS.md` note: `core_cavity.py` no longer face classification only.
+- **Verification**: 28 tests pass (`test_parting_line.py` + `test_api_error_handling.py`).
+  Solid split requires real OCC (Docker); mock-based tests are unaffected.
+
+---
+
+### 2026-07-27 — Milestone 1.9: Parting surface generation
+
+- New `PartingSurfaceResult` dataclass in `backend/geometry/parting_line.py` with fields:
+  `status`, `strategy`, `planar_deviation_mm`, `extension_factor`, `area_mm2`,
+  `failure_reason`, `occ_shape` (not serialized). Exposes `to_dict()` for API.
+- New `_build_parting_surface()` function:
+  - **Strategy 1 (PCA planar, preferred)**: NumPy SVD on loop points → best-fit plane.
+    If max deviation ≤ `planar_tolerance_mm` (0.25 mm): builds OCC wire from loop points via
+    `BRepBuilderAPI_MakeEdge/MakeWire`, trims a bounded face with `BRepBuilderAPI_MakeFace`,
+    extrudes past bbox via `BRepPrimAPI_MakePrism` (factor = `extension_factor` × bbox diagonal).
+  - **Strategy 2 (BRepFill_Filling, fallback)**: N-sided patch from loop edges as boundary
+    constraints. Returns a `TopoDS_Face` without extrusion.
+  - Both strategies compute area via `brepgprop_SurfaceProperties` for verification.
+  - Graceful failure path on any OCC error (`status="failed"`, `failure_reason=...`).
+  - Protected by `_OCC_SURFACE_AVAILABLE` guard — degrades cleanly when pythonOCC is absent.
+- `detect_parting_line_candidates()` calls `_build_parting_surface()` when `closure_guaranteed`
+  is True; otherwise sets `status="not_attempted"`.
+- `PartingLineResult` gets new `parting_surface: PartingSurfaceResult` field.
+- New config section `dfm.parting_surface` in `config.yaml` and `PartingSurfaceSettings`
+  in `backend/config.py`: `planar_tolerance_mm: 0.25`, `extension_factor: 1.5`,
+  `filling_max_degree: 3`, `filling_tolerance_mm: 0.01`.
+- New OCC imports added with try/except guard: `BRepBuilderAPI_MakeEdge/MakeFace/MakeWire`,
+  `BRepFill_Filling`, `BRepPrimAPI_MakePrism`, `GProp_GProps`, `brepgprop_SurfaceProperties`,
+  `gp_Dir/Pln/Pnt/Vec`. Also imports numpy as `_np` (already in the conda environment).
+- **Verification**: all 23 `tests/test_parting_line.py` tests pass unchanged (1.84s).
+  Note: OCC surface generation is not exercised in mock-based tests (requires real geometry).
+  Verification with real OCC requires Docker.
+
+---
+
+### 2026-07-27 — Milestone 1.8: Loop closure guarantee + gating
+
+- New function `_attempt_loop_closure()` in `backend/geometry/parting_line.py`:
+  - If wire is already closed: returns `(True, 0.0, [])`.
+  - If closure error ≤ `max_closure_error_mm` (0.05 mm): treats wire as closed.
+  - Otherwise: rebuilds `G_all` from all part edges (same bridge-cost scheme as 1.7) and
+    attempts `nx.shortest_path` from the wire's last endpoint back to its first.
+  - If closing path found: returns `(True, 0.0, [message])`.
+  - If closing path not found: returns `(False, error_mm, [review-warning messages])`.
+    The warning message tells downstream consumers and the UI that readiness must be
+    "review" — closure failed and the loop is genuinely open.
+- `detect_parting_line_candidates()` now accepts `max_closure_error_mm: float = 0.05`.
+- `PartingLineResult` gets two new fields: `closure_error_mm: float` (default 0.0) and
+  `closure_guaranteed: bool` (default False); both appear in `to_dict()`.
+- The method string in `PartingLineResult` updated to mention Milestones 1.7 and 1.8.
+- New config keys `max_closure_error_mm: 0.05` and `max_components_exact_cycle: 8` already
+  added to `config.yaml` and `PartingLineSettings` in Milestone 1.7 prep.
+- **Verification**: all 23 `tests/test_parting_line.py` tests pass unchanged (1.83s).
+
+---
+
+### 2026-07-27 — Milestone 1.7: Bridge disconnected silhouette components via real B-Rep edges
+
+- New function `_bridge_disconnected_components()` in `backend/geometry/parting_line.py`:
+  - Builds `G_all` as a `nx.Graph` over ALL part edges (not just candidates).
+  - Bridge cost per edge: `1.0 × length` (candidate, free to reuse), `boundary_bridge_factor ×
+    length` (boundary — cheaper, since open rims are often where the PL should run),
+    `bridge_penalty_factor × length` (non-candidate manifold), `+inf` if any adjacent face
+    is a known undercut face (never route through undercut geometry).
+  - Routes between disconnected component endpoint-pairs via `nx.shortest_path(weight="cost")`.
+  - Greedily connects all reachable components (union-find), building a single merged
+    `PartingLineComponent` containing candidate + bridge edges.
+  - Bridge edges get `kind="bridge"` in `candidate_kinds` so they are distinguishable
+    from silhouette/near-parting edges in diagnostics.
+- `detect_parting_line_candidates()` now accepts `bridge_components: bool = True`,
+  `bridge_penalty_factor: float = 4.0`, `boundary_bridge_factor: float = 0.6` params.
+  Bridging is called between `_candidate_components()` and `_build_ordered_wire()` when
+  there are 2+ components and networkx is available.
+- Bridge status messages are prepended to the result's `warnings` list.
+- New config keys in `config.yaml` and `PartingLineSettings`:
+  `bridge_penalty_factor: 4.0`, `boundary_bridge_factor: 0.6`.
+- Also added Milestone 1.8 config keys: `max_closure_error_mm: 0.05`,
+  `max_components_exact_cycle: 8` (used by upcoming closure-guarantee step).
+- **Verification**: all 23 `tests/test_parting_line.py` tests pass unchanged (1.87s).
+  Bridging is a no-op for single-component parts (skipped when `len(components) < 2`).
+
+---
+
+### 2026-07-27 — Milestone 1.6: Replace bounded DFS with networkx graph in parting_line.py (F4 resolved)
+
+- Added `import networkx as nx` (with `_NX_AVAILABLE` guard for robustness) to
+  `backend/geometry/parting_line.py`.
+- In `_trace_best_weighted_path`, replaced the hand-rolled `point_to_edges: dict[tuple,
+  set[int]]` adjacency structure with an explicit `nx.MultiGraph`:
+  - Each quantized vertex key becomes a graph node.
+  - Each candidate edge becomes a MultiGraph edge carrying `edge_id` as data.
+  - Adjacency queries (`point_to_edges.get(key)`) → `point_to_edges_of(key)` backed by
+    `G.edges(key, data=True)`.
+  - Branch-point counting (`len(edge_ids) > 2`) → `_branch_point_count()` via
+    `G.degree(node) > 2`.
+- A plain-dict fallback is kept for environments where networkx is not installed
+  (though `requirements.txt` pins `networkx==3.3`).
+- The existing bounded DFS and greedy traversal paths are unchanged — only the
+  adjacency representation changed.
+- **Verification**: all 23 `tests/test_parting_line.py` tests pass unchanged (1.91s).
+  `_NX_AVAILABLE = True` confirmed at import time with networkx 3.4.2.
+- F4 marked resolved in `STATUS.md` and `TODO.md`.
+
+---
+
+### 2026-07-27 — Phase 2a/2b/2f: test fix, mock hygiene, CLAUDE.md hard invariant #6
+
+**Phase 2a — Fix `test_parting_line_paths_payload_is_json_safe`:**
+- Root cause: two stale test assertions in `tests/test_api_error_handling.py` lines 87/90.
+  - Line 87: `assert payload["raw"]["visible_by_default"] is False` — code sets `True` (both
+    overlays shown by default, matching the sidebar checkboxes at app.py:2901-2902).
+  - Line 90: `assert payload["legend"]["refined"]["label"] == "Refined parting curve candidate"` —
+    code has `"Parting Line (Refined)"` (PARTING_LINE_STYLES["refined"]["label"] at main.py:56).
+- Fix: updated both assertions to match current code behavior. Verified: `pytest
+  tests/test_api_error_handling.py::test_parting_line_paths_payload_is_json_safe` passes.
+
+**Phase 2b — Mock test hygiene: explicit `boolean_refine=False` on mock-OCC tests:**
+- Added `boolean_refine=False` to three `detect_undercuts()` calls in
+  `tests/test_undercut_detector.py` (lines 68, 180, 355) — these use `occ_face=MagicMock()`
+  and previously had no guard against real Boolean ops in a Docker environment with
+  pythonocc-core installed.
+- Added `monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)` to
+  `test_optimize_mold_direction_mutates_part_to_best_direction` in
+  `tests/test_direction_optimizer.py` (line 103) — same issue via the optimizer's internal
+  `detect_undercuts` calls.
+- All Boolean-enabled tests already used `monkeypatch.setattr(detector,
+  "_swept_face_interference_volume", ...)` — those are safe and unchanged.
+- Verified: all 4 modified tests pass immediately (< 0.25s combined). Previously they would
+  stall for minutes in Docker.
+
+**Phase 2f — CLAUDE.md hard invariant #6:**
+- Added invariant #6: "After every milestone or fix, append a dated CHANGELOG.md entry,
+  update STATUS.md, and check off TODO.md items. Do not batch — do it per milestone."
+- This codifies the standard already applied to Milestones 1.1–1.5 as an enforced standing
+  rule for every future session.
+
+---
+
+### 2026-07-27 — F6 fix (frontend crash: mesh caching + triangle ceiling)
+
+**Root cause (confirmed by code reading):** Running "Full Level 1 Flow" on macOS
+accumulated 6 full copies of the same mesh geometry (`points` + `faces` arrays,
+~500 KB each) in `st.session_state` — one per analysis step (summary, draft,
+undercuts, direction, parting-line, core-cavity). The backend is stateless and
+re-triangulates from scratch for every request; each response included the full
+mesh payload; `_store_step_result()` stored the entire response dict. Six copies
+of ~500 KB = ~3 MB minimum, plus Plotly rendering overhead and Streamlit's full-
+script rerun model → RAM grew monotonically → system memory pressure → Tornado
+WebSocket buffer allocation failures → `WebSocketClosedError` / `StreamClosedError`
+flood → laptop crash. Plotly (not PyVista) was already being used on macOS, so
+the VTK Cocoa thread crash was not the issue.
+
+**Fix — `frontend/app.py`:**
+- New `_cache_and_strip_mesh(result)`: on first call, copies `points`, `faces`,
+  `face_ids`, `face_centers`, and counts to `st.session_state["cached_display_mesh"]`.
+  On subsequent calls, strips those same keys from the stored result's `display_mesh`,
+  reducing each copy to only the overlay-specific arrays (`draft_rgb`, etc.).
+- New `_hydrate_mesh(display_mesh)`: merges the cached geometry back with any
+  step-specific overlay dict at render time (cached base + step overlays merged via
+  `{**cached, **step_display_mesh}`).
+- `_store_step_result()` now calls `_cache_and_strip_mesh(result)` before storing.
+- `_reset_analysis_state()` now also pops `"cached_display_mesh"`.
+- All 6 rendering sites (summary, draft, undercuts, direction × 2, parting-line,
+  core-cavity) updated to call `_hydrate_mesh(result.get("display_mesh"))` instead
+  of accessing `result["display_mesh"]` directly.
+
+**Fix — `backend/geometry/visualize_raw.py`:**
+- `build_display_mesh()` now accepts `max_triangle_count: int | None`.
+- When the initial triangulation exceeds the limit, scales up `linear_deflection`
+  proportionally (`deflection *= sqrt(actual / limit)`) and re-triangulates once,
+  logging a warning. Default limit from `settings.dfm.display.max_triangle_count`.
+
+**Fix — `backend/config.py` + `config.yaml`:**
+- New `DisplaySettings` dataclass with `max_triangle_count: int = 100_000`.
+- Added to `DFMSettings`; wired into `load_settings()` from `dfm.display` block.
+- `config.yaml`: added `dfm.display.max_triangle_count: 100000`.
+
+**Tracked as F6** in `STATUS.md` (open → resolved same session) and `TODO.md` (added + checked off).
+
+**Verification required (manual):** Load Part3.stp on macOS, run "Full Level 1 Flow",
+confirm no `WebSocketClosedError` in terminal, RSS stays under ~500 MB.
+
+---
+
 ### 2026-07-27 — Phase 0 fixes + Phase 1.1 (edge convexity) + Phase 1.2 (convexity-gated suppression) + Phase 1.3 (reassessed, no change) + Phase 1.4 (flash risk + coarse-to-fine search) + Phase 1.5 (draft conditional thresholds, scoped)
 
 **Phase 1.5 — Draft conditional thresholds (`backend/geometry/draft_analyzer.py`),

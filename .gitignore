@@ -34,3 +34,5 @@ conda-meta/
 
 # Logs
 *.log
+# Generated mold-half STEP exports (Milestone 1.11)
+output/mold_halves/

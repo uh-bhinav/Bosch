@@ -65,6 +65,7 @@ Most geometry functions accept `mutate: bool`:
 3. **Never import OCC in `frontend/`.** The frontend talks to the backend API only. All OCC usage is backend-only.
 4. **All config thresholds live in `config.yaml`.** No hardcoded magic numbers in algorithm code. Edit the YAML, not the source.
 5. **Structured API errors.** Every error response from `backend/api/main.py` must include: `code`, `message`, `operation`, `recovery_hint`, `details`.
+6. **After every milestone or fix**: append a dated `CHANGELOG.md` entry (what changed, why, verification evidence), update `STATUS.md`, and check off `TODO.md` items. Do not batch — do it per milestone. This is the same standard applied to Milestones 1.1–1.5.
 
 ## Honesty Rule
 

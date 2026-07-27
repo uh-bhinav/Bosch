@@ -2014,6 +2014,64 @@ def _reset_analysis_state() -> None:
     st.session_state.pop(STEP_FAILURES_KEY, None)
     st.session_state.pop(STEP_RUNS_KEY, None)
     st.session_state.pop("last_backend_error", None)
+    st.session_state.pop("cached_display_mesh", None)
+
+
+def _cache_and_strip_mesh(result: dict[str, Any]) -> None:
+    """
+    Cache the base mesh geometry once and strip duplicate point/face arrays.
+
+    The first call stores the full display_mesh (points, faces, face_ids,
+    face_centers) in st.session_state["cached_display_mesh"].  Every
+    subsequent call strips the large geometry arrays from the result's
+    display_mesh, leaving only overlay-specific arrays (draft_rgb,
+    undercut_classification, etc.).
+
+    This reduces session-state memory from 6 full mesh copies to 1 cached
+    copy + 5 small overlay dicts, eliminating the root cause of the
+    Tornado WebSocketClosedError flood on macOS.
+    """
+    display_mesh = result.get("display_mesh")
+    if not isinstance(display_mesh, dict):
+        return
+
+    if "cached_display_mesh" not in st.session_state:
+        # Prime the cache with the geometry from this result.
+        st.session_state["cached_display_mesh"] = {
+            "points": display_mesh.get("points", []),
+            "faces": display_mesh.get("faces", []),
+            "face_ids": display_mesh.get("face_ids", []),
+            "face_centers": display_mesh.get("face_centers", {}),
+            "point_count": display_mesh.get("point_count", 0),
+            "triangle_count": display_mesh.get("triangle_count", 0),
+            "face_count": display_mesh.get("face_count", 0),
+        }
+    else:
+        # Geometry is already cached — strip the large arrays from this copy.
+        stripped = {
+            k: v for k, v in display_mesh.items()
+            if k not in ("points", "faces", "face_ids")
+        }
+        result["display_mesh"] = stripped
+
+
+def _hydrate_mesh(display_mesh: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Return a display_mesh dict that is guaranteed to have full geometry.
+
+    If points/faces were stripped during caching, they are restored from
+    the cached base mesh.  The step-specific overlay arrays (draft_rgb, etc.)
+    are preserved and take precedence over the cached values.
+
+    Safe to call even when no cache exists (returns the input unchanged).
+    """
+    if not isinstance(display_mesh, dict):
+        return {}
+    cached = st.session_state.get("cached_display_mesh")
+    if cached is None:
+        return display_mesh
+    # Merge: cached geometry as base, step overlays on top.
+    return {**cached, **display_mesh}
 
 
 def _step_failures() -> dict[str, dict[str, Any]]:
@@ -2088,6 +2146,8 @@ def _store_step_result(step_name: str, result_key: str, result: dict[str, Any] |
     if result is None:
         _mark_step_failure(step_name)
         return False
+    # Cache geometry once; strip duplicate points/faces from subsequent steps.
+    _cache_and_strip_mesh(result)
     st.session_state[result_key] = result
     _mark_step_success(step_name)
     return True
@@ -3141,16 +3201,17 @@ with center:
 
             if include_mesh and "display_mesh" in summary:
                 st.subheader("Display Mesh")
+                _mesh_payload = _hydrate_mesh(summary.get("display_mesh"))
                 shown = _show_mesh(
-                    summary["display_mesh"],
+                    _mesh_payload,
                     color_key="draft_rgb",
                     viewer_key=f"raw-{selected_part}",
                 )
                 if not shown:
                     st.json({
                         "display_mesh": {
-                            "point_count": summary["display_mesh"].get("point_count"),
-                            "triangle_count": summary["display_mesh"].get("triangle_count"),
+                            "point_count": _mesh_payload.get("point_count"),
+                            "triangle_count": _mesh_payload.get("triangle_count"),
                         }
                     })
 
@@ -3193,16 +3254,17 @@ with center:
             c4.metric("Severity", draft["severity"].title())
 
             if include_mesh and "display_mesh" in result:
+                _mesh_payload = _hydrate_mesh(result.get("display_mesh"))
                 shown = _show_mesh(
-                    result["display_mesh"],
+                    _mesh_payload,
                     color_key="draft_rgb",
                     viewer_key=f"draft-{selected_part}",
                 )
                 if not shown:
                     st.json({
                         "display_mesh": {
-                            "point_count": result["display_mesh"].get("point_count"),
-                            "triangle_count": result["display_mesh"].get("triangle_count"),
+                            "point_count": _mesh_payload.get("point_count"),
+                            "triangle_count": _mesh_payload.get("triangle_count"),
                         }
                     })
 
@@ -3299,7 +3361,7 @@ with center:
                         "proxy fallback faces remain in the tables and diagnostics."
                     )
                 display_mesh = _filtered_undercut_mesh_payload(
-                    result["display_mesh"],
+                    _hydrate_mesh(result.get("display_mesh")),
                     important_only=high_confidence_only,
                     show_proxy_faces=show_proxy_undercut_faces,
                 )
@@ -3487,7 +3549,7 @@ with center:
                     horizontal=True,
                     key="direction_overlay_mode",
                 )
-                display_mesh = result["display_mesh"]
+                display_mesh = _hydrate_mesh(result.get("display_mesh"))
                 color_key = "draft_rgb"
                 viewer_regions = None
                 viewer_suffix = "optimal-draft"
@@ -3530,7 +3592,7 @@ with center:
                     viewer_suffix = "optimal-undercuts"
                 elif overlay_mode == "Initial Detected Undercuts":
                     initial_mesh = (
-                        initial_undercut_result.get("display_mesh")
+                        _hydrate_mesh(initial_undercut_result.get("display_mesh"))
                         if isinstance(initial_undercut_result, dict)
                         else None
                     )
@@ -3839,8 +3901,9 @@ with center:
                 st.warning("No parting-line curve is currently visible. Enable raw or refined curve in the sidebar.")
 
             if include_mesh and "display_mesh" in result:
+                _mesh_payload = _hydrate_mesh(result.get("display_mesh"))
                 shown = _show_mesh(
-                    result["display_mesh"],
+                    _mesh_payload,
                     color_key="parting_rgb",
                     line_paths=line_paths,
                     marker_points=conflict_markers,
@@ -3854,12 +3917,12 @@ with center:
                     _render_summary_grid([
                         (
                             "Mesh Points",
-                            result["display_mesh"].get("point_count", 0),
+                            _mesh_payload.get("point_count", 0),
                             "Fallback display",
                         ),
                         (
                             "Mesh Triangles",
-                            result["display_mesh"].get("triangle_count", 0),
+                            _mesh_payload.get("triangle_count", 0),
                             "Fallback display",
                         ),
                         (
@@ -3948,16 +4011,17 @@ with center:
                 "Core/cavity classification uses the optimal mold direction found in Step 4."
             )
             if include_mesh and "display_mesh" in result:
+                _mesh_payload = _hydrate_mesh(result.get("display_mesh"))
                 shown = _show_mesh(
-                    result["display_mesh"],
+                    _mesh_payload,
                     color_key="core_cavity_rgb",
                     viewer_key=f"core-cavity-{selected_part}",
                 )
                 if not shown:
                     st.json({
                         "display_mesh": {
-                            "point_count": result["display_mesh"].get("point_count"),
-                            "triangle_count": result["display_mesh"].get("triangle_count"),
+                            "point_count": _mesh_payload.get("point_count"),
+                            "triangle_count": _mesh_payload.get("triangle_count"),
                         }
                     })
             with st.expander("Core/Cavity JSON"):

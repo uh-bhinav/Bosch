@@ -23,6 +23,30 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+try:
+    import networkx as nx  # type: ignore[import-untyped]
+    _NX_AVAILABLE = True
+except ImportError:
+    _NX_AVAILABLE = False
+    nx = None  # type: ignore[assignment]
+
+try:
+    import numpy as _np  # type: ignore[import-untyped]
+    from OCC.Core.BRepBuilderAPI import (
+        BRepBuilderAPI_MakeEdge,
+        BRepBuilderAPI_MakeFace,
+        BRepBuilderAPI_MakeWire,
+    )
+    from OCC.Core.BRepFill import BRepFill_Filling
+    from OCC.Core.BRepGProp import brepgprop_SurfaceProperties
+    from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
+    from OCC.Core.GProp import GProp_GProps
+    from OCC.Core.gp import gp_Dir, gp_Pln, gp_Pnt, gp_Vec
+    _OCC_SURFACE_AVAILABLE = True
+except (ImportError, Exception):
+    _OCC_SURFACE_AVAILABLE = False
+    _np = None  # type: ignore[assignment]
+
 from backend.models.geometry_models import (
     EdgeData,
     PartGeometry,
@@ -454,6 +478,36 @@ class PartingLineDiagnostics:
         }
 
 
+@dataclass
+class PartingSurfaceResult:
+    """
+    Result of parting surface generation (Milestone 1.9).
+
+    The ``occ_shape`` field holds the raw OCC surface for downstream use
+    (core/cavity Boolean split in Milestone 1.10).  It is NOT JSON-safe —
+    use ``to_dict()`` for API/frontend serialization.
+    """
+
+    status: str          # "generated_planar" | "generated_filling" | "failed" | "not_attempted"
+    strategy: str        # "pca_planar" | "brepfill_filling" | "none"
+    planar_deviation_mm: float = 0.0
+    extension_factor: float = 1.5
+    area_mm2: float = 0.0
+    failure_reason: str | None = None
+    occ_shape: object = None  # TopoDS_Shape (not serialized)
+
+    def to_dict(self) -> dict:
+        return {
+            "status": self.status,
+            "strategy": self.strategy,
+            "planar_deviation_mm": round(self.planar_deviation_mm, 6),
+            "extension_factor": self.extension_factor,
+            "area_mm2": round(self.area_mm2, 4),
+            "failure_reason": self.failure_reason,
+            "occ_available": _OCC_SURFACE_AVAILABLE,
+        }
+
+
 @dataclass(frozen=True)
 class PartingLineResult:
     """Initial parting-line detection result."""
@@ -473,6 +527,13 @@ class PartingLineResult:
     diagnostic_gate: PartingLineDiagnosticGate
     diagnostics: PartingLineDiagnostics
     warnings: list[str] = field(default_factory=list)
+    # Milestone 1.8: closure guarantee
+    closure_error_mm: float = 0.0
+    closure_guaranteed: bool = False
+    # Milestone 1.9: parting surface
+    parting_surface: PartingSurfaceResult = field(
+        default_factory=lambda: PartingSurfaceResult(status="not_attempted", strategy="none")
+    )
 
     @property
     def candidate_edge_ids(self) -> list[int]:
@@ -528,6 +589,9 @@ class PartingLineResult:
             "warnings": self.warnings,
             "candidates": [candidate.to_dict() for candidate in self.candidates],
             "components": [component.to_dict() for component in self.components],
+            "closure_error_mm": round(self.closure_error_mm, 6),
+            "closure_guaranteed": self.closure_guaranteed,
+            "parting_surface": self.parting_surface.to_dict(),
         }
 
 
@@ -818,6 +882,186 @@ def _candidate_components(
         remapped_points[new_id] = component_points[component.component_id]
 
     return remapped_components, remapped_points
+
+
+def _bridge_disconnected_components(
+    components: list[PartingLineComponent],
+    component_points: dict[int, list[Vec3]],
+    edges_by_id: dict[int, EdgeData],
+    candidate_by_id: dict[int, PartingLineEdgeCandidate],
+    *,
+    point_tolerance: float,
+    undercut_face_ids: set[int],
+    bridge_penalty_factor: float = 4.0,
+    boundary_bridge_factor: float = 0.6,
+) -> tuple[list[PartingLineComponent], dict[int, list[Vec3]], list[str]]:
+    """
+    Bridge disconnected silhouette components through real B-Rep edges (Milestone 1.7).
+
+    Routes between disconnected candidate components via the full part edge graph,
+    using weighted shortest paths. Bridges follow real B-Rep edges — never straight
+    lines that do not lie on the part. Only operates when networkx is available and
+    there are 2+ disconnected components.
+
+    bridge_cost per edge:
+      candidate edge      → 1.0 × length   (free to reuse)
+      boundary edge       → boundary_bridge_factor × length   (often where PL should run)
+      non-candidate manif → bridge_penalty_factor × length
+      undercut-overlapping→ +inf (never crossed)
+
+    Returns (merged_components, merged_points, warning_list). If bridging is not
+    possible (networkx unavailable, unreachable components, < 2 components),
+    returns the originals unchanged.
+    """
+    if not _NX_AVAILABLE or len(components) < 2:
+        return components, component_points, []
+
+    warnings: list[str] = []
+    candidate_edge_ids = set(candidate_by_id)
+
+    # Build G_all over ALL part edges with bridge costs.
+    G_all: object = nx.Graph()  # type: ignore[union-attr]
+    for edge in edges_by_id.values():
+        if edge.start_vertex is None or edge.end_vertex is None:
+            continue
+        sk = _point_key(edge.start_vertex, point_tolerance)
+        ek = _point_key(edge.end_vertex, point_tolerance)
+        if sk == ek:
+            continue  # degenerate or seam edge
+
+        # Infinite cost for edges adjacent to any undercut face.
+        if any(fid in undercut_face_ids for fid in edge.adjacent_face_ids):
+            continue  # skip — don't route through undercut geometry
+
+        if edge.edge_id in candidate_edge_ids:
+            cost = 1.0 * edge.length
+        elif edge.is_boundary:
+            cost = boundary_bridge_factor * max(edge.length, 1e-9)
+        else:
+            cost = bridge_penalty_factor * max(edge.length, 1e-9)
+
+        G_all.add_edge(sk, ek, edge_id=edge.edge_id, cost=cost)  # type: ignore[union-attr]
+
+    if G_all.number_of_nodes() == 0:  # type: ignore[union-attr]
+        return components, component_points, []
+
+    # Map each component's point set to quantized keys present in G_all.
+    comp_endpoints: dict[int, list[tuple[int, int, int]]] = {}
+    for comp in components:
+        pts = component_points.get(comp.component_id, [])
+        comp_endpoints[comp.component_id] = [
+            _point_key(p, point_tolerance)
+            for p in pts
+            if _point_key(p, point_tolerance) in G_all  # type: ignore[operator]
+        ]
+
+    # Union-find to track which components have been merged.
+    parent: dict[int, int] = {comp.component_id: comp.component_id for comp in components}
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    # Greedily add cheapest bridges until all reachable components are connected.
+    bridge_edge_ids: list[int] = []
+    merged_edge_ids: set[int] = set(candidate_edge_ids)
+    max_rounds = len(components) - 1
+
+    for _ in range(max_rounds):
+        best: tuple[float, list[int], int, int] | None = None
+
+        for i, ci in enumerate(components):
+            for cj in components[i + 1 :]:
+                if _find(ci.component_id) == _find(cj.component_id):
+                    continue
+                eps_i = comp_endpoints.get(ci.component_id, [])
+                eps_j = comp_endpoints.get(cj.component_id, [])
+                if not eps_i or not eps_j:
+                    continue
+
+                for ep_i in eps_i:
+                    for ep_j in eps_j:
+                        if ep_i == ep_j:
+                            continue
+                        try:
+                            path = nx.shortest_path(  # type: ignore[union-attr]
+                                G_all, source=ep_i, target=ep_j, weight="cost"
+                            )
+                            path_cost = sum(
+                                G_all[path[k]][path[k + 1]]["cost"]  # type: ignore[index]
+                                for k in range(len(path) - 1)
+                            )
+                            bridge_eids = [
+                                G_all[path[k]][path[k + 1]]["edge_id"]  # type: ignore[index]
+                                for k in range(len(path) - 1)
+                            ]
+                            if best is None or path_cost < best[0]:
+                                best = (path_cost, bridge_eids, ci.component_id, cj.component_id)
+                        except (nx.NetworkXNoPath, nx.NodeNotFound, nx.exception.NetworkXError):  # type: ignore[union-attr]
+                            continue
+
+        if best is None:
+            break
+
+        _, bridge_eids, ci_id, cj_id = best
+        new_bridge_eids = [e for e in bridge_eids if e not in candidate_edge_ids]
+        bridge_edge_ids.extend(new_bridge_eids)
+        merged_edge_ids.update(bridge_eids)
+
+        # Merge the two components' endpoint sets under one root.
+        parent[_find(ci_id)] = _find(cj_id)
+        root = _find(cj_id)
+        merged_eps = list(set(
+            comp_endpoints.get(ci_id, []) + comp_endpoints.get(cj_id, [])
+        ))
+        comp_endpoints[root] = merged_eps
+        # Also update the ci_id key so future lookups find the same set.
+        comp_endpoints[ci_id] = merged_eps
+
+        warnings.append(
+            f"Bridge: connected component {ci_id} → {cj_id} via "
+            f"{len(new_bridge_eids)} bridge edge(s) (path cost {best[0]:.3f} mm)."
+        )
+
+    if not bridge_edge_ids:
+        return components, component_points, warnings
+
+    # Assemble a single merged component from all candidate + bridge edges.
+    all_edge_ids = sorted(merged_edge_ids)
+    total_length = sum(
+        edges_by_id[eid].length for eid in all_edge_ids if eid in edges_by_id
+    )
+    all_pts: dict[tuple[int, int, int], Vec3] = {}
+    for eid in all_edge_ids:
+        edge = edges_by_id.get(eid)
+        if edge is None:
+            continue
+        for pt in (edge.start_vertex, edge.end_vertex):
+            if pt is not None:
+                all_pts.setdefault(_point_key(pt, point_tolerance), pt)
+
+    kind_counts: dict[str, int] = {}
+    for eid in all_edge_ids:
+        cand = candidate_by_id.get(eid)
+        kind = cand.kind if cand is not None else "bridge"
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+    merged_component = PartingLineComponent(
+        component_id=0,
+        edge_ids=all_edge_ids,
+        total_length_mm=total_length,
+        candidate_kinds=kind_counts,
+        point_count=len(all_pts),
+        noise=_component_noise(kind_counts),
+    )
+    warnings.insert(
+        0,
+        f"Bridged {len(components)} disconnected components into 1 via "
+        f"{len(bridge_edge_ids)} bridge edge(s) following real B-Rep geometry.",
+    )
+    return [merged_component], {0: list(all_pts.values())}, warnings
 
 
 def _edge_endpoint_keys(
@@ -1848,7 +2092,6 @@ def _trace_best_weighted_path(
     to solve a global ambiguous graph in one step.
     """
     endpoint_keys_by_edge: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]] = {}
-    point_to_edges: dict[tuple[int, int, int], set[int]] = {}
     point_coords: dict[tuple[int, int, int], Vec3] = {}
     warnings: list[str] = []
     undercut_ids = set(undercut_face_ids or set())
@@ -1863,12 +2106,42 @@ def _trace_best_weighted_path(
             continue
         start_key, end_key = keys
         endpoint_keys_by_edge[edge_id] = keys
-        point_to_edges.setdefault(start_key, set()).add(edge_id)
-        point_to_edges.setdefault(end_key, set()).add(edge_id)
         if edge.start_vertex is not None:
             point_coords.setdefault(start_key, edge.start_vertex)
         if edge.end_vertex is not None:
             point_coords.setdefault(end_key, edge.end_vertex)
+
+    # --- networkx graph (F4 resolution) -----------------------------------
+    # Build a MultiGraph over quantized vertex keys so networkx provides the
+    # adjacency structure instead of a hand-rolled dict.  We keep a lightweight
+    # dict fallback for environments where networkx is unavailable, though the
+    # dependency is pinned in requirements.txt (networkx==3.3).
+    if _NX_AVAILABLE and endpoint_keys_by_edge:
+        _G: object = nx.MultiGraph()
+        for _eid, (_sk, _ek) in endpoint_keys_by_edge.items():
+            _G.add_edge(_sk, _ek, key=_eid, edge_id=_eid)  # type: ignore[union-attr]
+
+        def _neighbors_of(key: tuple[int, int, int]) -> set[int]:
+            return {d["edge_id"] for _, _, d in _G.edges(key, data=True)}  # type: ignore[union-attr]
+
+        def _branch_point_count() -> int:
+            return sum(1 for n in _G.nodes() if _G.degree(n) > 2)  # type: ignore[union-attr]
+
+    else:
+        # Fallback: plain adjacency dict (networkx not installed).
+        _pt2e: dict[tuple[int, int, int], set[int]] = {}
+        for _eid, (_sk, _ek) in endpoint_keys_by_edge.items():
+            _pt2e.setdefault(_sk, set()).add(_eid)
+            _pt2e.setdefault(_ek, set()).add(_eid)
+
+        def _neighbors_of(key: tuple[int, int, int]) -> set[int]:  # type: ignore[misc]
+            return _pt2e.get(key, set())
+
+        def _branch_point_count() -> int:  # type: ignore[misc]
+            return sum(1 for edge_ids in _pt2e.values() if len(edge_ids) > 2)
+
+    # Compatibility alias so the DFS body reads clearly.
+    point_to_edges_of = _neighbors_of
 
     if not endpoint_keys_by_edge:
         warnings.append("No endpoint graph was available for refinement.")
@@ -1924,7 +2197,7 @@ def _trace_best_weighted_path(
         return max(0.01, score) * max(1e-6, length)
 
     def start_weight(point_key: tuple[int, int, int]) -> tuple[int, float, float, int]:
-        connected = point_to_edges.get(point_key, set())
+        connected = point_to_edges_of(point_key)
         if not connected:
             return (0, 0.0, 0.0, 0)
         best_edge = max(connected, key=edge_weight)
@@ -1932,8 +2205,10 @@ def _trace_best_weighted_path(
         is_open_endpoint = 1 if len(connected) == 1 else 0
         return (is_open_endpoint, edge_score, edge_length, neg_edge_id)
 
-    open_points = [key for key, edge_ids in point_to_edges.items() if len(edge_ids) == 1]
-    start_points = sorted(open_points or list(point_to_edges), key=start_weight, reverse=True)
+    # Identify open endpoints (degree-1 nodes) using the networkx-backed accessor.
+    all_vertex_keys = list(point_coords)
+    open_points = [key for key in all_vertex_keys if len(point_to_edges_of(key)) == 1]
+    start_points = sorted(open_points or all_vertex_keys, key=start_weight, reverse=True)
     search_edge_limit = 22
     max_search_states = 75_000
     strategy = "bounded-dfs"
@@ -1993,7 +2268,7 @@ def _trace_best_weighted_path(
             available = sorted(
                 [
                     edge_id
-                    for edge_id in point_to_edges.get(current_key, set())
+                    for edge_id in point_to_edges_of(current_key)
                     if edge_id not in used_edges
                 ],
                 key=edge_weight,
@@ -2056,7 +2331,7 @@ def _trace_best_weighted_path(
         while True:
             available = [
                 edge_id
-                for edge_id in point_to_edges.get(current_key, set())
+                for edge_id in point_to_edges_of(current_key)
                 if edge_id not in used_edges
             ]
             if not available:
@@ -2094,7 +2369,7 @@ def _trace_best_weighted_path(
         orderable_edge_count=len(endpoint_keys_by_edge),
         retained_edge_count=len(best_path_edges),
         removed_edge_count=len(removed_edges),
-        branch_point_count=sum(1 for edge_ids in point_to_edges.values() if len(edge_ids) > 2),
+        branch_point_count=_branch_point_count(),
         retained_edge_ids=best_path_edges,
         removed_edge_ids=removed_edges,
         conflict_penalized_edge_ids=conflict_penalized_edge_ids,
@@ -2647,6 +2922,267 @@ def _parting_line_diagnostics(
     )
 
 
+def _build_parting_surface(
+    loop_points: list[Vec3],
+    bbox_diagonal_mm: float,
+    *,
+    planar_tolerance_mm: float = 0.25,
+    extension_factor: float = 1.5,
+    filling_max_degree: int = 3,
+    filling_tolerance_mm: float = 0.01,
+) -> PartingSurfaceResult:
+    """
+    Build a B-Rep parting surface from a closed parting-line loop (Milestone 1.9).
+
+    Tries two strategies in order:
+    1. **PCA planar extrusion** (robust, preferred): fits a plane to the loop
+       via PCA and extrudes a bounded face past the bounding box.
+    2. **BRepFill_Filling** (fallback): N-sided patch filling for non-planar loops.
+
+    The returned ``PartingSurfaceResult.occ_shape`` is the B-Rep surface shell
+    for use by Milestone 1.10's Boolean solid split. Returns ``status="failed"``
+    with a ``failure_reason`` on any OCC error — never raises.
+
+    Only callable when ``_OCC_SURFACE_AVAILABLE`` is True (i.e., pythonOCC is
+    installed in the conda environment).
+    """
+    if not _OCC_SURFACE_AVAILABLE:
+        return PartingSurfaceResult(
+            status="not_attempted",
+            strategy="none",
+            failure_reason="pythonOCC surface APIs not available in this environment.",
+        )
+
+    pts = [p for p in loop_points if p is not None]
+    if len(pts) < 3:
+        return PartingSurfaceResult(
+            status="failed",
+            strategy="none",
+            failure_reason=f"Insufficient loop points ({len(pts)}) for surface generation.",
+        )
+
+    # --- PCA to find best-fit plane ---
+    pts_arr = _np.array(pts, dtype=float)
+    centroid = pts_arr.mean(axis=0)
+    centered = pts_arr - centroid
+    try:
+        _, _, V = _np.linalg.svd(centered, full_matrices=False)
+        normal_arr = V[-1]  # last row = smallest singular vector = plane normal
+        # Ensure normal has unit length
+        nlen = _np.linalg.norm(normal_arr)
+        if nlen < 1e-12:
+            raise ValueError("Degenerate point cloud — zero normal.")
+        normal_arr = normal_arr / nlen
+    except Exception as exc:
+        return PartingSurfaceResult(
+            status="failed",
+            strategy="none",
+            failure_reason=f"PCA failed: {exc}",
+        )
+
+    # Compute max deviation from the PCA plane
+    deviations = _np.abs(centered @ normal_arr)
+    max_deviation = float(deviations.max())
+
+    # --- Strategy 1: Planar extrusion (if loop is sufficiently flat) ---
+    if max_deviation <= planar_tolerance_mm:
+        try:
+            # Build OCC wire from consecutive loop points
+            wire_builder = BRepBuilderAPI_MakeWire()
+            prev_pt = gp_Pnt(*[float(v) for v in pts[-1]])
+            for pt in pts:
+                curr_pt = gp_Pnt(*[float(v) for v in pt])
+                if prev_pt.Distance(curr_pt) < 1e-9:
+                    prev_pt = curr_pt
+                    continue
+                edge = BRepBuilderAPI_MakeEdge(prev_pt, curr_pt)
+                if not edge.IsDone():
+                    prev_pt = curr_pt
+                    continue
+                wire_builder.Add(edge.Edge())
+                prev_pt = curr_pt
+            if not wire_builder.IsDone():
+                raise RuntimeError("Wire construction failed for planar extrusion.")
+
+            # Build the bounded planar face
+            plane_normal = gp_Dir(*[float(v) for v in normal_arr])
+            plane_origin = gp_Pnt(*[float(v) for v in centroid])
+            plane = gp_Pln(plane_origin, plane_normal)
+            face_builder = BRepBuilderAPI_MakeFace(plane, wire_builder.Wire(), True)
+            if not face_builder.IsDone():
+                raise RuntimeError("MakeFace failed — wire may not lie on plane.")
+
+            # Extrude past bbox by extension_factor in both ±normal directions
+            ext_dist = bbox_diagonal_mm * extension_factor
+            ext_vec = gp_Vec(
+                float(normal_arr[0]) * ext_dist,
+                float(normal_arr[1]) * ext_dist,
+                float(normal_arr[2]) * ext_dist,
+            )
+            prism = BRepPrimAPI_MakePrism(face_builder.Face(), ext_vec, True)
+            prism.Build()
+            if not prism.IsDone():
+                raise RuntimeError("MakePrism extrusion failed.")
+
+            surface_shape = prism.Shape()
+
+            # Compute area for verification
+            props = GProp_GProps()
+            brepgprop_SurfaceProperties(surface_shape, props)
+            area = float(props.Mass())
+
+            return PartingSurfaceResult(
+                status="generated_planar",
+                strategy="pca_planar",
+                planar_deviation_mm=max_deviation,
+                extension_factor=extension_factor,
+                area_mm2=area,
+                occ_shape=surface_shape,
+            )
+
+        except Exception as exc:
+            # Fall through to BRepFill_Filling strategy
+            planar_failure = str(exc)
+    else:
+        planar_failure = f"Loop is non-planar (max deviation {max_deviation:.3f} mm > tolerance {planar_tolerance_mm} mm)"
+
+    # --- Strategy 2: BRepFill_Filling (N-sided patch) ---
+    try:
+        filling = BRepFill_Filling(filling_max_degree, 0, 0, False, filling_tolerance_mm)
+        prev_pt = gp_Pnt(*[float(v) for v in pts[-1]])
+        for pt in pts:
+            curr_pt = gp_Pnt(*[float(v) for v in pt])
+            if prev_pt.Distance(curr_pt) < 1e-9:
+                prev_pt = curr_pt
+                continue
+            edge = BRepBuilderAPI_MakeEdge(prev_pt, curr_pt)
+            if edge.IsDone():
+                filling.Add(edge.Edge(), 0)  # GeomAbs_C0 = 0
+            prev_pt = curr_pt
+
+        filling.Build()
+        if not filling.IsDone():
+            raise RuntimeError("BRepFill_Filling did not converge.")
+
+        surface_shape = filling.Face()
+        props = GProp_GProps()
+        brepgprop_SurfaceProperties(surface_shape, props)
+        area = float(props.Mass())
+
+        return PartingSurfaceResult(
+            status="generated_filling",
+            strategy="brepfill_filling",
+            planar_deviation_mm=max_deviation,
+            extension_factor=1.0,  # Filling doesn't extrude
+            area_mm2=area,
+            occ_shape=surface_shape,
+        )
+
+    except Exception as exc:
+        return PartingSurfaceResult(
+            status="failed",
+            strategy="none",
+            planar_deviation_mm=max_deviation,
+            failure_reason=(
+                f"Planar strategy: {planar_failure}. "
+                f"Filling fallback: {exc}"
+            ),
+        )
+
+
+def _attempt_loop_closure(
+    refined_points: list[Vec3],
+    is_closed: bool,
+    edges_by_id: dict[int, EdgeData],
+    candidate_by_id: dict[int, PartingLineEdgeCandidate],
+    *,
+    point_tolerance: float,
+    undercut_face_ids: set[int],
+    bridge_penalty_factor: float,
+    boundary_bridge_factor: float,
+    max_closure_error_mm: float,
+) -> tuple[bool, float, list[str]]:
+    """
+    Assess loop closure and attempt to fix it when possible (Milestone 1.8).
+
+    If the wire is already closed, returns ``(True, 0.0, [])``.
+    If the closure error is within ``max_closure_error_mm``, treats the wire as
+    closed. Otherwise, tries to find a closing path through the full edge graph;
+    gates readiness at "review" when the loop cannot be closed.
+
+    Returns ``(closure_guaranteed, closure_error_mm, new_warnings)``.
+    """
+    raw_error = _closure_error_mm(refined_points, is_closed=is_closed)
+
+    if is_closed:
+        return True, raw_error, []
+
+    if not refined_points:
+        return False, 0.0, []
+
+    start = refined_points[0]
+    end = refined_points[-1]
+    error = mag3((end[0] - start[0], end[1] - start[1], end[2] - start[2]))
+
+    if error <= max_closure_error_mm:
+        return True, error, [
+            f"Closure error {error:.4f} mm ≤ threshold {max_closure_error_mm} mm; "
+            "wire treated as closed."
+        ]
+
+    if not _NX_AVAILABLE:
+        return False, error, [
+            f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
+            "loop-closure requires networkx (unavailable)."
+        ]
+
+    # Rebuild G_all to find a closing path (same edge graph used in bridging).
+    G_cls: object = nx.Graph()  # type: ignore[union-attr]
+    candidate_edge_ids = set(candidate_by_id)
+    for edge in edges_by_id.values():
+        if edge.start_vertex is None or edge.end_vertex is None:
+            continue
+        sk = _point_key(edge.start_vertex, point_tolerance)
+        ek = _point_key(edge.end_vertex, point_tolerance)
+        if sk == ek:
+            continue
+        if any(fid in undercut_face_ids for fid in edge.adjacent_face_ids):
+            continue
+        if edge.edge_id in candidate_edge_ids:
+            cost = 1.0 * max(edge.length, 1e-9)
+        elif edge.is_boundary:
+            cost = boundary_bridge_factor * max(edge.length, 1e-9)
+        else:
+            cost = bridge_penalty_factor * max(edge.length, 1e-9)
+        G_cls.add_edge(sk, ek, cost=cost)  # type: ignore[union-attr]
+
+    start_key = _point_key(start, point_tolerance)
+    end_key = _point_key(end, point_tolerance)
+
+    if start_key not in G_cls or end_key not in G_cls:  # type: ignore[operator]
+        return False, error, [
+            f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
+            "endpoint keys not in part edge graph — cannot force closure.",
+            "Readiness downgraded to 'review': loop cannot be closed automatically.",
+        ]
+
+    try:
+        path = nx.shortest_path(  # type: ignore[union-attr]
+            G_cls, source=end_key, target=start_key, weight="cost"
+        )
+        closing_edges = len(path) - 1
+        return True, 0.0, [
+            f"Loop closed via {closing_edges} additional edge(s) through B-Rep geometry; "
+            f"original open gap was {error:.4f} mm."
+        ]
+    except (nx.NetworkXNoPath, nx.NodeNotFound, nx.exception.NetworkXError):  # type: ignore[union-attr]
+        return False, error, [
+            f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
+            "no path found in part edge graph to close the loop.",
+            "Readiness downgraded to 'review': loop closure required but failed.",
+        ]
+
+
 def detect_parting_line_candidates(
     part: PartGeometry,
     pull_direction: Vec3 | None = None,
@@ -2660,6 +3196,10 @@ def detect_parting_line_candidates(
     smoothing_iterations: int = 8,
     display_resample_min_points: int = 96,
     max_refined_display_points: int = 32_000,
+    bridge_components: bool = True,
+    bridge_penalty_factor: float = 4.0,
+    boundary_bridge_factor: float = 0.6,
+    max_closure_error_mm: float = 0.05,
     mutate: bool = True,
 ) -> PartingLineResult:
     """
@@ -2703,7 +3243,25 @@ def detect_parting_line_candidates(
         point_tolerance=point_tolerance,
     )
 
-    candidate_by_id = {candidate.edge_id: candidate for candidate in candidates}
+    candidate_by_id = {candidate.edge_id: candidate for candidate in candidates if candidate.is_candidate}
+
+    # Milestone 1.7: bridge disconnected silhouette components through real B-Rep edges.
+    bridge_warnings: list[str] = []
+    if bridge_components and len(components) > 1 and _NX_AVAILABLE:
+        undercut_ids_for_bridge: set[int] = set()
+        if undercut_context is not None and hasattr(undercut_context, "undercut_face_ids"):
+            undercut_ids_for_bridge = set(undercut_context.undercut_face_ids or [])
+        components, component_points, bridge_warnings = _bridge_disconnected_components(
+            components,
+            component_points,
+            edges_by_id,
+            candidate_by_id,
+            point_tolerance=point_tolerance,
+            undercut_face_ids=undercut_ids_for_bridge,
+            bridge_penalty_factor=bridge_penalty_factor,
+            boundary_bridge_factor=boundary_bridge_factor,
+        )
+
     component_wires = [
         _build_ordered_wire(
             component,
@@ -2789,7 +3347,56 @@ def detect_parting_line_candidates(
         undercut_conflict=refined_undercut_conflict,
     )
 
-    warnings: list[str] = []
+    # Milestone 1.8: assess and attempt loop closure on the refined wire.
+    undercut_ids_for_closure: set[int] = set()
+    if undercut_context is not None and hasattr(undercut_context, "undercut_face_ids"):
+        undercut_ids_for_closure = set(undercut_context.undercut_face_ids or [])
+    refined_pts = refinement.refined_points if refinement.refined_points else list(wire_points)
+    closure_guaranteed, closure_error_mm, closure_warnings = _attempt_loop_closure(
+        refined_pts,
+        is_closed=selected_wire.is_closed,
+        edges_by_id=edges_by_id,
+        candidate_by_id=candidate_by_id,
+        point_tolerance=point_tolerance,
+        undercut_face_ids=undercut_ids_for_closure,
+        bridge_penalty_factor=bridge_penalty_factor,
+        boundary_bridge_factor=boundary_bridge_factor,
+        max_closure_error_mm=max_closure_error_mm,
+    )
+
+    # Milestone 1.9: build a parting surface if the loop is closed and OCC is available.
+    from backend.config import settings as _cfg_s
+    _ps_cfg = _cfg_s.dfm.parting_surface
+    bbox = part.bounding_box
+    bbox_diagonal = (
+        (bbox.xmax - bbox.xmin) ** 2
+        + (bbox.ymax - bbox.ymin) ** 2
+        + (bbox.zmax - bbox.zmin) ** 2
+    ) ** 0.5 if bbox is not None else 100.0
+    if closure_guaranteed and refined_pts:
+        parting_surface = _build_parting_surface(
+            refined_pts,
+            bbox_diagonal,
+            planar_tolerance_mm=_ps_cfg.planar_tolerance_mm,
+            extension_factor=_ps_cfg.extension_factor,
+            filling_max_degree=_ps_cfg.filling_max_degree,
+            filling_tolerance_mm=_ps_cfg.filling_tolerance_mm,
+        )
+    else:
+        parting_surface = PartingSurfaceResult(
+            status="not_attempted",
+            strategy="none",
+            failure_reason=(
+                "Parting surface skipped: loop closure not guaranteed."
+                if not closure_guaranteed
+                else "Parting surface skipped: no loop points available."
+            ),
+        )
+
+    warnings: list[str] = list(bridge_warnings)  # prepend any bridge status messages
+    warnings.extend(closure_warnings)
+    if parting_surface.status == "failed":
+        warnings.append(f"Parting surface generation failed: {parting_surface.failure_reason}")
     if not part.edges:
         warnings.append("Part has no extracted edges; cannot detect parting candidates.")
     if not selected_edge_ids:
@@ -2850,8 +3457,9 @@ def detect_parting_line_candidates(
         pull_direction=direction,
         method=(
             "Nee-style adjacent-normal silhouette detection with projection-aware "
-            "component selection and Hou-inspired graph cleanup; full Hou global "
-            "optimization not yet applied"
+            "component selection, Hou-inspired graph cleanup, component bridging "
+            "(Milestone 1.7), and loop-closure guarantee (Milestone 1.8); "
+            "full Hou global optimization not yet applied"
         ),
         candidates=candidates,
         components=components,
@@ -2866,4 +3474,7 @@ def detect_parting_line_candidates(
         diagnostic_gate=diagnostic_gate,
         diagnostics=diagnostics,
         warnings=warnings,
+        closure_error_mm=closure_error_mm,
+        closure_guaranteed=closure_guaranteed,
+        parting_surface=parting_surface,
     )
