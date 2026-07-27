@@ -61,6 +61,10 @@ Run the guided UI (`Run Full Level 1 Flow`) or validation harness to populate li
 | Requirement | Status |
 |---|---|
 | Optimal Mold Direction from Undercut Detection | Complete |
-| Main Parting Line Creation | Complete |
-| Core and Cavity face distinction (Level 1) | Complete |
+| Main Parting Line Creation | Candidate/foundation — silhouette detection, graph-cleaned selection, and Chaikin smoothing are implemented; full Hou-style global optimization and closed-loop guarantee are planned (`docs/ARCHITECTURE_ROADMAP.md` Phase 1) |
+| Core and Cavity face distinction (Level 1) | Complete for face classification only; full Boolean solid split into two mold-half bodies is Level 2 (`docs/ARCHITECTURE_ROADMAP.md` Phase 1b) |
 | Simple GUI & Final Visualization | Complete |
+
+See `docs/IMPLEMENTATION_STATUS.md` for the authoritative, module-by-module
+breakdown and `.claude/rules/honesty-and-scope.md` for exact phrasing to use
+when describing parting-line and core/cavity status.

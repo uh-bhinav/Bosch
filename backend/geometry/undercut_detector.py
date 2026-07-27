@@ -565,6 +565,7 @@ class UndercutDetectionResult:
     accessible_face_ids: list[int]
     parting_face_ids: list[int]
     skipped_face_ids: list[int]
+    convexity_suppressed_face_ids: list[int] = field(default_factory=list)
     features: list[UndercutFeature] = field(default_factory=list)
     undercut_area_mm2: float = 0.0
     total_analysed_area_mm2: float = 0.0
@@ -615,12 +616,14 @@ class UndercutDetectionResult:
                 "accessible": len(self.accessible_face_ids),
                 "parting": len(self.parting_face_ids),
                 "skipped": len(self.skipped_face_ids),
+                "convexity_suppressed": len(self.convexity_suppressed_face_ids),
             },
             "face_ids": {
                 "undercut": self.undercut_face_ids,
                 "accessible": self.accessible_face_ids,
                 "parting": self.parting_face_ids,
                 "skipped": self.skipped_face_ids,
+                "convexity_suppressed": self.convexity_suppressed_face_ids,
             },
             "area_mm2": {
                 "undercut": round(self.undercut_area_mm2, 3),
@@ -3044,6 +3047,11 @@ def detect_undercuts(
         likely undercut/accessibility problem faces.
       - Near-zero signed normal faces are separately tracked as parting-region
         faces.
+      - Convexity-gated suppression (Sangolli 2021) removes proxy-undercut
+        faces whose bounding edges are all convex/tangent — no concave edge
+        means no genuine pocket, regardless of what the centroid normal
+        alone suggests. Suppressed faces skip Boolean refinement entirely.
+        Disable via config: dfm.undercut.convexity_suppression_enabled.
       - Optional Boolean refinement sweeps candidate faces along their access
         direction and keeps faces with non-zero intersection volume.
 
@@ -3089,6 +3097,44 @@ def detect_undercuts(
                 face.is_undercut = False
                 face.undercut_depth_mm = None
                 face.undercut_type = None
+
+    # ── Convexity-gated false-positive suppression (Sangolli 2021) ─────────
+    # A centroid-normal draft angle below threshold is a poor signal on
+    # curved faces (e.g. a cylindrical boss nearly aligned with the pull
+    # direction): the centroid normal can register as negative draft even
+    # though every point on the face is fully accessible. Edge convexity
+    # (computed once at load time in step_loader.py, independent of pull
+    # direction) resolves this: a genuine pocket always has at least one
+    # concave bounding edge. A proxy-undercut face with an unclassified
+    # (None) or missing edge is NOT suppressed — suppression requires
+    # positive evidence, not merely the absence of a concave edge.
+    convexity_suppressed_ids: list[int] = []
+    if settings.dfm.undercut.convexity_suppression_enabled:
+        still_undercut_ids: list[int] = []
+        for fid in proxy_undercut_ids:
+            face_edges = part.get_face_edges(fid)
+            if face_edges and all(e.convexity in ("convex", "tangent") for e in face_edges):
+                convexity_suppressed_ids.append(fid)
+            else:
+                still_undercut_ids.append(fid)
+        proxy_undercut_ids = still_undercut_ids
+
+        # A suppressed face is, by construction, almost always ALSO within
+        # parting_dot_threshold of the parting region: sin(marginal_threshold)
+        # is smaller than parting_dot_threshold for the shipped defaults
+        # (0.5° → |n·d| ≈ 0.0087 < 0.01), so nearly every proxy-undercut face
+        # satisfies both tests at once. The final mutate block below only
+        # clears is_undercut to False for faces NOT in parting_ids — for a
+        # suppressed-and-parting face that leaves it at its uninitialised
+        # None. Suppression is a definitive "not an undercut" determination,
+        # so mutate it explicitly here rather than relying on that block.
+        if mutate and convexity_suppressed_ids:
+            for fid in convexity_suppressed_ids:
+                face = part.get_face(fid)
+                if face is not None:
+                    face.is_undercut = False
+                    face.undercut_depth_mm = None
+                    face.undercut_type = None
 
     boolean_checked: list[int] = []
     boolean_confirmed: set[int] = set()
@@ -3403,6 +3449,7 @@ def detect_undercuts(
         accessible_face_ids=sorted(accessible_ids),
         parting_face_ids=sorted(parting_ids),
         skipped_face_ids=sorted(skipped_ids),
+        convexity_suppressed_face_ids=sorted(convexity_suppressed_ids),
         features=features,
         undercut_area_mm2=undercut_area,
         total_analysed_area_mm2=total_area,

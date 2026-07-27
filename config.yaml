@@ -2,6 +2,11 @@ dfm:
   draft:
     good_threshold_deg: 1.5
     marginal_threshold_deg: 0.5
+    conditions:
+      smooth:        { good: 1.5, marginal: 0.5 }
+      light_texture: { good: 3.0, marginal: 2.0 }
+      heavy_texture: { good: 5.0, marginal: 3.5 }
+      deep_rib:      { good: 2.0, marginal: 1.0 }
   direction_search:
     angular_step_deg: 15.0
     max_candidates: 54
@@ -32,6 +37,14 @@ dfm:
     boolean_feature_seed_faces_per_group: 1
     boolean_grouping_proximity_factor: 0.15
     boolean_grouping_min_proximity_mm: 0.25
+    flash_risk_weight: 200.0
+    flash_angle_threshold_deg: 5.0
+    flash_thin_area_factor: 0.02
+    fine_search_enabled: true
+    fine_search_top_k: 3
+    fine_angular_step_deg: 5.0
+    fine_search_cone_half_angle_deg: 15.0
+    fine_search_max_candidates: 60
   parting_line:
     dot_tolerance: 0.01
     boundary_dot_tolerance: 0.15
@@ -42,8 +55,12 @@ dfm:
     refined_curve_color: [0.0, 0.72, 1.0]
     raw_curve_color: [1.0, 0.72, 0.0]
   core_cavity:
+    threshold: 0.05
     cavity_color: [0.2, 0.8, 0.3]
     core_color: [0.2, 0.45, 0.9]
+  undercut:
+    convexity_tangent_tolerance: 0.01
+    convexity_suppression_enabled: true
 agent:
   model: "gpt-4o-mini"
   temperature: 0.1

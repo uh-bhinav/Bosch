@@ -61,7 +61,8 @@ than once for the SAME face, it is a seam edge.  We then:
 References
 ----------
 * Bassi et al. (2010) — uses face normals for accessibility scoring.
-* Sangolli et al. (2021) — uses edge convexity (set later by undercut_detector).
+* Sangolli et al. (2021) — uses edge convexity, computed here at load time
+  (pull-direction-independent) and consumed later by undercut_detector.
 * Nee et al. (1998) — uses silhouette edges (set later by parting_line).
 * Hou et al. (2018) — uses edge graph with length/curvature weights.
 """
@@ -125,6 +126,7 @@ try:
         topods_Face,
         topods_Vertex,
     )
+    from OCC.Core.gp import gp_Pnt, gp_Vec
 
     _OCC_AVAILABLE = True
 except ImportError:
@@ -138,6 +140,7 @@ except ImportError:
     cq = None  # type: ignore[assignment]
     _CADQUERY_AVAILABLE = False
 
+from backend.config import settings
 from backend.models.geometry_models import (
     BoundingBox,
     EdgeData,
@@ -558,6 +561,123 @@ def _get_edge_geometry(
     return edge_type, length, start_vtx, end_vtx
 
 
+def _compute_edge_convexity(
+    ref_edge: "topods_Edge",
+    face_a: "topods_Face",
+    face_b: "topods_Face",
+    tangent_tol: float,
+) -> Optional[str]:
+    """
+    Classify a manifold edge as "convex", "concave", or "tangent".
+
+    Sangolli 2021 uses edge convexity to distinguish an outside corner
+    (convex — solid projects outward, no undercut risk) from an inside
+    corner (concave — pocket / undercut risk). This is a local, differential
+    property, independent of pull direction.
+
+    Algorithm
+    ---------
+    1. Sample the edge at its mid-parameter; get the 3-D tangent via
+       ``BRepAdaptor_Curve.D1``.
+    2. ``BRepAdaptor_Curve`` does NOT respect ``TopoDS_Edge.Orientation()`` —
+       it always returns the tangent in the underlying ``Geom_Curve``'s own
+       increasing-parameter direction, regardless of how the edge is
+       oriented in a face's wire. We must apply that flip ourselves.
+    3. Evaluate each adjacent face's outward normal at the edge's UV
+       location on that face (via the edge's pcurve — ``BRep_Tool.
+       CurveOnSurface`` — which shares the edge's 3-D curve parameter, so
+       the same mid-parameter value is valid for both faces' pcurves).
+    4. ``sign(tangent · (n_a × n_b))`` classifies the edge — POSITIVE for
+       convex, NEGATIVE for concave.
+
+    Critical invariant
+    -------------------
+    ``ref_edge`` MUST be the specific edge occurrence as encountered while
+    traversing ``face_a``'s wire (carrying ``face_a``-relative orientation),
+    and ``face_a`` must be listed first. Both the tangent sign (step 2) and
+    the normal cross-product order are independently arbitrary otherwise —
+    picking them from unrelated traversals makes the classification random
+    per edge (verified empirically: a plain box's 12 uniformly-convex edges
+    came back as a 50/50 convex/concave split before this was fixed).
+
+    Returns None if any OCC evaluation fails (degenerate tangent, undefined
+    normal, missing pcurve) — caller should treat as "unknown", not "convex".
+    """
+    try:
+        adaptor = BRepAdaptor_Curve(ref_edge)
+        t0, t1 = adaptor.FirstParameter(), adaptor.LastParameter()
+        tmid = (t0 + t1) / 2.0
+
+        pnt, vec = gp_Pnt(), gp_Vec()
+        adaptor.D1(tmid, pnt, vec)
+        tangent = [vec.X(), vec.Y(), vec.Z()]
+        if ref_edge.Orientation() == TopAbs_REVERSED:
+            tangent = [-c for c in tangent]
+
+        tmag = math.sqrt(sum(c * c for c in tangent))
+        if tmag < 1e-12:
+            return None
+        tangent = [c / tmag for c in tangent]
+
+        normals: list[Vec3] = []
+        for face in (face_a, face_b):
+            pcurve, first, last = BRep_Tool.CurveOnSurface(ref_edge, face)
+            if pcurve is None:
+                return None
+            u_param = min(max(tmid, first), last)
+            uv = pcurve.Value(u_param)
+            normal = _face_normal_at_uv(face, uv.X(), uv.Y())
+            if normal is None:
+                return None
+            normals.append(normal)
+
+        n_a, n_b = normals
+        cross = (
+            n_a[1] * n_b[2] - n_a[2] * n_b[1],
+            n_a[2] * n_b[0] - n_a[0] * n_b[2],
+            n_a[0] * n_b[1] - n_a[1] * n_b[0],
+        )
+        sign = (
+            cross[0] * tangent[0]
+            + cross[1] * tangent[1]
+            + cross[2] * tangent[2]
+        )
+        if abs(sign) < tangent_tol:
+            return "tangent"
+        return "convex" if sign > 0.0 else "concave"
+
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Edge convexity computation failed: %s", exc)
+        return None
+
+
+def _face_normal_at_uv(face: "topods_Face", u: float, v: float) -> Optional[Vec3]:
+    """
+    Outward unit normal of ``face`` at parametric point (u, v).
+
+    Same orientation-correction as ``_compute_face_normal_and_centroid``, but
+    evaluated at a caller-supplied UV rather than the face's own UV centroid
+    — used by ``_compute_edge_convexity`` to sample the normal exactly at an
+    edge's location on each adjacent face.
+    """
+    try:
+        surface = BRep_Tool.Surface(face)
+        slprops = GeomLProp_SLProps(surface, u, v, 1, 1e-9)
+        if not slprops.IsNormalDefined():
+            return None
+        n = slprops.Normal()
+        nx, ny, nz = n.X(), n.Y(), n.Z()
+        if face.Orientation() == TopAbs_REVERSED:
+            nx, ny, nz = -nx, -ny, -nz
+        mag = math.sqrt(nx * nx + ny * ny + nz * nz)
+        if mag < 1e-12:
+            return None
+        return (nx / mag, ny / mag, nz / mag)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Edge-local normal computation exception: %s", exc)
+        return None
+
+
 def _extract_edges_and_build_adjacency(
     shape: "TopoDS_Shape",
     faces: list[FaceData],
@@ -585,6 +705,14 @@ def _extract_edges_and_build_adjacency(
         For each unique edge hash:
         • Call _get_edge_geometry() for type/length/vertices.
         • Determine is_seam from the seam hash set.
+        • For manifold, non-seam edges: compute convexity ("convex" |
+          "concave" | "tangent") via _compute_edge_convexity(). This is a
+          pull-direction-independent topological property (Sangolli 2021),
+          computed once here rather than per-direction downstream. The
+          reference edge occurrence stored in `_eh_to_occ` is exactly the
+          occurrence seen while traversing adj_fids[0]'s wire — required
+          for a consistent convexity sign (see _compute_edge_convexity's
+          docstring for why this matters).
         • Build EdgeData.
 
     Pass 3 — Build face adjacency.
@@ -659,6 +787,8 @@ def _extract_edges_and_build_adjacency(
     # ── Pass 2: build EdgeData objects ───────────────────────────────────
     edges: list[EdgeData] = []
     edge_to_faces_map: dict[int, list[int]] = {}
+    _fid_to_occ_face: dict[int, "topods_Face"] = {fd.face_id: fd.occ_face for fd in faces}
+    convexity_tol = settings.dfm.undercut.convexity_tangent_tolerance
 
     for h, eid in sorted(_eh_to_eid.items(), key=lambda kv: kv[1]):
         occ_edge = _eh_to_occ[h]
@@ -666,6 +796,12 @@ def _extract_edges_and_build_adjacency(
         is_seam = (h in seam_hashes)
 
         etype, length, sv, ev = _get_edge_geometry(occ_edge)
+
+        convexity: Optional[str] = None
+        if not is_seam and len(adj_fids) == 2:
+            face_a = _fid_to_occ_face[adj_fids[0]]
+            face_b = _fid_to_occ_face[adj_fids[1]]
+            convexity = _compute_edge_convexity(occ_edge, face_a, face_b, convexity_tol)
 
         edges.append(EdgeData(
             edge_id=eid,
@@ -676,6 +812,7 @@ def _extract_edges_and_build_adjacency(
             start_vertex=sv,
             end_vertex=ev,
             is_seam=is_seam,
+            convexity=convexity,
         ))
         edge_to_faces_map[eid] = adj_fids
 

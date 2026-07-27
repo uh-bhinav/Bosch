@@ -11,14 +11,15 @@ For each face in the loaded part, classify it as:
 This is the geometric classification only (Level 1).
 Full Boolean split into two separate solid bodies is Level 2.
 
-The threshold value is taken from config.yaml: dfm.parting_line.silhouette_dot_tolerance
-or defaults to 0.05 (≈2.9° from perpendicular).
+The threshold value is taken from config.yaml: dfm.core_cavity.threshold
+(default 0.05, ≈2.9° from perpendicular).
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 import time
 
+from backend.config import settings
 from backend.models.geometry_models import PartGeometry, Vec3, dot3
 
 
@@ -78,17 +79,21 @@ class CoreCavityResult:
 def classify_core_cavity(
     part: PartGeometry,
     pull_direction: Optional[Vec3] = None,
-    threshold: float = 0.05,
+    threshold: Optional[float] = None,
     mutate: bool = True,
 ) -> CoreCavityResult:
     """
     Classify every face as cavity, core, or parting relative to the pull direction.
 
     Uses part.optimal_pull_direction if pull_direction is not supplied.
+    Uses config.yaml: dfm.core_cavity.threshold if threshold is not supplied.
     If mutate=True, writes face.cavity_or_core field on each FaceData object.
     """
     t0 = time.time()
     warnings: list[str] = []
+
+    if threshold is None:
+        threshold = settings.dfm.core_cavity.threshold
 
     if pull_direction is None:
         pull_direction = part.optimal_pull_direction

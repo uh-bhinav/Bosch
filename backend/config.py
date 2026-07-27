@@ -16,9 +16,32 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class DraftConditionSettings:
+    """
+    Named draft-condition thresholds (Roadmap Phase 1e).
+
+    STEP AP203/AP214 carries no surface-finish/texture information — these
+    conditions are never auto-detected from geometry. They exist so a
+    caller (the frontend, once a face is user-marked as textured) can
+    override the global threshold for specific faces via `analyze_draft`'s
+    `face_conditions` parameter. "smooth" duplicates the global default so
+    a caller can explicitly reset a face to it.
+    """
+    smooth_good_deg: float = 1.5
+    smooth_marginal_deg: float = 0.5
+    light_texture_good_deg: float = 3.0
+    light_texture_marginal_deg: float = 2.0
+    heavy_texture_good_deg: float = 5.0
+    heavy_texture_marginal_deg: float = 3.5
+    deep_rib_good_deg: float = 2.0
+    deep_rib_marginal_deg: float = 1.0
+
+
+@dataclass(frozen=True)
 class DraftSettings:
     good_threshold_deg: float = 1.5
     marginal_threshold_deg: float = 0.5
+    conditions: DraftConditionSettings = DraftConditionSettings()
 
 
 @dataclass(frozen=True)
@@ -52,12 +75,27 @@ class DirectionSearchSettings:
     boolean_feature_seed_faces_per_group: int = 1
     boolean_grouping_proximity_factor: float = 0.15
     boolean_grouping_min_proximity_mm: float = 0.25
+    flash_risk_weight: float = 200.0
+    flash_angle_threshold_deg: float = 5.0
+    flash_thin_area_factor: float = 0.02
+    fine_search_enabled: bool = True
+    fine_search_top_k: int = 3
+    fine_angular_step_deg: float = 5.0
+    fine_search_cone_half_angle_deg: float = 15.0
+    fine_search_max_candidates: int = 60
 
 
 @dataclass(frozen=True)
 class CoreCavitySettings:
+    threshold: float = 0.05
     cavity_color: tuple[float, float, float] = (0.2, 0.8, 0.3)
     core_color: tuple[float, float, float] = (0.2, 0.45, 0.9)
+
+
+@dataclass(frozen=True)
+class UndercutSettings:
+    convexity_tangent_tolerance: float = 0.01
+    convexity_suppression_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -78,6 +116,7 @@ class DFMSettings:
     direction_search: DirectionSearchSettings = DirectionSearchSettings()
     parting_line: PartingLineSettings = PartingLineSettings()
     core_cavity: CoreCavitySettings = CoreCavitySettings()
+    undercut: UndercutSettings = UndercutSettings()
 
 
 @dataclass(frozen=True)
@@ -115,6 +154,22 @@ def _tuple3(value: Any, default: tuple[float, float, float]) -> tuple[float, flo
     if not isinstance(value, (list, tuple)) or len(value) != 3:
         return default
     return (float(value[0]), float(value[1]), float(value[2]))
+
+
+def _condition_pair(
+    conditions_raw: dict[str, Any],
+    name: str,
+    default_good: float,
+    default_marginal: float,
+) -> tuple[float, float]:
+    """Parse one `conditions.<name>: {good, marginal}` entry from config.yaml."""
+    entry = conditions_raw.get(name, {})
+    if not isinstance(entry, dict):
+        return default_good, default_marginal
+    return (
+        float(entry.get("good", default_good)),
+        float(entry.get("marginal", default_marginal)),
+    )
 
 
 def _float_tuple(value: Any, default: tuple[float, ...]) -> tuple[float, ...]:
@@ -164,8 +219,48 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
         if isinstance(dfm_raw.get("parting_line", {}), dict)
         else {}
     )
+    undercut_raw = (
+        dfm_raw.get("undercut", {})
+        if isinstance(dfm_raw.get("undercut", {}), dict)
+        else {}
+    )
     agent_raw = raw.get("agent", {}) if isinstance(raw.get("agent", {}), dict) else {}
 
+    conditions_raw = (
+        draft_raw.get("conditions", {})
+        if isinstance(draft_raw.get("conditions", {}), dict)
+        else {}
+    )
+    base_conditions = base.dfm.draft.conditions
+    smooth_good, smooth_marginal = _condition_pair(
+        conditions_raw, "smooth", base_conditions.smooth_good_deg, base_conditions.smooth_marginal_deg
+    )
+    light_texture_good, light_texture_marginal = _condition_pair(
+        conditions_raw,
+        "light_texture",
+        base_conditions.light_texture_good_deg,
+        base_conditions.light_texture_marginal_deg,
+    )
+    heavy_texture_good, heavy_texture_marginal = _condition_pair(
+        conditions_raw,
+        "heavy_texture",
+        base_conditions.heavy_texture_good_deg,
+        base_conditions.heavy_texture_marginal_deg,
+    )
+    deep_rib_good, deep_rib_marginal = _condition_pair(
+        conditions_raw, "deep_rib", base_conditions.deep_rib_good_deg, base_conditions.deep_rib_marginal_deg
+    )
+    conditions = replace(
+        base_conditions,
+        smooth_good_deg=smooth_good,
+        smooth_marginal_deg=smooth_marginal,
+        light_texture_good_deg=light_texture_good,
+        light_texture_marginal_deg=light_texture_marginal,
+        heavy_texture_good_deg=heavy_texture_good,
+        heavy_texture_marginal_deg=heavy_texture_marginal,
+        deep_rib_good_deg=deep_rib_good,
+        deep_rib_marginal_deg=deep_rib_marginal,
+    )
     draft = replace(
         base.dfm.draft,
         good_threshold_deg=float(
@@ -174,6 +269,7 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
         marginal_threshold_deg=float(
             draft_raw.get("marginal_threshold_deg", base.dfm.draft.marginal_threshold_deg)
         ),
+        conditions=conditions,
     )
     direction = replace(
         base.dfm.direction_search,
@@ -348,9 +444,57 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
                 base.dfm.direction_search.boolean_grouping_min_proximity_mm,
             )
         ),
+        flash_risk_weight=float(
+            direction_raw.get(
+                "flash_risk_weight", base.dfm.direction_search.flash_risk_weight
+            )
+        ),
+        flash_angle_threshold_deg=float(
+            direction_raw.get(
+                "flash_angle_threshold_deg",
+                base.dfm.direction_search.flash_angle_threshold_deg,
+            )
+        ),
+        flash_thin_area_factor=float(
+            direction_raw.get(
+                "flash_thin_area_factor",
+                base.dfm.direction_search.flash_thin_area_factor,
+            )
+        ),
+        fine_search_enabled=bool(
+            direction_raw.get(
+                "fine_search_enabled", base.dfm.direction_search.fine_search_enabled
+            )
+        ),
+        fine_search_top_k=int(
+            direction_raw.get(
+                "fine_search_top_k", base.dfm.direction_search.fine_search_top_k
+            )
+        ),
+        fine_angular_step_deg=float(
+            direction_raw.get(
+                "fine_angular_step_deg",
+                base.dfm.direction_search.fine_angular_step_deg,
+            )
+        ),
+        fine_search_cone_half_angle_deg=float(
+            direction_raw.get(
+                "fine_search_cone_half_angle_deg",
+                base.dfm.direction_search.fine_search_cone_half_angle_deg,
+            )
+        ),
+        fine_search_max_candidates=int(
+            direction_raw.get(
+                "fine_search_max_candidates",
+                base.dfm.direction_search.fine_search_max_candidates,
+            )
+        ),
     )
     core_cavity = replace(
         base.dfm.core_cavity,
+        threshold=float(
+            core_raw.get("threshold", base.dfm.core_cavity.threshold)
+        ),
         cavity_color=_tuple3(
             core_raw.get("cavity_color", base.dfm.core_cavity.cavity_color),
             base.dfm.core_cavity.cavity_color,
@@ -404,12 +548,28 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             base.dfm.parting_line.raw_curve_color,
         ),
     )
+    undercut = replace(
+        base.dfm.undercut,
+        convexity_tangent_tolerance=float(
+            undercut_raw.get(
+                "convexity_tangent_tolerance",
+                base.dfm.undercut.convexity_tangent_tolerance,
+            )
+        ),
+        convexity_suppression_enabled=bool(
+            undercut_raw.get(
+                "convexity_suppression_enabled",
+                base.dfm.undercut.convexity_suppression_enabled,
+            )
+        ),
+    )
     dfm = replace(
         base.dfm,
         draft=draft,
         direction_search=direction,
         parting_line=parting_line,
         core_cavity=core_cavity,
+        undercut=undercut,
     )
     agent = replace(
         base.agent,

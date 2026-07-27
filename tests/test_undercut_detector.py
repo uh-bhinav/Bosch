@@ -26,7 +26,7 @@ def _make_face(face_id: int, normal: tuple[float, float, float], area: float = 1
     )
 
 
-def _make_part(faces, adjacency=None):
+def _make_part(faces, adjacency=None, edges=None, face_to_edges=None):
     from backend.models.geometry_models import BoundingBox, PartGeometry
 
     return PartGeometry(
@@ -38,6 +38,24 @@ def _make_part(faces, adjacency=None):
         solid_count=1,
         shell_count=1,
         face_adjacency=adjacency or {},
+        edges=edges or [],
+        face_to_edges=face_to_edges or {},
+    )
+
+
+def _make_edge(edge_id: int, adjacent_face_ids: list[int], convexity=None):
+    from backend.models.geometry_models import EdgeData
+
+    return EdgeData(
+        edge_id=edge_id,
+        occ_edge=MagicMock(),
+        edge_type="Line",
+        length=1.0,
+        adjacent_face_ids=adjacent_face_ids,
+        start_vertex=(0.0, 0.0, 0.0),
+        end_vertex=(1.0, 0.0, 0.0),
+        is_seam=False,
+        convexity=convexity,
     )
 
 
@@ -52,6 +70,101 @@ def test_detect_undercuts_flags_zero_draft_face():
     assert result.undercut_face_ids == [0]
     assert result.has_undercuts is True
     assert face.is_undercut is True
+
+
+def test_convexity_suppression_clears_false_positive_with_all_nonconcave_edges():
+    """
+    A face with zero draft (angle=0 < marginal_threshold) whose bounding
+    edges are ALL convex/tangent has no genuine pocket evidence — it should
+    be cleared from the undercut set entirely, not just left as a proxy hit.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    face = _make_face(0, (1.0, 0.0, 0.0))
+    edges = [
+        _make_edge(0, [0, 1], convexity="convex"),
+        _make_edge(1, [0, 1], convexity="tangent"),
+    ]
+    part = _make_part([face], edges=edges, face_to_edges={0: [0, 1]})
+
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
+
+    assert result.undercut_face_ids == []
+    assert result.convexity_suppressed_face_ids == [0]
+    assert result.accessible_face_ids == [0]
+    assert face.is_undercut is False
+
+
+def test_convexity_suppression_does_not_clear_genuine_pocket():
+    """
+    Same zero-draft face, but one bounding edge is concave — genuine pocket
+    evidence. Must remain flagged as an undercut.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    face = _make_face(0, (1.0, 0.0, 0.0))
+    edges = [
+        _make_edge(0, [0, 1], convexity="convex"),
+        _make_edge(1, [0, 1], convexity="concave"),
+    ]
+    part = _make_part([face], edges=edges, face_to_edges={0: [0, 1]})
+
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
+
+    assert result.undercut_face_ids == [0]
+    assert result.convexity_suppressed_face_ids == []
+
+
+def test_convexity_suppression_is_conservative_when_edges_unclassified():
+    """
+    Suppression requires POSITIVE evidence (all edges classified non-concave).
+    An unclassified edge (convexity=None — e.g. OCC evaluation failed) must
+    NOT be treated as "not concave, therefore suppress" — leave it flagged.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    face = _make_face(0, (1.0, 0.0, 0.0))
+    edges = [
+        _make_edge(0, [0, 1], convexity="convex"),
+        _make_edge(1, [0, 1], convexity=None),
+    ]
+    part = _make_part([face], edges=edges, face_to_edges={0: [0, 1]})
+
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
+
+    assert result.undercut_face_ids == [0]
+    assert result.convexity_suppressed_face_ids == []
+
+
+def test_convexity_suppression_disabled_via_config(monkeypatch):
+    """dfm.undercut.convexity_suppression_enabled=False must be a full kill switch."""
+    import dataclasses
+
+    import backend.geometry.undercut_detector as detector
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    disabled = dataclasses.replace(
+        detector.settings,
+        dfm=dataclasses.replace(
+            detector.settings.dfm,
+            undercut=dataclasses.replace(
+                detector.settings.dfm.undercut, convexity_suppression_enabled=False
+            ),
+        ),
+    )
+    monkeypatch.setattr(detector, "settings", disabled)
+
+    face = _make_face(0, (1.0, 0.0, 0.0))
+    edges = [
+        _make_edge(0, [0, 1], convexity="convex"),
+        _make_edge(1, [0, 1], convexity="tangent"),
+    ]
+    part = _make_part([face], edges=edges, face_to_edges={0: [0, 1]})
+
+    result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=True, boolean_refine=False)
+
+    assert result.undercut_face_ids == [0]
+    assert result.convexity_suppressed_face_ids == []
 
 
 def test_detect_undercuts_groups_adjacent_faces():

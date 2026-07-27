@@ -17,8 +17,16 @@ paths:
 | `/parts/{filename}/direction` | GET | Full direction optimization |
 | `/parts/{filename}/parting-line` | GET | Parting line candidates |
 | `/parts/{filename}/core-cavity` | GET | Core/cavity face classification |
-| `/parts/{filename}/display-mesh` | GET | PyVista mesh data for visualization |
-| `/parts/{filename}/boolean-regions` | GET | Boolean interference region meshes |
+
+There is no separate `/display-mesh` or `/boolean-regions` endpoint. Mesh and
+Boolean-region data are returned as part of the analysis endpoints above via
+query flags:
+- `include_mesh=true` (default `true` on most endpoints) — adds
+  `display_mesh` (points/faces/face_ids, plus a per-overlay color array) to the
+  response.
+- `include_boolean_regions=true` (default `false`, on `/undercuts` and
+  `/direction`) — adds `boolean_region_meshes` (translucent Boolean
+  interference volumes) to the response.
 
 ## Stateless Design
 

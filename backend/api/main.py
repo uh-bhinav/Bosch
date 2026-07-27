@@ -917,7 +917,7 @@ def part_parting_line(
 def part_core_cavity(
     filename: str,
     use_optimal_direction: bool = Query(default=True),
-    threshold: float = Query(default=0.05, ge=0.0, le=1.0),
+    threshold: float | None = Query(default=None, ge=0.0, le=1.0),
     include_faces: bool = Query(default=False),
     include_mesh: bool = Query(default=True),
     mesh_deflection: float = Query(default=0.5, gt=0.0),

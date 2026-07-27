@@ -27,6 +27,7 @@ dfm:
     smoothing_iterations: 8
     # ... curve display parameters
   core_cavity:
+    threshold: 0.05
     cavity_color: [0.2, 0.8, 0.3]
     core_color: [0.2, 0.45, 0.9]
 agent:

@@ -1,7 +1,7 @@
 # Known Gaps — What's Not Implemented
 
 > Update this file whenever a gap is closed or a new one is discovered.
-> Last updated: 2026-07-26
+> Last updated: 2026-07-27
 
 ## ❌ Not Implemented (Empty / Missing)
 
@@ -18,8 +18,7 @@
 | Core/cavity extraction | Face classification only (140 lines in `core_cavity.py`) | Boolean solid split into two separate mold-half bodies |
 | Parting line | Candidate silhouette overlay with Chaikin smoothing | Full Hou-style global graph optimization, parting surface generation |
 | Bassi 2010 fidelity | Selective swept Boolean on top candidates | Exhaustive Boolean for every face of every direction |
-| Sangolli 2021 fidelity | Adjacency + Boolean-region feature grouping | Volumetric decomposition, radix sort, edge convexity |
-| Saved validation reports | All show `status: "skipped"` (no OCC in test env) | Need Docker/conda run for real evidence |
+| Sangolli 2021 fidelity | Adjacency + Boolean-region feature grouping; edge convexity computed at load time and used to suppress centroid-normal false positives (2026-07-27) | Volumetric decomposition, radix sort |
 
 ## 📋 Infrastructure Gaps
 

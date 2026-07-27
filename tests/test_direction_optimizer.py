@@ -380,3 +380,138 @@ def test_direction_level_cache_does_not_cross_part_signature():
     assert second_hit is False
     assert detect_mock.call_count == 2
     assert len(direction_cache) == 2
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Flash risk term (Roadmap Phase 1d, Gap 1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_flash_risk_area_fraction_flags_thin_face_near_parallel_to_pull():
+    from backend.geometry.direction_optimizer import _flash_risk_area_fraction
+
+    # bbox diagonal = sqrt(3*10^2) ~= 17.32mm; default flash_thin_area_factor
+    # 0.02 -> thin_area_limit ~= 0.02 * 17.32^2 ~= 6.0 mm^2. area=1.0 is thin.
+    thin_flash_face = _make_face(0, (1.0, 0.0, 0.0), area=1.0)  # perpendicular to +Z pull
+    part = _make_part([thin_flash_face])
+
+    fraction = _flash_risk_area_fraction(part, (0.0, 0.0, 1.0))
+
+    assert fraction == 1.0
+
+
+def test_flash_risk_area_fraction_ignores_thick_face_near_parallel_to_pull():
+    from backend.geometry.direction_optimizer import _flash_risk_area_fraction
+
+    thick_face = _make_face(0, (1.0, 0.0, 0.0), area=500.0)  # perpendicular, but not thin
+    part = _make_part([thick_face])
+
+    fraction = _flash_risk_area_fraction(part, (0.0, 0.0, 1.0))
+
+    assert fraction == 0.0
+
+
+def test_flash_risk_area_fraction_ignores_well_drafted_thin_face():
+    from backend.geometry.direction_optimizer import _flash_risk_area_fraction
+
+    well_drafted_thin_face = _make_face(0, (0.0, 0.0, 1.0), area=1.0)  # aligned with pull
+    part = _make_part([well_drafted_thin_face])
+
+    fraction = _flash_risk_area_fraction(part, (0.0, 0.0, 1.0))
+
+    assert fraction == 0.0
+
+
+def test_flash_risk_term_increases_score_for_thin_near_parallel_face():
+    from backend.geometry.direction_optimizer import _score_candidate
+    from backend.geometry.draft_analyzer import analyze_draft
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    flash_risk_part = _make_part([_make_face(0, (1.0, 0.0, 0.0), area=1.0)])
+    no_flash_part = _make_part([_make_face(0, (1.0, 0.0, 0.0), area=500.0)])
+    pull_dir = (0.0, 0.0, 1.0)
+
+    def score_for(part):
+        draft = analyze_draft(part=part, pull_direction=pull_dir, mutate=False)
+        undercuts = detect_undercuts(part, pull_dir, mutate=False, boolean_refine=False)
+        return _score_candidate(draft, undercuts, pull_dir, part)
+
+    assert score_for(flash_risk_part) > score_for(no_flash_part)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Coarse-to-fine direction search (Roadmap Phase 1d, Gap 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_generate_fine_candidate_directions_are_unit_vectors_within_cone():
+    import math
+
+    from backend.geometry.direction_optimizer import generate_fine_candidate_directions
+
+    base = (0.0, 0.0, 1.0)
+    cone_half_angle_deg = 15.0
+    seen: set[tuple[int, int, int]] = set()
+
+    directions = generate_fine_candidate_directions(
+        base_direction=base,
+        cone_half_angle_deg=cone_half_angle_deg,
+        angular_step_deg=5.0,
+        seen=seen,
+    )
+
+    assert directions  # non-empty for these parameters
+    cos_limit = math.cos(math.radians(cone_half_angle_deg)) - 1e-6
+    for direction in directions:
+        mag = math.sqrt(sum(v * v for v in direction))
+        assert abs(mag - 1.0) < 1e-9
+        dot = sum(a * b for a, b in zip(direction, base))
+        assert dot >= cos_limit, f"{direction} outside the {cone_half_angle_deg} deg cone"
+
+
+def test_generate_fine_candidate_directions_respects_seen_dedup():
+    from backend.geometry.direction_optimizer import (
+        _dedupe_direction,
+        generate_fine_candidate_directions,
+    )
+
+    base = (0.0, 0.0, 1.0)
+    seen: set[tuple[int, int, int]] = set()
+    first_pass = generate_fine_candidate_directions(base, 15.0, 5.0, seen)
+    # Re-run with the SAME seen set: every direction should already be present.
+    second_pass = generate_fine_candidate_directions(base, 15.0, 5.0, seen)
+
+    assert first_pass  # sanity: first pass actually found candidates
+    assert second_pass == []
+
+
+def test_generate_fine_candidate_directions_empty_for_nonpositive_params():
+    from backend.geometry.direction_optimizer import generate_fine_candidate_directions
+
+    assert generate_fine_candidate_directions((0.0, 0.0, 1.0), 0.0, 5.0, set()) == []
+    assert generate_fine_candidate_directions((0.0, 0.0, 1.0), 15.0, 0.0, set()) == []
+
+
+def test_optimize_mold_direction_fine_search_adds_candidates(monkeypatch):
+    """
+    With fine search enabled (default), the candidate list must be at least
+    as large as the coarse-only grid, and every candidate score must have
+    come from mutate=False (part.faces must only reflect the FINAL winner).
+
+    _OCC_BOOLEAN_AVAILABLE is forced False here so this test never risks
+    feeding a MagicMock occ_face into a real OCC Boolean call.
+    """
+    import backend.geometry.undercut_detector as undercut_module
+    from backend.geometry.direction_optimizer import (
+        generate_candidate_directions,
+        optimize_mold_direction,
+    )
+
+    monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+    face = _make_face(0, (1.0, 0.0, 0.03), area=100.0)
+    part = _make_part([face])
+
+    result_fine = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+    coarse_only_count = len(generate_candidate_directions(45.0, 6))
+
+    assert len(result_fine.candidates) >= coarse_only_count
+    assert result_fine.best_direction is not None

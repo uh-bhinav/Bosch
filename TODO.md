@@ -12,25 +12,33 @@
 
 ## 🔴 P0 — Blockers (fix before any other work)
 
-- [ ] **F1 — `Part1.stp` and `Part3.stp` are byte-identical** (same MD5 `a373ffdf…`, both 863,881 bytes, both with internal `FILE_NAME 'Part3.stp'`)
-  - `rename.stp` (522 KB, internal name `Element_Packaging_Cap.stp`) matches the size STATUS.md records for Part1
-  - Original Part1 was almost certainly overwritten; confirm with the team and restore
-  - Until fixed, all "validated on two parts" claims are false — it is one part tested twice
-- [ ] **F2 — `core_cavity.py` docstring references `dfm.parting_line.silhouette_dot_tolerance`, which does not exist in `config.yaml`**
-  - `threshold=0.05` is hardcoded in `classify_core_cavity()` and again in `main.py`
-  - Violates CLAUDE.md invariant #4 (no hardcoded magic numbers)
-- [ ] **F3 — `.claude/rules/api-layer.md` documents `/display-mesh` and `/boolean-regions` endpoints that do not exist** (they are query flags on other endpoints)
-- [ ] **F4 — `networkx==3.3` is pinned but never imported** — parting line uses a hand-rolled bounded DFS instead
-- [ ] **Run Docker validation with real OCC and commit the artifacts** — every saved report currently shows `status: "skipped"`
+- [x] **F1 — `Part1.stp`/`Part3.stp` identity resolved (2026-07-27)**: confirmed genuine mix-up; `rename.stp` (`Element_Packaging_Cap.stp`, 522,419 B) has been restored as `Part1.stp`. Verified: `Part1.stp` = 522,419 B / MD5 `d0c89a7c…` (Level 1), `Part3.stp` = 863,881 B / MD5 `a373ffdf…` (Level 2) — two distinct files, `rename.stp` no longer exists. STEP schema confirmed as AP214 (`AUTOMOTIVE_DESIGN`) — Phase 1.11's mold-half export targets AP214 to match.
+- [x] **F2 — fixed**: `dfm.core_cavity.threshold` added to `config.yaml` + `CoreCavitySettings`; `classify_core_cavity()` and the `/core-cavity` endpoint now default from settings instead of a hardcoded `0.05`.
+- [x] **F3 — fixed**: `.claude/rules/api-layer.md` now documents `include_mesh` / `include_boolean_regions` as query flags on the real endpoints instead of two nonexistent routes.
+- [ ] **F4 — `networkx==3.3` is pinned but never imported** — parting line uses a hand-rolled bounded DFS instead. Resolved by Phase 1.6.
+- [x] **F5 — fixed (2026-07-27)**: documented test command (`docker compose exec backend pytest tests/ -v --tb=short`) never worked — no root `conftest.py`/`pytest.ini` puts `/app` on `sys.path`. Fixed with `pythonpath = ..` in `tests/pytest.ini`.
+- [x] **Run Docker validation with real OCC and commit the artifacts (2026-07-27)** — real (non-`skipped`) evidence in `reports/level1_validation/*_docker_20260727*`; both parts pass every stage. Authoritative post-Milestone-1.2 run: `part_validation_docker_20260727_post_1.2.json` + `performance_profile_part{1,3}_20260727.json` — combined `direction_search` time dropped from ~713s (pre-1.2) to ~15s (post-1.2, calm environment).
 - [ ] **Fix overclaims in SUBMISSION_REPORT.md** — qualify parting line and core/cavity as partial
+- [ ] **Investigate genuine test failure** — `test_api_error_handling.py::test_parting_line_paths_payload_is_json_safe` fails for real (surfaced once F5's import bug was fixed, 2026-07-27)
+- [ ] **Test-suite hygiene: mock-based tests need explicit `boolean_refine=False`** — found 2026-07-27 while verifying Milestone 1.2. Any test building a mock `PartGeometry` (`occ_face=MagicMock()`) and calling `detect_undercuts()`/`optimize_mold_direction()` without `boolean_refine=False` stalls for minutes against a container with real pythonocc-core installed (the mock isn't a valid SWIG-wrapped OCC object, and it gets fed straight into real `BRepAlgoAPI_Common`/`BRepPrimAPI_MakePrism` calls). This was invisible before F5 was fixed, since Docker test runs never worked at all. Affects at least `test_undercut_detector.py::test_detect_undercuts_flags_zero_draft_face`; needs an audit pass across `test_undercut_detector.py` and `test_direction_optimizer.py`.
+
+## ❓ Needs a team decision
+
+- **Undercut depth: precision vs. conservative safety margin.** `UndercutFeature.depth_proxy_mm` (feature-level) deliberately takes the *largest* of several depth candidates (precise Boolean-vertex evidence, a cruder centroid-projection proxy, and bounding-box spans) rather than preferring the precise one — likely intentional (safer to overestimate undercut depth than underestimate it), but this contradicts the *per-face* `BooleanInterferenceMetrics.depth_mm`, which deliberately prefers precision. Both are tested; nobody has reconciled the inconsistency. Decide: keep feature-level as a conservative upper bound (document it as such), or make it prefer precision too (drafted fix exists, reverted 2026-07-27 — see `docs/ARCHITECTURE_ROADMAP.md` Milestone 1.3 note)?
+
+## 📌 Decisions locked in (2026-07-27)
+
+- **STEP export schema**: match source files — AP214 (`AUTOMOTIVE_DESIGN`), confirmed via `FILE_SCHEMA` in `Part1.stp`/`Part3.stp`. Consistent with the Siemens NX origin of the input files.
+- **PDF export**: still a deliverable. Scheduled as **Phase 5**, tackled after Phase 4 (agent layer) — not dropped, just sequenced last.
+- **Texture marking**: selectable in the UI (Phase 1e option 1 — explicit per-face override from user selection), not inferred from surface type alone.
 
 ## 🟠 PHASE 1 — Geometry Engine Hardening
 
-- [ ] 1.1 Edge convexity computation in `step_loader.py` → populate `EdgeData.convexity` (currently always `None`)
-- [ ] 1.2 Convexity-gated undercut false-positive suppression
-- [ ] 1.3 Extremal vertex projection for exact undercut depth (parting-plane reference, not bbox span)
-- [ ] 1.4 Flash risk penalty term + coarse-to-fine (±5°) direction search
-- [ ] 1.5 Draft conditional thresholds (per-face override → deep-rib detection → surface-type table → global)
+- [x] 1.1 Edge convexity computation in `step_loader.py` → populates `EdgeData.convexity` at load time (was always `None`). Verified: plain box → 12/12 convex; box-with-pocket → pocket floor's 4 edges concave; real `Part1.stp` → >90% of manifold edges classified. New config: `dfm.undercut.convexity_tangent_tolerance` (0.01). Tests: `tests/test_step_loader.py::TestEdgeConvexitySynthetic`.
+- [x] 1.2 Convexity-gated undercut false-positive suppression in `detect_undercuts()`. Verified on real parts (suppression on/off): Part1 undercut count 44→18, Boolean-checked 78→27, 45.2s→13.4s; Part3 undercut count 16→0, Boolean-checked 97→3, 73.6s→1.9s. **Part3's 100% swing flagged for domain/visual review**, not just accepted. New: `UndercutDetectionResult.convexity_suppressed_face_ids`, config `dfm.undercut.convexity_suppression_enabled` (kill switch). Tests: `tests/test_undercut_detector.py` (4 new, mock-based).
+- [x] 1.3 **Reassessed, no code change (2026-07-27)**: per-face depth (`_select_boolean_depth_details`) already does exact-vertex-first prioritization correctly (4 passing tests confirm). Feature-level aggregation deliberately takes the *largest* plausible estimate (conservative safety margin, not a bug) — an attempted "prefer precision" fix was reverted after it broke 3 tests with exact numeric assertions. See `docs/ARCHITECTURE_ROADMAP.md` Milestone 1.3 note. **Needs a team decision**, not something to silently change.
+- [x] 1.4 Flash risk penalty term + coarse-to-fine (±5°) direction search. Verified on real geometry: Part1 best_score 0.692→0.313 (−54.8%), Part3 6.415→1.384 (−78.4%), both finding a genuinely better direction, +60 candidates as designed, no timing regression. New config: `flash_risk_weight`, `flash_angle_threshold_deg`, `flash_thin_area_factor`, `fine_search_enabled`, `fine_search_top_k`, `fine_angular_step_deg`, `fine_search_cone_half_angle_deg`, `fine_search_max_candidates`. Tests: `tests/test_direction_optimizer.py` (8 new, mock-based).
+- [x] 1.5 Draft conditional thresholds — **scoped to explicit override → global default** (tiers 2/3 deliberately deferred, see roadmap note: surface-type defaults are a no-op today per the honesty ruling, deep-rib auto-detection needs real geometric work not yet done). `analyze_draft(..., face_conditions={face_id: "light_texture"|"heavy_texture"|"deep_rib"|"smooth"})`. Verified on real Part1.stp. New config: `dfm.draft.conditions.*`. Tests: `tests/test_draft_analyzer.py::TestFaceConditionThresholds` (6 new). API wiring deferred to Phase 2 (needs a frontend picker to call it from).
 - [ ] 1.6 Replace bounded DFS with a real `networkx` graph in `parting_line.py`
 - [ ] 1.7 Bridge disconnected silhouette components via real B-Rep edges (`EdgeData.is_boundary`)
 - [ ] 1.8 Guaranteed closed loop — min-cost cycle over components
@@ -77,9 +85,20 @@
 - [ ] 4.7 Frontend agent panel with evidence-source badges
 - [ ] 4.8 Accuracy validation — every number traceable to a tool result
 
+## 🟣 PHASE 5 — PDF Report Export
+
+Confirmed deliverable, deliberately sequenced last — needs a stable engine
+(Phase 1), a UI to source screenshots/data from (Phase 2), and, ideally, agent
+narrative content (Phase 4) to embed.
+
+- [ ] 5.1 `backend/report/pdf_export.py` using `reportlab` (already pinned, unused)
+- [ ] 5.2 Auto-fill metrics from geometry results (draft %, undercut count/severity, parting-line readiness, core/cavity split)
+- [ ] 5.3 Embed viewport screenshots (from the React viewer) or generate charts
+- [ ] 5.4 `POST /parts/{filename}/export/report` endpoint
+- [ ] 5.5 "Export PDF Report" action in the frontend
+
 ## ⚪ Deferred / Unscheduled
 
-- [ ] PDF report export (`reportlab` pinned but unused) — **not scheduled in the roadmap**; confirm if still a deliverable
 - [ ] Exhaustive Bassi Boolean analysis (every face, every direction)
 - [ ] Sangolli full volumetric decomposition + radix sort
 - [ ] Add `__init__.py` to `backend/geometry/`

@@ -215,7 +215,13 @@ class EdgeData:
                         (e.g. full cylinders, spheres).  These edges have only
                         1 unique adjacent face but appear twice in its wire.
     convexity         : "convex" | "concave" | "tangent" | None.
-                        None until undercut_detector.py populates it (Module 3).
+                        Populated by step_loader.py at load time for every
+                        manifold, non-seam edge (Module 1) — this is a pure
+                        topological property, independent of pull direction,
+                        so it is computed once and cached rather than
+                        recomputed per direction downstream. None for
+                        boundary/non-manifold edges, or if OCC evaluation
+                        failed for this edge.
                         Convex = outside corner (solid projects outward).
                         Concave = inside corner (pocket / undercut risk).
     is_silhouette     : None until parting_line.py populates it (Module 4).
@@ -232,8 +238,9 @@ class EdgeData:
     end_vertex: Optional[Vec3]
     is_seam: bool
 
+    # Populated by step_loader.py at load time (pull-direction-independent):
+    convexity: Optional[str] = None
     # Populated by downstream modules:
-    convexity: Optional[str] = None       # Module 3: undercut_detector
     is_silhouette: Optional[bool] = None  # Module 4: parting_line
     is_parting_edge: Optional[bool] = None  # Module 4: parting_line
 

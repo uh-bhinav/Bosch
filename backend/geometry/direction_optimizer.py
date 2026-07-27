@@ -41,7 +41,7 @@ from backend.geometry.undercut_detector import (
     UndercutDetectionResult,
     detect_undercuts,
 )
-from backend.models.geometry_models import PartGeometry, Vec3, dot3, normalize3
+from backend.models.geometry_models import PartGeometry, Vec3, cross3, dot3, normalize3
 
 PartCacheSignature = tuple[int, int, int, int, int, int, int]
 
@@ -473,6 +473,104 @@ def _principal_axis_alignment(direction: Vec3) -> float:
     return max(abs(direction[0]), abs(direction[1]), abs(direction[2]))
 
 
+def _perpendicular_basis(direction: Vec3) -> tuple[Vec3, Vec3]:
+    """Build a stable orthonormal 2-D basis perpendicular to `direction`."""
+    reference = (0.0, 0.0, 1.0) if abs(direction[2]) < 0.9 else (1.0, 0.0, 0.0)
+    u = normalize3(cross3(reference, direction))
+    v = cross3(direction, u)
+    return u, v
+
+
+def generate_fine_candidate_directions(
+    base_direction: Vec3,
+    cone_half_angle_deg: float,
+    angular_step_deg: float,
+    seen: set[tuple[int, int, int]],
+) -> list[Vec3]:
+    """
+    Sample a local cone of directions around `base_direction` (Roadmap
+    Phase 1d, Gap 2: coarse-to-fine search).
+
+    A uniform global grid at `angular_step_deg` (default 15°) cannot resolve
+    an optimum that sits a few degrees off a sampled direction — real parts
+    are frequently drafted at 1-3° from an axis. This mirrors
+    `generate_candidate_directions`'s spherical sampling pattern, but bounded
+    to a small cone around a specific coarse-stage winner instead of the
+    whole sphere.
+
+    `seen` is the SAME dedup set used for the coarse candidates (and, when
+    called repeatedly for multiple coarse winners, across those calls too)
+    so a fine sample that coincides with an existing candidate is skipped
+    rather than double-scored.
+    """
+    base = normalize3(base_direction)
+    if cone_half_angle_deg <= 0.0 or angular_step_deg <= 0.0:
+        return []
+    u_axis, v_axis = _perpendicular_basis(base)
+
+    candidates: list[Vec3] = []
+
+    def add(direction: Vec3) -> None:
+        unit = normalize3(direction)
+        if _dedupe_direction(unit, seen):
+            candidates.append(unit)
+
+    alpha = 0.0
+    while alpha <= cone_half_angle_deg + 1e-9:
+        sin_a = math.sin(math.radians(alpha))
+        cos_a = math.cos(math.radians(alpha))
+        if alpha < 1e-9:
+            add(base)
+            alpha += angular_step_deg
+            continue
+        phi = 0.0
+        while phi < 360.0:
+            cos_p = math.cos(math.radians(phi))
+            sin_p = math.sin(math.radians(phi))
+            direction = tuple(
+                cos_a * base[i] + sin_a * (cos_p * u_axis[i] + sin_p * v_axis[i])
+                for i in range(3)
+            )
+            add(direction)
+            phi += angular_step_deg
+        alpha += angular_step_deg
+
+    return candidates
+
+
+def _flash_risk_area_fraction(part: PartGeometry, direction: Vec3) -> float:
+    """
+    Fraction of analysed area on thin-walled faces nearly parallel to the
+    pull direction (Roadmap Phase 1d).
+
+    Flash (molten plastic escaping at the parting line) is dominated by a
+    face lying nearly parallel to the pull direction near the silhouette:
+    the two mold halves meet at a shallow angle there, and shut-off is
+    unreliable. A thick structural rib at a shallow angle is not a flash
+    risk the way a thin wall is — wall thickness isn't modeled here (that
+    needs ray casting or medial-axis analysis), so a face's own area is used
+    as a coarse proxy for thinness: gate on
+    `area < flash_thin_area_factor * bbox_diagonal**2`.
+    """
+    cfg = settings.dfm.direction_search
+    sin_threshold = math.sin(math.radians(cfg.flash_angle_threshold_deg))
+    bbox_diagonal = max(part.bounding_box.diagonal, 1e-6)
+    thin_area_limit = cfg.flash_thin_area_factor * bbox_diagonal * bbox_diagonal
+
+    total_area = 0.0
+    flash_area = 0.0
+    for face in part.faces:
+        if not face.normal_valid:
+            continue
+        total_area += face.area
+        if abs(dot3(face.normal, direction)) < sin_threshold and face.area < thin_area_limit:
+            flash_area += face.area
+
+    if total_area <= 0.0:
+        return 0.0
+    return flash_area / total_area
+
+
 def _score_candidate(
     draft: DraftAnalysisResult,
     undercuts: UndercutDetectionResult,
@@ -482,9 +580,11 @@ def _score_candidate(
     """
     Lower score is better.
 
-    Bad area dominates; marginal area is secondary.  The final term is a small
-    penalty for non-principal directions because simple two-plate tooling is
-    easier to set up around principal axes when manufacturability is similar.
+    Bad area dominates; marginal area is secondary. Flash risk is a
+    manufacturability nuisance (Phase 1d) — weighted between marginal draft
+    and bad draft, never dominant. The final term is a small penalty for
+    non-principal directions because simple two-plate tooling is easier to
+    set up around principal axes when manufacturability is similar.
     """
     bad_pct = draft.bad_pct / 100.0
     marginal_pct = draft.marginal_pct / 100.0
@@ -497,12 +597,15 @@ def _score_candidate(
     bbox_volume = max(dims[0] * dims[1] * dims[2], 1.0)
     interference_volume_frac = min(1.0, undercuts.interference_volume_mm3 / bbox_volume)
     interference_weight = settings.dfm.direction_search.boolean_interference_weight
+    flash_risk_weight = settings.dfm.direction_search.flash_risk_weight
+    flash_area_frac = _flash_risk_area_fraction(part, direction)
     non_axis_penalty = 1.0 - _principal_axis_alignment(direction)
     return (
         1500.0 * undercut_pct
         + 1000.0 * bad_pct
         + 100.0 * marginal_pct
         + interference_weight * interference_volume_frac
+        + flash_risk_weight * flash_area_frac
         + 25.0 * undercut_count_frac
         + 10.0 * bad_count_frac
         + 2.0 * marginal_count_frac
@@ -704,6 +807,56 @@ def _select_boolean_refinement_candidates(
     return promising, summary
 
 
+def _score_direction_candidate(
+    part: PartGeometry,
+    direction: Vec3,
+    draft_by_direction: dict[Vec3, DraftAnalysisResult],
+) -> DirectionCandidateResult:
+    """
+    Prefilter-only scoring pass for one candidate direction.
+
+    `mutate=False` throughout — this runs for every coarse AND fine
+    candidate, and only the single final winner (in `optimize_mold_direction`)
+    is ever scored with `mutate=True`. Shared by the coarse grid and the
+    coarse-to-fine refinement (Phase 1d) so both use identical scoring.
+    """
+    draft = analyze_draft(
+        part=part,
+        pull_direction=direction,
+        pull_direction_label=f"candidate {_direction_label(direction)}",
+        analysis_pass="candidate",
+        mutate=False,
+    )
+    draft_by_direction[direction] = draft
+    undercuts = detect_undercuts(
+        part,
+        direction,
+        mutate=False,
+        boolean_refine=False,
+    )
+    score = _score_candidate(draft, undercuts, direction, part)
+    return DirectionCandidateResult(
+        direction=direction,
+        label=_direction_label(direction),
+        score=score,
+        bad_face_count=len(draft.bad_face_ids),
+        marginal_face_count=len(draft.marginal_face_ids),
+        good_face_count=len(draft.good_face_ids),
+        bad_area_mm2=draft.bad_area_mm2,
+        marginal_area_mm2=draft.marginal_area_mm2,
+        total_area_mm2=draft.total_analysed_area_mm2,
+        bad_area_pct=draft.bad_pct,
+        marginal_area_pct=draft.marginal_pct,
+        undercut_face_count=len(undercuts.undercut_face_ids),
+        undercut_feature_count=len(undercuts.features),
+        undercut_area_pct=undercuts.undercut_area_pct,
+        boolean_refined=undercuts.boolean_refined,
+        boolean_checked_count=len(undercuts.boolean_checked_face_ids),
+        interference_volume_mm3=undercuts.interference_volume_mm3,
+        principal_axis_alignment=_principal_axis_alignment(direction),
+    )
+
+
 def optimize_mold_direction(
     part: PartGeometry,
     angular_step_deg: float | None = None,
@@ -755,44 +908,41 @@ def optimize_mold_direction(
     draft_by_direction: dict[Vec3, DraftAnalysisResult] = {}
 
     for direction in candidates:
-        draft = analyze_draft(
-            part=part,
-            pull_direction=direction,
-            pull_direction_label=f"candidate {_direction_label(direction)}",
-            analysis_pass="candidate",
-            mutate=False,
-        )
-        draft_by_direction[direction] = draft
-        undercuts = detect_undercuts(
-            part,
-            direction,
-            mutate=False,
-            boolean_refine=False,
-        )
-        score = _score_candidate(draft, undercuts, direction, part)
-        candidate_result = DirectionCandidateResult(
-            direction=direction,
-            label=_direction_label(direction),
-            score=score,
-            bad_face_count=len(draft.bad_face_ids),
-            marginal_face_count=len(draft.marginal_face_ids),
-            good_face_count=len(draft.good_face_ids),
-            bad_area_mm2=draft.bad_area_mm2,
-            marginal_area_mm2=draft.marginal_area_mm2,
-            total_area_mm2=draft.total_analysed_area_mm2,
-            bad_area_pct=draft.bad_pct,
-            marginal_area_pct=draft.marginal_pct,
-            undercut_face_count=len(undercuts.undercut_face_ids),
-            undercut_feature_count=len(undercuts.features),
-            undercut_area_pct=undercuts.undercut_area_pct,
-            boolean_refined=undercuts.boolean_refined,
-            boolean_checked_count=len(undercuts.boolean_checked_face_ids),
-            interference_volume_mm3=undercuts.interference_volume_mm3,
-            principal_axis_alignment=_principal_axis_alignment(direction),
-        )
-        scored.append(candidate_result)
+        scored.append(_score_direction_candidate(part, direction, draft_by_direction))
 
     scored.sort(key=lambda c: c.score)
+
+    # ── Coarse-to-fine search (Roadmap Phase 1d, Gap 2) ─────────────────────
+    # A uniform coarse grid can miss an optimum sitting a few degrees off a
+    # sampled direction. Sample a local cone around each of the top-K coarse
+    # winners, at a finer angular step, using the SAME prefilter-only scoring
+    # (mutate=False, boolean_refine=False) as the coarse stage — no extra
+    # Boolean cost here. Boolean refinement (below) still runs only on the
+    # merged shortlist via the existing pruning guards.
+    fine_cfg = settings.dfm.direction_search
+    if fine_cfg.fine_search_enabled and fine_cfg.fine_search_top_k > 0:
+        seen_directions: set[tuple[int, int, int]] = set()
+        for direction in candidates:
+            _dedupe_direction(direction, seen_directions)
+
+        fine_directions: list[Vec3] = []
+        for winner in scored[: fine_cfg.fine_search_top_k]:
+            fine_directions.extend(
+                generate_fine_candidate_directions(
+                    base_direction=winner.direction,
+                    cone_half_angle_deg=fine_cfg.fine_search_cone_half_angle_deg,
+                    angular_step_deg=fine_cfg.fine_angular_step_deg,
+                    seen=seen_directions,
+                )
+            )
+            if len(fine_directions) >= fine_cfg.fine_search_max_candidates:
+                break
+        fine_directions = fine_directions[: fine_cfg.fine_search_max_candidates]
+
+        for direction in fine_directions:
+            scored.append(_score_direction_candidate(part, direction, draft_by_direction))
+
+        scored.sort(key=lambda c: c.score)
 
     promising, pruning_summary = _select_boolean_refinement_candidates(scored)
 

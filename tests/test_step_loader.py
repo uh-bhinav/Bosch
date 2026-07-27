@@ -374,6 +374,121 @@ class TestLoadStepIntegration:
         assert len(valid) > 0
         assert all(f.normal_valid for f in valid)
 
+    # ── Edge convexity (Roadmap Phase 1.1) ──────────────────────────────────
+
+    def test_manifold_edges_have_convexity_classified(self, part):
+        """
+        Every manifold, non-seam edge should get a convexity classification
+        on a well-formed real part. A large fraction landing on None would
+        indicate systematic OCC evaluation failures (bad pcurves, degenerate
+        tangents), not occasional per-edge geometry issues.
+        """
+        manifold_edges = [e for e in part.edges if e.is_manifold and not e.is_seam]
+        assert manifold_edges, "Expected at least one manifold edge"
+        classified = [e for e in manifold_edges if e.convexity is not None]
+        ratio = len(classified) / len(manifold_edges)
+        assert ratio > 0.9, (
+            f"Only {ratio:.1%} of manifold edges got a convexity value — "
+            "check _compute_edge_convexity for systematic failures"
+        )
+        for e in classified:
+            assert e.convexity in ("convex", "concave", "tangent")
+
+    def test_boundary_edges_have_no_convexity(self, part):
+        """Convexity is only meaningful for manifold (2-face) edges."""
+        for e in part.edges:
+            if e.is_boundary or e.is_seam:
+                assert e.convexity is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Edge convexity — synthetic OCC shapes (Roadmap Phase 1.1)
+#
+# Real .stp integration tests can't isolate a known-correct answer (nobody
+# can eyeball "concave" vs "convex" on 700+ real edges). These build shapes
+# by hand where the right answer is obvious from the construction, so a sign
+# error in the convexity formula fails loudly instead of hiding in a real
+# part's face count. See docs/ARCHITECTURE_ROADMAP.md Milestone 1.1 gate.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@skip_no_occ
+class TestEdgeConvexitySynthetic:
+    """No .stp file needed — shapes are built directly via OCC primitives."""
+
+    @staticmethod
+    def _edges_of(shape):
+        from backend.geometry.step_loader import (
+            _extract_all_faces,
+            _extract_edges_and_build_adjacency,
+        )
+        warnings: list[str] = []
+        faces = _extract_all_faces(shape, warnings)
+        edges, _, _, _ = _extract_edges_and_build_adjacency(shape, faces, warnings)
+        return edges
+
+    def test_plain_box_is_fully_convex(self):
+        """A cube has 12 edges; every one is an outside (convex) corner."""
+        from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
+
+        box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()
+        edges = self._edges_of(box)
+        manifold = [e for e in edges if e.is_manifold and not e.is_seam]
+
+        assert len(manifold) == 12
+        assert all(e.convexity == "convex" for e in manifold), (
+            f"Expected all 12 box edges convex, got: "
+            f"{[e.convexity for e in manifold]}"
+        )
+
+    def test_box_with_pocket_floor_edges_are_concave(self):
+        """
+        A 4x4x4 rectangular pocket cut into the top of a 10x10x10 box.
+        The pocket floor's 4 perimeter edges (where the vertical pocket
+        wall meets the horizontal pocket floor) are concave — an inside
+        corner, same family as the inside corner of a room.
+        """
+        from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
+        from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Cut
+        from OCC.Core.gp import gp_Pnt
+
+        box = BRepPrimAPI_MakeBox(10.0, 10.0, 10.0).Shape()
+        # Tool spans z=[6, 11]: overlaps the box top (z=10) so it cuts a
+        # blind pocket with its floor at z=6, not a through-hole.
+        pocket_tool = BRepPrimAPI_MakeBox(gp_Pnt(3.0, 3.0, 6.0), 4.0, 4.0, 5.0).Shape()
+        cut = BRepAlgoAPI_Cut(box, pocket_tool)
+        assert cut.IsDone(), "Boolean cut failed — cannot build pocket fixture"
+
+        edges = self._edges_of(cut.Shape())
+        manifold = [e for e in edges if e.is_manifold and not e.is_seam]
+
+        floor_edges = [
+            e for e in manifold
+            if e.start_vertex and e.end_vertex
+            and abs(e.start_vertex[2] - 6.0) < 1e-6
+            and abs(e.end_vertex[2] - 6.0) < 1e-6
+        ]
+        assert len(floor_edges) == 4, (
+            f"Expected 4 pocket-floor edges at z=6, found {len(floor_edges)}"
+        )
+        assert all(e.convexity == "concave" for e in floor_edges), (
+            f"Expected all 4 pocket-floor edges concave, got: "
+            f"{[e.convexity for e in floor_edges]}"
+        )
+
+        # The box's own 12 edges are untouched by the pocket and must
+        # remain convex — regression guard against the formula flipping
+        # sign globally instead of correctly discriminating by geometry.
+        box_corner_edges = [
+            e for e in manifold
+            if e.start_vertex and e.end_vertex
+            and {round(e.start_vertex[i], 3) for i in range(3)} & {0.0, 10.0}
+            and {round(e.end_vertex[i], 3) for i in range(3)} & {0.0, 10.0}
+            and e not in floor_edges
+        ]
+        assert any(e.convexity == "convex" for e in box_corner_edges), (
+            "Expected at least some original box edges to remain convex"
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Accuracy benchmark  (printed, not asserted — for human review)

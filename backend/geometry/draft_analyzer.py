@@ -410,6 +410,10 @@ def _build_suggestions(
       1. The same classification level ("bad" before "marginal").
       2. The same dominant surface type (Plane, Cylinder, BSpline/NURBS, ...).
       3. The same mold side ("positive" / "negative" — different correction tool).
+      4. The same resolved draft condition ("smooth", "light_texture", ... —
+         Roadmap Phase 1e). A mixed smooth+textured group would otherwise
+         report one wrong `required_angle_deg` for faces that actually need
+         different amounts of draft.
 
     This mirrors how a mold engineer writes their DfM report:
       "Add 1.5° draft to the 8 Plane faces on the cavity side using the
@@ -427,10 +431,11 @@ def _build_suggestions(
     """
 
     # ── Collect problematic faces ─────────────────────────────────────────
-    # Group key: (classification, surface_type, mold_side)
+    # Group key: (classification, surface_type, mold_side, condition_applied)
     from collections import defaultdict
 
-    groups: dict[tuple[str, str, str], list[FaceData]] = defaultdict(list)
+    groups: dict[tuple[str, str, str, str], list[FaceData]] = defaultdict(list)
+    group_required_good_deg: dict[tuple[str, str, str, str], float] = {}
 
     for face in part.faces:
         if not face.normal_valid:
@@ -446,15 +451,21 @@ def _build_suggestions(
             continue
         s_dot = dot3(face.normal, pull_direction)
         side = _mold_side(s_dot)
-        key = (classification, face.surface_type, side)
+        condition_applied = str(snapshot.get("condition_applied", "smooth")) if snapshot else "smooth"
+        key = (classification, face.surface_type, side, condition_applied)
         groups[key].append(face)
+        group_required_good_deg[key] = (
+            float(snapshot["required_good_deg"])
+            if snapshot and "required_good_deg" in snapshot
+            else good_threshold_deg
+        )
 
     if not groups:
         return []
 
     suggestions: list[DraftSuggestion] = []
 
-    for (classification, surface_type, side), faces_in_group in groups.items():
+    for (classification, surface_type, side, condition_applied), faces_in_group in groups.items():
         if not faces_in_group:
             continue
 
@@ -467,10 +478,13 @@ def _build_suggestions(
         if not angles:
             continue
 
+        required_good_deg = group_required_good_deg[
+            (classification, surface_type, side, condition_applied)
+        ]
         avg_angle = sum(angles) / len(angles)
         min_angle = min(angles)
         total_area = sum(f.area for f in faces_in_group)
-        delta = max(0.0, good_threshold_deg - avg_angle)
+        delta = max(0.0, required_good_deg - avg_angle)
 
         # ── Compose action text ────────────────────────────────────────────
         n = len(faces_in_group)
@@ -480,12 +494,13 @@ def _build_suggestions(
             else "parting region"
         )
         priority_label = "CRITICAL" if classification == "bad" else "WARNING"
+        condition_label = f" [{condition_applied}]" if condition_applied != "smooth" else ""
 
         action = (
             f"[{priority_label}] Add +{delta:.1f}° draft to {n} "
-            f"{surface_type} face{'s' if n > 1 else ''} "
+            f"{surface_type} face{'s' if n > 1 else ''}{condition_label} "
             f"({side_label}, {total_area:.0f} mm²). "
-            f"Min angle: {min_angle:.2f}°. "
+            f"Min angle: {min_angle:.2f}°. Required: {required_good_deg:.1f}°. "
             f"Neutral plane: parting line."
         )
 
@@ -497,7 +512,7 @@ def _build_suggestions(
             avg_angle_deg=round(avg_angle, 3),
             min_angle_deg=round(min_angle, 3),
             total_area_mm2=round(total_area, 3),
-            required_angle_deg=good_threshold_deg,
+            required_angle_deg=required_good_deg,
             suggested_delta_deg=round(delta, 3),
             action_text=action,
         ))
@@ -515,12 +530,68 @@ def _build_suggestions(
 # Public API
 # =============================================================================
 
+#: Draft conditions known to `_condition_thresholds`. Not auto-detected from
+#: geometry (STEP carries no surface-finish/texture data) — set explicitly
+#: per face via `analyze_draft`'s `face_conditions` parameter.
+_KNOWN_DRAFT_CONDITIONS = frozenset(
+    {"smooth", "light_texture", "heavy_texture", "deep_rib"}
+)
+
+
+def _condition_thresholds(condition: str, cfg: "DraftSettings") -> tuple[float, float]:
+    conditions = cfg.conditions
+    mapping = {
+        "smooth": (conditions.smooth_good_deg, conditions.smooth_marginal_deg),
+        "light_texture": (
+            conditions.light_texture_good_deg,
+            conditions.light_texture_marginal_deg,
+        ),
+        "heavy_texture": (
+            conditions.heavy_texture_good_deg,
+            conditions.heavy_texture_marginal_deg,
+        ),
+        "deep_rib": (conditions.deep_rib_good_deg, conditions.deep_rib_marginal_deg),
+    }
+    return mapping[condition]
+
+
+def _resolve_face_thresholds(
+    face_id: int,
+    face_conditions: Optional[dict[int, str]],
+    default_good: float,
+    default_marginal: float,
+    cfg: "DraftSettings",
+) -> tuple[float, float, str, str]:
+    """
+    Resolve which draft thresholds apply to one face (Roadmap Phase 1e).
+
+    Resolution order implemented: explicit per-face override -> global
+    default. Surface-type defaults and automatic deep-rib geometric
+    detection are NOT implemented — every surface type honestly defaults to
+    "smooth" today (STEP AP203/AP214 carries no texture/surface-finish
+    data, so there is nothing to auto-detect), and a deep-rib face can
+    still be flagged manually via `face_conditions` even without automatic
+    detection.
+    """
+    if face_conditions and face_id in face_conditions:
+        condition = face_conditions[face_id]
+        if condition in _KNOWN_DRAFT_CONDITIONS:
+            good, marginal = _condition_thresholds(condition, cfg)
+            return good, marginal, "explicit_override", condition
+        logger.warning(
+            "Unknown draft condition %r for face %d; falling back to global default.",
+            condition, face_id,
+        )
+    return default_good, default_marginal, "global_default", "smooth"
+
+
 def analyze_draft(
     part: PartGeometry,
     pull_direction: Vec3,
     pull_direction_label: str = "user-specified",
     analysis_pass: str = "initial",
     mutate: bool = True,
+    face_conditions: Optional[dict[int, str]] = None,
 ) -> DraftAnalysisResult:
     """
     Compute draft angles for all valid faces and return a `DraftAnalysisResult`.
@@ -546,6 +617,17 @@ def analyze_draft(
                         Stored in result for traceability.
     mutate            : If True, enrich `FaceData` in place. If False, only
                         return a standalone result snapshot.
+    face_conditions   : Optional face_id -> condition name map ("smooth" |
+                        "light_texture" | "heavy_texture" | "deep_rib").
+                        Overrides the global good/marginal thresholds for
+                        those specific faces (Roadmap Phase 1e) — e.g. the
+                        frontend lets a user mark faces as textured, which
+                        need more draft than a smooth wall. Unknown
+                        condition names log a warning and fall back to the
+                        global default rather than raising. Every face's
+                        resolved threshold and its source
+                        ("explicit_override" | "global_default") are
+                        reported in `face_results[face_id]`.
 
     Returns
     -------
@@ -593,13 +675,25 @@ def analyze_draft(
             continue
 
         angle = face.draft_angle_for_direction(pull_dir)
-        classification = _classify_draft(angle, good_thresh, marginal_thresh)
+        (
+            face_good_thresh,
+            face_marginal_thresh,
+            threshold_source,
+            condition_applied,
+        ) = _resolve_face_thresholds(
+            face.face_id, face_conditions, good_thresh, marginal_thresh, cfg
+        )
+        classification = _classify_draft(angle, face_good_thresh, face_marginal_thresh)
         side = _mold_side(dot3(face.normal, pull_dir))
 
         face_results[face.face_id] = {
             "draft_angle_deg": angle,
             "draft_classification": classification,
             "mold_side": side,
+            "required_good_deg": face_good_thresh,
+            "required_marginal_deg": face_marginal_thresh,
+            "threshold_source": threshold_source,
+            "condition_applied": condition_applied,
         }
 
         # ── Mutate FaceData ───────────────────────────────────────────────
@@ -657,7 +751,11 @@ def analyze_draft(
     )
 
 
-def analyze_draft_default(part: PartGeometry, mutate: bool = True) -> DraftAnalysisResult:
+def analyze_draft_default(
+    part: PartGeometry,
+    mutate: bool = True,
+    face_conditions: Optional[dict[int, str]] = None,
+) -> DraftAnalysisResult:
     """
     Run draft analysis using the default pull direction (+Z axis).
 
@@ -675,6 +773,7 @@ def analyze_draft_default(part: PartGeometry, mutate: bool = True) -> DraftAnaly
         pull_direction_label="initial +Z (default)",
         analysis_pass="initial",
         mutate=mutate,
+        face_conditions=face_conditions,
     )
 
 
@@ -682,6 +781,7 @@ def analyze_draft_optimal(
     part: PartGeometry,
     optimal_direction: Vec3,
     mutate: bool = True,
+    face_conditions: Optional[dict[int, str]] = None,
 ) -> DraftAnalysisResult:
     """
     Re-run draft analysis on the optimal pull direction from Bassi's algorithm.
@@ -698,6 +798,7 @@ def analyze_draft_optimal(
         pull_direction_label="optimal (Bassi 2010)",
         analysis_pass="optimal",
         mutate=mutate,
+        face_conditions=face_conditions,
     )
 
 

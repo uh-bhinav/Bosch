@@ -571,3 +571,125 @@ class TestDraftAnalyzerIntegration:
         # At minimum, verify that the second call completes and faces are updated.
         for face in part.valid_faces:
             assert face.draft_angle_deg is not None
+
+
+# =============================================================================
+# Draft conditional thresholds (Roadmap Phase 1e) — no OCC needed
+# =============================================================================
+
+class TestFaceConditionThresholds:
+    def test_resolve_explicit_override_known_condition(self):
+        from backend.config import settings
+        from backend.geometry.draft_analyzer import _resolve_face_thresholds
+
+        good, marginal, source, condition = _resolve_face_thresholds(
+            face_id=0,
+            face_conditions={0: "heavy_texture"},
+            default_good=1.5,
+            default_marginal=0.5,
+            cfg=settings.dfm.draft,
+        )
+
+        assert good == settings.dfm.draft.conditions.heavy_texture_good_deg
+        assert marginal == settings.dfm.draft.conditions.heavy_texture_marginal_deg
+        assert source == "explicit_override"
+        assert condition == "heavy_texture"
+
+    def test_resolve_unknown_condition_falls_back_to_global(self):
+        from backend.config import settings
+        from backend.geometry.draft_analyzer import _resolve_face_thresholds
+
+        good, marginal, source, condition = _resolve_face_thresholds(
+            face_id=0,
+            face_conditions={0: "not_a_real_condition"},
+            default_good=1.5,
+            default_marginal=0.5,
+            cfg=settings.dfm.draft,
+        )
+
+        assert good == 1.5
+        assert marginal == 0.5
+        assert source == "global_default"
+        assert condition == "smooth"
+
+    def test_resolve_no_override_uses_global_default(self):
+        from backend.config import settings
+        from backend.geometry.draft_analyzer import _resolve_face_thresholds
+
+        good, marginal, source, condition = _resolve_face_thresholds(
+            face_id=0,
+            face_conditions=None,
+            default_good=1.5,
+            default_marginal=0.5,
+            cfg=settings.dfm.draft,
+        )
+
+        assert (good, marginal, source, condition) == (1.5, 0.5, "global_default", "smooth")
+
+    def test_resolve_ignores_override_for_a_different_face_id(self):
+        from backend.config import settings
+        from backend.geometry.draft_analyzer import _resolve_face_thresholds
+
+        _, _, source, condition = _resolve_face_thresholds(
+            face_id=1,
+            face_conditions={0: "heavy_texture"},
+            default_good=1.5,
+            default_marginal=0.5,
+            cfg=settings.dfm.draft,
+        )
+
+        assert source == "global_default"
+        assert condition == "smooth"
+
+    def test_heavy_texture_override_changes_classification(self):
+        """
+        A face at 2.0 deg draft is 'good' under the global default (1.5 deg)
+        but 'bad' under heavy_texture (5.0 deg) -- the override must actually
+        change the outcome, not just get recorded.
+        """
+        from backend.geometry.draft_analyzer import analyze_draft
+        import math
+
+        # normal tilted so draft angle ~= 2.0 deg from pull direction (0,0,1):
+        # draft_angle = asin(|n.d|); n=(sin(2deg), 0, cos(2deg)) -> angle ~= 2deg... wait,
+        # draft_angle_for_direction uses angle = asin(|n.d|) which is LARGE when n is
+        # ALIGNED with pull (n.d close to 1). A near-vertical wall (n mostly
+        # perpendicular to pull) has a SMALL angle. Build n so asin(|n.d|) ~= 2.0deg:
+        # |n.d| = sin(2deg) -> n = (cos(2deg), 0, sin(2deg))
+        angle_deg = 2.0
+        normal = (math.cos(math.radians(angle_deg)), 0.0, math.sin(math.radians(angle_deg)))
+        face = _make_face(0, normal)
+        part = _make_part_with_faces([face])
+
+        result_default = analyze_draft(part, (0.0, 0.0, 1.0), mutate=False)
+        result_textured = analyze_draft(
+            part, (0.0, 0.0, 1.0), mutate=False, face_conditions={0: "heavy_texture"}
+        )
+
+        assert result_default.face_results[0]["draft_classification"] == "good"
+        assert result_textured.face_results[0]["draft_classification"] == "bad"
+        assert result_textured.face_results[0]["threshold_source"] == "explicit_override"
+        assert result_textured.face_results[0]["condition_applied"] == "heavy_texture"
+        assert result_default.face_results[0]["threshold_source"] == "global_default"
+
+    def test_suggestions_report_separate_required_angle_per_condition(self):
+        """
+        Two otherwise-identical bad faces, one smooth one heavy_texture, must
+        produce TWO suggestion groups with different required_angle_deg —
+        not one group averaged across incompatible requirements.
+        """
+        from backend.geometry.draft_analyzer import analyze_draft
+
+        smooth_face = _make_face(0, (1.0, 0.0, 0.0))       # 0 deg draft, bad either way
+        textured_face = _make_face(1, (1.0, 0.0, 0.0))     # same geometry, marked textured
+        part = _make_part_with_faces([smooth_face, textured_face])
+
+        result = analyze_draft(
+            part, (0.0, 0.0, 1.0), mutate=False, face_conditions={1: "heavy_texture"}
+        )
+
+        required_by_face_group = {
+            tuple(s.face_ids): s.required_angle_deg for s in result.suggestions
+        }
+        assert required_by_face_group[(0,)] == 1.5
+        assert required_by_face_group[(1,)] == 5.0

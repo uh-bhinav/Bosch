@@ -12,7 +12,7 @@
 
 ## 0. Execution Order and Rationale
 
-Four phases, strictly ordered. Each phase's output is the next phase's input.
+Five phases, strictly ordered. Each phase's output is the next phase's input.
 
 | Phase | Scope | Why it comes here |
 |---|---|---|
@@ -20,6 +20,7 @@ Four phases, strictly ordered. Each phase's output is the next phase's input.
 | **2** | Frontend migration to React + Vite + Three.js | Needs stable result schemas from Phase 1 to design against. Also unblocks visual verification of Phase 1 output. |
 | **3** | End-to-end real-world testing | Needs both a correct engine and a UI that can render its output for visual confirmation. |
 | **4** | AI agent orchestration | Wraps a *verified* engine. Wrapping an unverified one produces confident natural-language descriptions of wrong geometry — the worst possible failure mode for a DfM tool. |
+| **5** | PDF report export | Needs a stable engine (Phase 1) to source metrics from, a UI (Phase 2) to source screenshots from, and optionally agent narrative (Phase 4) to embed. Confirmed deliverable, deliberately last. |
 
 **The Phase 4 placement is deliberate.** An LLM narrating incorrect undercut
 counts is more dangerous than no LLM at all, because it launders a geometry bug
@@ -32,58 +33,89 @@ into an authoritative-sounding engineering recommendation.
 These were found while surveying the repo for this roadmap. They are not
 speculative.
 
-### F1 — `Part1.stp` and `Part3.stp` are the same file (BLOCKER for Phase 3)
+### F1 — `Part1.stp`/`Part3.stp` identity (RESOLVED 2026-07-27)
+
+Originally found byte-identical (both 863,881 bytes, MD5 `a373ffdf…`, both
+carrying the internal STEP header `FILE_NAME('Part3.stp', ...)`), with a third
+file `rename.stp` (522,419 bytes, internal name `Element_Packaging_Cap.stp`)
+matching the size `STATUS.md` recorded for Part1.
+
+**Resolved**: the team confirmed this was a genuine mix-up, and `rename.stp`
+was restored as `Part1.stp`. Current verified state:
 
 ```
-MD5 (data/parts/Part1.stp)  = a373ffdf57ebb1036ec43b9e77025afa   863881 bytes
-MD5 (data/parts/Part3.stp)  = a373ffdf57ebb1036ec43b9e77025afa   863881 bytes
-MD5 (data/parts/rename.stp) = d0c89a7c67d40f3a0e18962d75947a2f   522419 bytes
+MD5 (data/parts/Part1.stp) = d0c89a7c67d40f3a0e18962d75947a2f   522419 bytes  (Level 1)
+MD5 (data/parts/Part3.stp) = a373ffdf57ebb1036ec43b9e77025afa   863881 bytes  (Level 2)
 ```
 
-Both `Part1.stp` and `Part3.stp` carry the internal STEP header
-`FILE_NAME('Part3.stp', '2026-07-23T09:15:51+05:30', ...)`.
-`rename.stp` carries `FILE_NAME('Element_Packaging_Cap.stp', '2026-05-25T10:33:37+05:30', ...)`
-and is 522 KB — which matches the size `STATUS.md` records for `Part1.stp`
-("✅ Present (522 KB)").
+Both declare `FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 1 }'))` —
+**AP214** — which is now the confirmed target schema for Milestone 1.11's
+mold-half STEP export (see Decisions Log). `data/parts/` now contains exactly
+two distinct part files; `rename.stp` no longer exists. No further action
+needed — Phase 3's two-part test matrix (§3.2) is valid as written.
 
-**Conclusion**: the original Part1 was overwritten by a copy of Part3 and
-survives as `rename.stp`. Any Phase 3 claim of "validated on two parts" is
-currently false — it is one part tested twice.
+### F2 — `core_cavity.py` reads a config key that does not exist (RESOLVED 2026-07-27, Phase 0.2)
 
-**Action**: confirm with the team which file is the real Level 1 input, restore
-it to `Part1.stp`, and re-run the validation harness. Per CLAUDE.md invariant #2
-(`data/parts/` is read-only), this restoration is a deliberate, human-approved
-exception — do not let an automated step do it.
-
-### F2 — `core_cavity.py` reads a config key that does not exist
-
-`backend/geometry/core_cavity.py:14` documents:
+`backend/geometry/core_cavity.py:14` documented:
 
 > The threshold value is taken from config.yaml: `dfm.parting_line.silhouette_dot_tolerance`
 > or defaults to 0.05
 
-`config.yaml` has no `silhouette_dot_tolerance` key under `dfm.parting_line`,
-and `classify_core_cavity()` takes `threshold: float = 0.05` as a hardcoded
-Python default. The API layer passes its own hardcoded `Query(default=0.05)`.
+`config.yaml` had no `silhouette_dot_tolerance` key under `dfm.parting_line`,
+and `classify_core_cavity()` took `threshold: float = 0.05` as a hardcoded
+Python default; the API layer had its own hardcoded `Query(default=0.05)`.
 
-This violates CLAUDE.md invariant #4 ("All config thresholds live in
-`config.yaml`. No hardcoded magic numbers in algorithm code"). Fixed as part of
-Milestone 1.5.
+This violated CLAUDE.md invariant #4 ("All config thresholds live in
+`config.yaml`. No hardcoded magic numbers in algorithm code"). **Fixed**:
+`dfm.core_cavity.threshold` added to `config.yaml` and `CoreCavitySettings`;
+`classify_core_cavity(threshold: Optional[float] = None)` now defaults from
+`settings.dfm.core_cavity.threshold` when the caller doesn't override it, and
+the `/core-cavity` endpoint's `Query` default changed from a literal `0.05` to
+`None` so it defers to the same settings value. Verified end-to-end via
+`load_settings()`.
 
-### F3 — `.claude/rules/api-layer.md` lists two endpoints that do not exist
+### F3 — `.claude/rules/api-layer.md` lists two endpoints that do not exist (RESOLVED 2026-07-27, Phase 0.3)
 
-The rule file documents `/parts/{filename}/display-mesh` and
+The rule file documented `/parts/{filename}/display-mesh` and
 `/parts/{filename}/boolean-regions` as endpoints. Neither exists in
 `backend/api/main.py`; both are query-parameter flags on other endpoints
-(`include_mesh`, `include_boolean_regions`). Correct the rule file so it stops
-misdirecting future work.
+(`include_mesh`, `include_boolean_regions`). **Fixed**: the endpoint table now
+lists only the six real endpoints, with a note documenting `include_mesh` and
+`include_boolean_regions` as the actual mechanism.
 
 ### F4 — `networkx==3.3` is a declared dependency with zero imports
 
 `requirements.txt:44` pins it with the comment "Graph algorithms for Hou 2018
 parting line". No file imports it. The current graph work in `parting_line.py`
 is a hand-rolled bounded DFS (`_trace_best_weighted_path`, edge limit 22, state
-limit 75,000) with a greedy fallback. Milestone 1.1 makes the dependency real.
+limit 75,000) with a greedy fallback. Milestone 1.6 makes the dependency real.
+
+### F5 — the documented test command never actually worked (RESOLVED 2026-07-27, Phase 0.4)
+
+Discovered while running Phase 0.4's real-OCC validation. `CLAUDE.md`
+documents `docker compose exec backend pytest tests/ -v --tb=short` as the
+test command; running it fresh in the `bosch-backend` image failed 100% of
+206 tests with `ModuleNotFoundError: No module named 'backend'`.
+
+Root cause: neither a root `conftest.py` nor a root `pytest.ini` exists —
+only `tests/pytest.ini`. Bare `pytest tests/` from `/app` discovers that ini
+file and, because it lives in `tests/`, pytest's `confcutdir` (and rootdir)
+become `/app/tests` — so pytest never looks above `tests/` for a parent
+conftest, and `/app` never lands on `sys.path`. A root-level `conftest.py`
+does **not** fix this (verified — still failed with it present), because
+`confcutdir` blocks its discovery regardless.
+
+**Fixed**: added `pythonpath = ..` to `tests/pytest.ini` — pytest's native
+ini option for exactly this "tests/ dir has no `__init__.py`, needs the
+parent on sys.path" layout, resolved relative to rootdir (`/app/tests`), so
+`..` → `/app`. Verified with the exact documented command
+(`pytest tests/ -v --tb=short`) against `TestLoadStepIntegration::
+test_loads_without_error` — passes.
+
+**Side effect of the fix actually working**: one genuine test failure
+surfaced that the import bug had been masking —
+`test_api_error_handling.py::test_parting_line_paths_payload_is_json_safe`.
+Not yet investigated; tracked in `TODO.md`.
 
 ---
 
@@ -1215,6 +1247,67 @@ language").
 
 ---
 
+# PHASE 5 — PDF Report Export
+
+## 5.1 Scope
+
+Confirmed deliverable (2026-07-27), deliberately sequenced last. `reportlab`
+has been pinned in `requirements.txt` since the initial scaffold and is
+imported nowhere — this phase is what finally uses it.
+
+## 5.2 Content sourced from prior phases
+
+| Section | Source |
+|---|---|
+| Part summary, topology | `PartGeometry.to_dict()` (Phase 1, already exists) |
+| Draft compliance | `DraftAnalysisResult` — %s, bad face count, `threshold_source` (Phase 1e) |
+| Undercut findings | `UndercutDetectionResult.features` — severity, type, evidence source (Phase 1c) |
+| Pull direction | `DirectionOptimizationResult.best_direction` + ranking (Phase 1d) |
+| Parting line | Readiness, closure, refined curve image (Phase 1a) |
+| Core/cavity | Areas, solid split status (Phase 1b) |
+| Viewport screenshots | React viewer canvas → PNG via `renderer.domElement.toDataURL()` (Phase 2) |
+| Narrative summary | `DfMReport.summary` + findings, if the agent has run (Phase 4) — optional, the report must be generatable without it |
+
+## 5.3 Module layout
+
+```
+backend/report/
+  __init__.py
+  pdf_export.py       reportlab Platypus document builder
+  templates.py        section layout, styles, Bosch-neutral branding placeholders
+```
+
+`pdf_export.py` takes the same result dataclasses every other module already
+produces (`DraftAnalysisResult`, `UndercutDetectionResult`,
+`DirectionOptimizationResult`, `PartingLineResult`, `CoreCavityResult`, and
+optionally `DfMReport`) — it does not recompute anything. This keeps the
+report a pure presentation layer over already-validated engine output, which
+matters for the honesty rules: the PDF can never say something the engine
+didn't already assert.
+
+## 5.4 API surface
+
+```
+POST /parts/{filename}/export/report
+     { pull_direction?, include_agent_narrative? }
+     → application/pdf
+```
+
+Screenshots are supplied by the frontend as base64 PNG in the request body
+(the backend has no renderer and must not gain one — CLAUDE.md invariant #3
+keeps OCC/rendering out of anything client-facing, and the reverse holds too:
+the backend should not attempt to rasterize a Three.js scene).
+
+## 5.5 Honesty constraint
+
+Every numeric claim in the PDF must trace to a field on one of the result
+dataclasses above — no new computation happens in the report layer. If a
+section's source data has warnings (e.g. `BooleanReliabilitySummary` showing
+degraded confidence, or `PartingLineDiagnosticGate` blocking downstream use),
+the PDF must surface that warning, not omit it for a cleaner-looking page.
+
+---
+
 # STEP-BY-STEP IMPLEMENTATION ROADMAP
 
 Each milestone is self-contained and ends in a verifiable gate. **Do not start a
@@ -1222,28 +1315,217 @@ milestone until the previous gate passes.**
 
 ## Phase 0 — Unblock (½ day)
 
-| # | Task | Gate |
-|---|---|---|
-| 0.1 | Resolve F1: confirm and restore the true `Part1.stp` | Two distinct MD5s in `data/parts/`; both load |
-| 0.2 | Fix F2: add `core_cavity.threshold` to `config.yaml`, wire through `backend/config.py`, remove hardcoded defaults | `grep -rn "0.05" backend/geometry/core_cavity.py` returns nothing |
-| 0.3 | Fix F3: correct `.claude/rules/api-layer.md` endpoint table | Documented endpoints match `main.py` |
-| 0.4 | Run the full OCC validation in Docker, commit real artifacts | No `status: "skipped"` in `reports/` |
+| # | Task | Gate | Status |
+|---|---|---|---|
+| 0.1 | Resolve F1: confirm and restore the true `Part1.stp` | Two distinct MD5s in `data/parts/`; both load | ✅ Done — `Part1.stp` (522,419 B) and `Part3.stp` (863,881 B) are distinct, both AP214 |
+| 0.2 | Fix F2: add `core_cavity.threshold` to `config.yaml`, wire through `backend/config.py`, remove hardcoded defaults | No literal `0.05` default in `classify_core_cavity()`'s signature or the `/core-cavity` `Query()`; `load_settings().dfm.core_cavity.threshold == 0.05` | ✅ Done |
+| 0.3 | Fix F3: correct `.claude/rules/api-layer.md` endpoint table | Documented endpoints match `main.py` | ✅ Done |
+| 0.4 | Run the full OCC validation in Docker, commit real artifacts | No `status: "skipped"` in `reports/` | 🔄 In progress |
+
+Also completed as part of Phase 0: corrected the overclaimed "Complete" status
+for parting line and core/cavity in `docs/SUBMISSION_REPORT.md`'s evaluation
+matrix (per `.claude/rules/honesty-and-scope.md`'s explicit warning about that
+file).
 
 ## Phase 1 — Geometry Engine (7–10 days)
 
-| # | Milestone | Deliverable | Gate |
+| # | Milestone | Deliverable | Gate | Status |
+|---|---|---|---|---|
+| 1.1 | Edge convexity in loader | `EdgeData.convexity` populated at load | Synthetic box: 12 convex edges, 0 concave. Box-with-pocket: pocket's 4 base edges concave | ✅ Done (2026-07-27) — see note below |
+| 1.2 | Convexity-gated undercut suppression | False-positive suppression in `detect_undercuts` | Undercut count on Part1 unchanged or lower; Boolean call count measurably down | ✅ Done (2026-07-27) — see note below |
+| 1.3 | Extremal vertex depth | Exact depth along release vector, parting-plane reference | Known-geometry boss: depth within 1% of hand calculation | ⚠️ Reassessed (2026-07-27) — see note below |
+| 1.4 | Flash risk + coarse-to-fine direction search | New scoring term; two-stage search | Fine stage finds a direction scoring ≤ coarse winner on Part1. **`mutate=False` regression test passes** | ✅ Done (2026-07-27) — see note below |
+| 1.5 | Draft conditional thresholds | Per-face override, surface-type table, deep-rib detection | Marking a face textured raises its requirement to 3.0°; `threshold_source` reported | ✅ Done, scoped down (2026-07-27) — see note below |
+| 1.6 | networkx parting-line graph | Real graph replaces bounded DFS | Existing `test_parting_line.py` passes unchanged | |
+| 1.7 | Component bridging | Bridge via real B-Rep edges using `is_boundary` | A part with a split silhouette yields one connected path | |
+| 1.8 | Closed-loop guarantee | Min-cost cycle over components | `is_closed == True` and closure error < 0.05 mm on Part1 | |
+| 1.9 | Parting surface | Planar extrusion + `BRepFill_Filling` fallback | A valid `TopoDS_Face`/`Shell` covering the loop; planar path taken on Part1 | |
+| 1.10 | Core/cavity solid split | Blank → cut → split → two solids | Exactly 2 solids; volumes sum to blank − part within tolerance | |
+| 1.11 | Multi-solid STEP export | `STEPControl_Writer` | Written file reloads in pythonOCC with 2 solids; opens in a viewer | |
+
+**Milestone 1.5 implementation note — scoped down deliberately**: implemented
+tiers 1 and 4 of the roadmap's resolution order (explicit per-face override
+→ global default) plus the four named conditions
+(`smooth`/`light_texture`/`heavy_texture`/`deep_rib`) with config-overridable
+thresholds. Tiers 2 and 3 (surface-type defaults, automatic geometric
+deep-rib detection) were **not** implemented, for reasons worth recording:
+
+- **Tier 2 (surface-type defaults) is a no-op by the roadmap's own honesty
+  ruling.** The roadmap explicitly says every surface type should default to
+  `smooth` ("do not map freeform NURBS → textured... default everything to
+  smooth and require explicit opt-in"). A configurable
+  `surface_type_defaults` table would today just be an identity mapping to
+  `smooth` for every surface type — no value in building the plumbing for a
+  table that has nothing to configure yet. Trivial to add if a real
+  surface-type-to-condition rule is ever identified.
+- **Tier 3 (automatic deep-rib detection) needs real geometric analysis this
+  milestone didn't have time to get right**: "a face whose bounding box has
+  one dimension > `deep_rib_ratio` × another, and whose adjacent faces form
+  a narrow channel" requires a per-face 3-D bounding box (not currently
+  stored on `FaceData`, would need a fresh OCC `brepbndlib.Add` call per
+  face) plus a genuinely fuzzy "forms a narrow channel" adjacency check.
+  Rather than ship an unverified geometric heuristic, the `deep_rib`
+  **condition** exists and is fully usable — a user (or a future automatic
+  detector) can flag a face with it via `face_conditions` — but nothing
+  triggers it automatically yet.
+
+Resolution order actually implemented: **explicit per-face override → global
+default**, exactly the tier the roadmap itself called "primary, honest."
+`_build_suggestions` was extended to group by resolved condition too (not
+just classification/surface_type/mold_side), so a mixed smooth+textured
+group reports two suggestions with two different `required_angle_deg`
+values instead of one averaged-and-wrong number.
+
+Verified on real Part1.stp: marking a face `light_texture` changed its
+`threshold_source` to `explicit_override`, raised its required draft to
+3.0°, left every other face's `threshold_source` at `global_default`, and
+split it into its own suggestion group with the correct required angle in
+the action text. New tests: `tests/test_draft_analyzer.py::
+TestFaceConditionThresholds` (6 new, mock-based). Full suite re-run: 57
+passed, 0 regressions (`analyze_draft`'s existing thresholds/suggestions
+behavior is unchanged when `face_conditions` is omitted).
+
+API wiring (accepting `face_conditions` on the `/draft` endpoint) is
+deferred to Phase 2, when the frontend actually has a texture-marking UI to
+send it from — no value in exposing it earlier.
+
+**Milestone 1.4 implementation note**: implemented as scoped — flash risk
+term (`_flash_risk_area_fraction`, gated on face area vs.
+`flash_thin_area_factor × bbox_diagonal²` as a wall-thinness proxy) and
+coarse-to-fine search (`generate_fine_candidate_directions`, a local cone
+sample around each of the top-K coarse winners, reusing the coarse stage's
+own `mutate=False`/prefilter-only scoring path via a new shared
+`_score_direction_candidate` helper — factored out to avoid duplicating the
+~35-line candidate-scoring block for both stages). `mutate=True` still
+happens exactly once, for the single final winner, unchanged.
+
+Verified on real geometry (fine search on vs. off, `optimize_mold_direction`,
+default config):
+
+| Part | best_score off→on | candidates off→on |
+|---|---|---|
+| Part1 | 0.692 → 0.313 (−54.8%) | 54 → 114 |
+| Part3 | 6.415 → 1.384 (−78.4%) | 54 → 114 |
+
+The fine stage found a genuinely better direction on **both** real parts —
+not a marginal tweak. Candidate count increased by exactly 60 (the
+`fine_search_max_candidates` cap), confirming the cap is enforced as
+designed. No timing regression observed (both runs stayed well under the
+existing performance budgets).
+
+New tests (`tests/test_direction_optimizer.py`, all mock-based, no OCC
+needed): 3 for `_flash_risk_area_fraction` (thin+parallel flags, thick
+doesn't, well-drafted-thin doesn't), 1 confirming the term actually moves
+`_score_candidate`'s output, 3 for `generate_fine_candidate_directions`
+(unit vectors within the cone, dedup against a shared `seen` set, empty for
+non-positive parameters), and 1 end-to-end `optimize_mold_direction` check
+(with `_OCC_BOOLEAN_AVAILABLE` explicitly forced `False` — see the
+mock+real-Boolean finding in Milestone 1.2's note — confirming the fine
+stage adds candidates without breaking the pipeline).
+
+**Milestone 1.3 reassessment (2026-07-27) — no code change made**: this
+milestone's stated gap was based on a shallower reading of the code than a
+detailed pass revealed. Two distinct layers compute undercut depth, with two
+different (and inconsistent) philosophies:
+
+1. **Per-face** (`_select_boolean_depth_details` / `_estimate_boolean_depth`,
+   in `undercut_detector.py`): already does exactly what this milestone asked
+   for. It extracts exact B-Rep vertices of the confirmed Boolean intersection
+   shape (`_shape_vertex_points`, via `TopExp_Explorer(shape, TopAbs_VERTEX)`
+   — not mesh, not bounding-box), references depth against the source face's
+   own offset centroid (arguably a *better* reference for "how far must a
+   lifter travel to clear this" than a global parting-plane reference would
+   be), and only falls back to bounding-box corners when exact vertices are
+   unavailable. This priority order is deliberate and covered by four passing
+   unit tests (`test_boolean_depth_selection_prefers_vertex_reference`,
+   `test_boolean_depth_selection_keeps_reference_over_suspicious_span`,
+   `test_boolean_depth_selection_uses_bbox_when_vertices_absent`,
+   `test_boolean_depth_selection_falls_back_to_volume_area`). **No change
+   needed here.**
+
+2. **Feature-level aggregation** (`_estimate_release_and_depth_from_boolean_geometry`
+   and the `base_depth_proxy = max(projection_depth, boolean_depth_proxy)`
+   line in `detect_undercuts`): does the opposite — picks the **largest** of
+   several candidates (the precise per-face depth from layer 1, a cruder
+   centroid-projection proxy, and three bounding-box-derived spans), rather
+   than preferring the precise one. An initial attempt to "fix" this to
+   prefer precision (matching layer 1's philosophy) was **reverted** after
+   discovering it breaks three existing, deliberately-asserting tests with
+   exact numeric expectations
+   (`test_boolean_geometry_refines_release_direction_and_depth`,
+   `test_boolean_geometry_falls_back_when_unavailable`,
+   `test_detector_uses_boolean_geometry_for_feature_release_and_depth` —
+   e.g. `assert feature.depth_proxy_mm == 4.0` where the precise input was
+   `1.0`). This is very likely a **deliberate conservative-safety-margin
+   choice**: the feature-level number is what a mold engineer actually sees
+   in the report, and overestimating undercut depth (oversized lifter/slide —
+   a cost inefficiency) is a much safer failure mode than underestimating it
+   (a mold that doesn't properly release — a real functional defect).
+   Overriding tested, intentional behavior on my own judgment call is exactly
+   the kind of decision that should go back to the team, not get silently
+   changed. **Flagged for team discussion, not fixed.**
+
+If the team decides layer 2 should also prefer precision, the fix is
+straightforward (prioritize `fallback_depth_mm`/`boolean_depth_proxy` over
+the cruder candidates, only falling back to them when the precise value is
+`<= 0`) and was already drafted once — see git history around 2026-07-27 for
+the reverted attempt. Until then, `depth_proxy_mm` on `UndercutFeature`
+should be read as "a conservative upper-bound estimate," not "the precise
+measured depth" — the per-face `BooleanInterferenceMetrics.depth_mm` values
+underneath it are the precise ones.
+
+**Milestone 1.2 implementation note**: verified against real Part1.stp and
+Part3.stp (suppression on vs. off, `mutate=False`, `boolean_refine=True`,
+calm environment):
+
+| Part | undercut count off→on | Boolean-checked off→on | time off→on |
 |---|---|---|---|
-| 1.1 | Edge convexity in loader | `EdgeData.convexity` populated at load | Synthetic box: 12 convex edges, 0 concave. Box-with-pocket: pocket's 4 base edges concave |
-| 1.2 | Convexity-gated undercut suppression | False-positive suppression in `detect_undercuts` | Undercut count on Part1 unchanged or lower; Boolean call count measurably down |
-| 1.3 | Extremal vertex depth | Exact depth along release vector, parting-plane reference | Known-geometry boss: depth within 1% of hand calculation |
-| 1.4 | Flash risk + coarse-to-fine direction search | New scoring term; two-stage search | Fine stage finds a direction scoring ≤ coarse winner on Part1. **`mutate=False` regression test passes** |
-| 1.5 | Draft conditional thresholds | Per-face override, surface-type table, deep-rib detection | Marking a face textured raises its requirement to 3.0°; `threshold_source` reported |
-| 1.6 | networkx parting-line graph | Real graph replaces bounded DFS | Existing `test_parting_line.py` passes unchanged |
-| 1.7 | Component bridging | Bridge via real B-Rep edges using `is_boundary` | A part with a split silhouette yields one connected path |
-| 1.8 | Closed-loop guarantee | Min-cost cycle over components | `is_closed == True` and closure error < 0.05 mm on Part1 |
-| 1.9 | Parting surface | Planar extrusion + `BRepFill_Filling` fallback | A valid `TopoDS_Face`/`Shell` covering the loop; planar path taken on Part1 |
-| 1.10 | Core/cavity solid split | Blank → cut → split → two solids | Exactly 2 solids; volumes sum to blank − part within tolerance |
-| 1.11 | Multi-solid STEP export | `STEPControl_Writer` | Written file reloads in pythonOCC with 2 solids; opens in a viewer |
+| Part1 | 44 → 18 | 78 → 27 | 45.2s → 13.4s |
+| Part3 | 16 → 0 | 97 → 3 | 73.6s → 1.9s |
+
+Both directions of the gate hold clearly. **Flagged for domain review, not
+silently accepted**: Part3 dropping to zero undercuts is a large swing.
+The suppression logic requires positive evidence (all bounding edges
+convex/tangent, unclassified edges do NOT trigger suppression — see
+`_compute_edge_convexity`'s docstring) and is verified against both the
+synthetic box/pocket case (Milestone 1.1) and four targeted unit tests
+(`tests/test_undercut_detector.py`, mock-based, no OCC needed), but a
+100% swing on a real part is exactly the kind of result a mold engineer
+should eyeball before trusting in a demo — it is plausible (Part3's
+proxy-flagged faces may simply be smooth near-vertical sweeps with no
+actual pocket) but has not been visually confirmed against the part.
+
+Also discovered during verification (not a Milestone 1.2 bug — pre-existing,
+orthogonal): `tests/test_undercut_detector.py::
+test_detect_undercuts_flags_zero_draft_face` (and likely other pre-existing
+mock-based tests that call `detect_undercuts`/`optimize_mold_direction`
+without explicit `boolean_refine=False`) stall for minutes when run against
+a container with **real** pythonocc-core installed, because their
+`FaceData.occ_face` is a bare `MagicMock()` — not a valid SWIG-wrapped OCC
+object — and the default `boolean_refine=True` path feeds it straight into
+real `BRepAlgoAPI_Common`/`BRepPrimAPI_MakePrism` calls. Every test in this
+suite that constructs a mock `PartGeometry` needs an explicit
+`boolean_refine=False` to be Docker-safe now that F5 is fixed and these
+tests can finally run against real OCC. Not fixed here — tracked in
+`TODO.md` as a new item; fixing it is a test-suite hygiene pass across
+`test_undercut_detector.py` and `test_direction_optimizer.py`, not a
+Milestone 1.2 concern.
+
+**Milestone 1.1 implementation note**: `BRepAdaptor_Curve.D1` does **not**
+respect `TopoDS_Edge.Orientation()` — it always returns the tangent in the
+underlying `Geom_Curve`'s own increasing-parameter direction, regardless of
+how the edge is oriented in a face's wire. Naively using this tangent with an
+arbitrarily-ordered pair of adjacent faces produces an essentially random
+convex/concave split (empirically verified: a plain cube's 12 uniformly-convex
+edges came back 6 convex / 6 concave). The fix, now in
+`_compute_edge_convexity()`: use the edge occurrence exactly as encountered
+while traversing one specific reference face's wire (which the existing
+hash-based edge-dedup pass already tracks as `_eh_to_occ[h]`), manually flip
+the tangent sign when that occurrence's `Orientation()` is `REVERSED`, and
+always order the two adjacent-face normals with that same reference face
+first. This is a genuine, non-obvious pythonOCC gotcha worth remembering for
+any future edge-tangent work (e.g. Hou-style edge-weight curvature terms in
+Milestone 1.6+).
 
 **Phase 1 exit gate**: full validation harness passes on the restored `Part1.stp`
 inside Docker, with a closed parting loop and two exported solids.
@@ -1297,6 +1579,21 @@ committed evidence.
 traceable to engine output, with proxy and Boolean-confirmed evidence visually
 distinguished.
 
+## Phase 5 — PDF Report Export (2–3 days)
+
+| # | Milestone | Gate |
+|---|---|---|
+| 5.1 | `backend/report/pdf_export.py` + `templates.py` | A minimal PDF (part summary only) generates from a real `PartGeometry` |
+| 5.2 | Section builders per result dataclass | Every section renders from its dataclass with no recomputation |
+| 5.3 | Screenshot embedding | Frontend-supplied base64 PNG embeds correctly in the PDF |
+| 5.4 | `/parts/{filename}/export/report` endpoint | Returns `application/pdf`; structured error on failure |
+| 5.5 | Frontend "Export PDF Report" action | One click produces a downloadable file end-to-end |
+| 5.6 | Honesty audit | Every warning/degraded-confidence flag from the source dataclasses appears in the PDF |
+
+**Phase 5 exit gate**: a generated PDF for Part1 (and, if solid split has
+landed, Part3) contains every section, embeds at least one viewport
+screenshot, and surfaces any engine warnings rather than omitting them.
+
 ---
 
 ## Cross-Cutting Invariants (apply to every milestone)
@@ -1333,15 +1630,33 @@ distinguished.
 
 ---
 
-## Open Questions for the Team
+## Decisions Log (resolved 2026-07-27)
 
-1. **F1**: which file is the true Level 1 `Part1.stp`? Is `rename.stp`
-   (`Element_Packaging_Cap.stp`) it?
-2. Is there a third `.stp` for Level 2, or is `Part3.stp` the intended Level 2
-   part?
-3. Should mold-half STEP export target a specific AP schema (AP203 vs AP214)
-   for Bosch's downstream CAD?
-4. Is PDF export (`reportlab`, pinned but unused) still a deliverable? It is not
-   scheduled in this roadmap.
-5. Texture marking: should textured faces be selectable in the UI (per §1e
-   option 1), or supplied as a config/sidecar file?
+These were open questions in the original draft. Recorded here, with the
+original question preserved for context, so the reasoning isn't lost.
+
+1. **F1 — Part1/Part3 identity.** *Was*: which file is the true Level 1 input?
+   *Resolved*: no mix-up. `Part1.stp` is genuinely the Level 1 input and
+   `Part3.stp` is genuinely the Level 2 input, confirmed by the team.
+   `rename.stp` (`Element_Packaging_Cap.stp`) is unrelated and is not part of
+   the Level 1/2 pipeline. No data restoration needed — F1 is closed without
+   any change to `data/parts/`.
+2. **Level 2 part.** `Part3.stp` is confirmed as the intended Level 2 input —
+   no third file is expected.
+3. **Mold-half STEP export schema.** *Was*: AP203 vs AP214? *Resolved*: match
+   the source files. `Part1.stp`/`Part3.stp` both declare
+   `FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 3 1 1 1 }'))` — AP214,
+   consistent with their Siemens NX origin. Milestone 1.11's
+   `STEPControl_Writer` export targets **AP214** to match. If the OCC
+   `STEPControl_Writer` binding does not expose an explicit AP214 schema
+   selector, the reader/writer defaults for the pinned pythonOCC 7.7.2 build
+   are AP214-compatible and should be verified against a round-trip read of
+   the exported file's `FILE_SCHEMA` line, not assumed.
+4. **PDF export.** *Was*: still a deliverable? *Resolved*: yes. Added as
+   **Phase 5**, sequenced after Phase 4 deliberately — it draws on a stable
+   engine (Phase 1), UI screenshots (Phase 2), and optionally agent narrative
+   content (Phase 4). See the new Phase 5 section below and `TODO.md`.
+5. **Texture marking.** *Was*: UI-selectable or config/sidecar file?
+   *Resolved*: UI-selectable, confirming §1e option 1 (explicit per-face
+   override supplied by the frontend from user selection). No sidecar file
+   format is needed.
