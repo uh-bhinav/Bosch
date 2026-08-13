@@ -26,7 +26,7 @@ from backend.validation.part_validation import (
 )
 
 
-DEFAULT_EXPECTED_FILES = ("Part1.stp", "Part2.stp")
+DEFAULT_EXPECTED_FILES = ("Part1.stp", "Part3.stp")
 
 DEFAULT_BUDGETS_S = {
     "load_step": 30.0,

@@ -1,0 +1,94 @@
+{
+  "+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "envelope_node_count": 294,
+    "envelope_edge_count": 391,
+    "envelope_branch_node_count": 140,
+    "envelope_mu": 98,
+    "strategies": {
+      "basis": {
+        "cycles_examined": 98,
+        "max_cycle_size": 124,
+        "h3_pass_count": 26,
+        "fully_passed_count": 0,
+        "best_by_violation": {
+          "segment_count": 12,
+          "area_balance": 0.0031,
+          "h4_violation": 0.16388344449448347,
+          "failed_gate": "H4"
+        },
+        "best_by_balance": {
+          "segment_count": 14,
+          "area_balance": 0.0332,
+          "h4_violation": 0.16649998909491673,
+          "failed_gate": "H4"
+        },
+        "actual_strategy": "cycle_basis",
+        "cap_hit": false,
+        "runtime_ms": 5.6
+      },
+      "johnson": {
+        "cycles_examined": 5000,
+        "max_cycle_size": 164,
+        "h3_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_by_violation": null,
+        "best_by_balance": null,
+        "actual_strategy": "johnson",
+        "cap_hit": true,
+        "runtime_ms": 16794.0
+      }
+    }
+  },
+  "+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "envelope_node_count": 303,
+    "envelope_edge_count": 401,
+    "envelope_branch_node_count": 140,
+    "envelope_mu": 99,
+    "strategies": {
+      "basis": {
+        "cycles_examined": 99,
+        "max_cycle_size": 118,
+        "h3_pass_count": 36,
+        "fully_passed_count": 0,
+        "best_by_violation": {
+          "segment_count": 24,
+          "area_balance": 0.0276,
+          "h4_violation": 0.1588763624007305,
+          "failed_gate": "H4"
+        },
+        "best_by_balance": {
+          "segment_count": 7,
+          "area_balance": 0.0404,
+          "h4_violation": 0.16525844172382148,
+          "failed_gate": "H4"
+        },
+        "actual_strategy": "cycle_basis",
+        "cap_hit": false,
+        "runtime_ms": 32.2
+      },
+      "johnson": {
+        "cycles_examined": 5000,
+        "max_cycle_size": 160,
+        "h3_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_by_violation": null,
+        "best_by_balance": null,
+        "actual_strategy": "johnson",
+        "cap_hit": true,
+        "runtime_ms": 91881.0
+      }
+    }
+  }
+}

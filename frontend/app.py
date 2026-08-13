@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 
@@ -212,19 +213,109 @@ def _html_escape(value: object) -> str:
     )
 
 
+
+# ---------------------------------------------------------------------------
+# Metric glossary (roadmap Stage 3 §3.2/§3.3) — each entry answers three
+# questions: what it means · what good looks like · what to do if it's bad.
+# Surfaced two ways: (1) as a hover tooltip on the indicator chip that shows
+# the metric, via help_key= below, and (2) as a full reference list in the
+# "Metric Glossary" expander rendered near the top of the page.
+# ---------------------------------------------------------------------------
+METRIC_GLOSSARY: dict[str, str] = {
+    "readiness": (
+        "What the parting-line candidate is safe to use for. ready = usable "
+        "as-is; review = usable, but a mold engineer should look at it; "
+        "weak/failed = do not trust yet, and core/cavity may be blocked. "
+        "Backed by graph_cleanup.strategy, closure_error_mm, and "
+        "silhouette_coverage_ratio together, not any single number."
+    ),
+    "closure_error_mm": (
+        "The MEASURED gap (mm) between the parting loop's first and last "
+        "point, checked after closure — never just the reported flag. Near "
+        "0 with closure_guaranteed=True means the loop is genuinely closed. "
+        "A nonzero gap despite a 'closed' report is the exact failure mode "
+        "Bug A introduced — always check this number, not just the flag."
+    ),
+    "graph_cleanup_strategy": (
+        "Whether the exact/contracted path search found the selected wire, "
+        "or the search fell back to a non-backtracking greedy heuristic "
+        "('greedy-fallback'). Fallback means the selected wire is not "
+        "guaranteed to be the best one available. Exposing this number "
+        "alone would have caught Bug B immediately — it is the single "
+        "highest-value metric on this page."
+    ),
+    "silhouette_coverage_ratio": (
+        "Fraction of the part's projected outline the selected parting "
+        "loop actually spans. Low (roughly under 35%) usually means a "
+        "local feature — a hole rim, a boss — was selected instead of the "
+        "main parting line, not that the part itself lacks a good one."
+    ),
+    "undercut_area_pct": (
+        "Fraction of total part surface area flagged as undercut for the "
+        "current pull direction. Higher means more tooling complexity "
+        "(side actions, lifters); 0% means the direction is fully "
+        "undercut-free by area."
+    ),
+    "direction_score": (
+        "A relative, unitless ranking score for one candidate mold-opening "
+        "direction. Only meaningful compared against OTHER candidates for "
+        "the same part — never compare this number across different parts."
+    ),
+    "depth_proxy_mm": (
+        "A conservative, upper-bound ESTIMATE of undercut depth, not a "
+        "precise measurement. Deliberately errs toward over-estimating "
+        "risk rather than under-estimating it (a locked project decision — "
+        "see TODO.md)."
+    ),
+    "pull_alignment": (
+        "How aligned a face's undercut direction is with the pull "
+        "direction: 0.0 = fully transverse (a side action is likely "
+        "needed); 1.0 = aligned with the pull axis."
+    ),
+    "bridging_status": (
+        "Whether component bridging ran to close a fragmented silhouette: "
+        "not_needed (already closed), applied (ran and was kept), "
+        "discarded_not_an_improvement (ran, made things worse, reverted), "
+        "unavailable/disabled (did not run at all)."
+    ),
+    "split_tool_kind": (
+        "What geometry actually bisected the tooling into cavity/core "
+        "solids. 'planar_approximation' means a flat plane was used, NOT "
+        "the exact 3-D parting surface shown elsewhere on this page — the "
+        "exported solids approximate that curve, they don't follow it "
+        "exactly."
+    ),
+}
+
+
+def _metric_help(key: str) -> str:
+    """Return glossary text for a metric key, or '' if not in the glossary."""
+    return METRIC_GLOSSARY.get(key, "")
+
+
+def _render_metric_glossary() -> None:
+    """Reference-page form of the glossary (roadmap Stage 3 §3.2)."""
+    with st.expander("📖 Metric Glossary — what these numbers mean"):
+        for key, text in METRIC_GLOSSARY.items():
+            st.markdown(f"**`{key}`** — {text}")
+
+
 def _color_dot(color: str) -> str:
     return f"<span class='dfm-chip-dot' style='background:{_html_escape(color)}'></span>"
 
 
-def _status_chip(label: str, *, state: str = "muted", color: str = "#98a2b3") -> str:
+def _status_chip(
+    label: str, *, state: str = "muted", color: str = "#98a2b3", help_text: str = ""
+) -> str:
     css_class = {
         "complete": "dfm-chip-complete",
         "current": "dfm-chip-current",
         "failed": "dfm-chip-failed",
         "muted": "dfm-chip-muted",
     }.get(state, "dfm-chip-muted")
+    title_attr = f" title='{_html_escape(help_text)}'" if help_text else ""
     return (
-        f"<span class='dfm-chip {css_class}'>"
+        f"<span class='dfm-chip {css_class}'{title_attr}>"
         f"{_color_dot(color)}{_html_escape(label)}</span>"
     )
 
@@ -236,17 +327,25 @@ def _render_chip_row(chips: list[str]) -> None:
     )
 
 
-def _indicator_chip(label: str, value: object, *, tone: str = "neutral") -> str:
+def _indicator_chip(
+    label: str, value: object, *, tone: str = "neutral", help_key: str = ""
+) -> str:
     state, color = QUALITY_TONES.get(tone, QUALITY_TONES["neutral"])
-    return _status_chip(f"{label}: {value}", state=state, color=color)
+    return _status_chip(
+        f"{label}: {value}", state=state, color=color, help_text=_metric_help(help_key)
+    )
 
 
-def _render_quality_indicators(items: list[tuple[str, object, str]]) -> None:
-    chips = [
-        _indicator_chip(label, value, tone=tone)
-        for label, value, tone in items
-        if value not in (None, "")
-    ]
+def _render_quality_indicators(
+    items: list[tuple[str, object, str] | tuple[str, object, str, str]],
+) -> None:
+    chips = []
+    for item in items:
+        label, value, tone, *rest = item
+        if value in (None, ""):
+            continue
+        help_key = rest[0] if rest else ""
+        chips.append(_indicator_chip(label, value, tone=tone, help_key=help_key))
     if chips:
         _render_chip_row(chips)
 
@@ -499,6 +598,150 @@ def _vector_text(vector: object) -> str:
     return f"({x:+.3f}, {y:+.3f}, {z:+.3f})"
 
 
+def _direction_axis_tilt_text(vector: object) -> str:
+    """
+    Format a pull-direction unit vector the way a mold engineer actually
+    reasons about it: the raw components, plus its closest axis and tilt
+    angle off that axis (roadmap Stage 3 §3.5), e.g.
+    "(+0.232, +0.357, +0.905) ≈ +Z, tilted 25°". The vector itself is never
+    snapped to an axis — this is a display-only annotation.
+    """
+    if not isinstance(vector, (list, tuple)) or len(vector) != 3:
+        return _vector_text(vector)
+    try:
+        vx, vy, vz = (float(vector[0]), float(vector[1]), float(vector[2]))
+    except (TypeError, ValueError):
+        return _vector_text(vector)
+    magnitude = (vx * vx + vy * vy + vz * vz) ** 0.5
+    if magnitude < 1e-9:
+        return _vector_text(vector)
+    ux, uy, uz = vx / magnitude, vy / magnitude, vz / magnitude
+    axis_label, component = max(
+        (("X", ux), ("Y", uy), ("Z", uz)), key=lambda item: abs(item[1])
+    )
+    sign = "+" if component >= 0 else "-"
+    cos_tilt = max(-1.0, min(1.0, abs(component)))
+    tilt_deg = math.degrees(math.acos(cos_tilt))
+    return (
+        f"({vx:+.3f}, {vy:+.3f}, {vz:+.3f}) ≈ {sign}{axis_label}, "
+        f"tilted {tilt_deg:.0f}°"
+    )
+
+
+def _angular_separation_deg(a: object, b: object) -> float:
+    """Angle in degrees between two direction vectors (need not be unit)."""
+    try:
+        ax, ay, az = (float(a[0]), float(a[1]), float(a[2]))
+        bx, by, bz = (float(b[0]), float(b[1]), float(b[2]))
+    except (TypeError, ValueError, IndexError):
+        return 180.0
+    mag_a = (ax * ax + ay * ay + az * az) ** 0.5
+    mag_b = (bx * bx + by * by + bz * bz) ** 0.5
+    if mag_a < 1e-9 or mag_b < 1e-9:
+        return 180.0
+    cos_angle = (ax * bx + ay * by + az * bz) / (mag_a * mag_b)
+    cos_angle = max(-1.0, min(1.0, cos_angle))
+    return math.degrees(math.acos(cos_angle))
+
+
+def _cluster_diverse_candidates(
+    candidates: list[dict[str, Any]], *, min_separation_deg: float = 15.0
+) -> list[dict[str, Any]]:
+    """
+    Roadmap Stage 3 §3.7: the raw candidate list's top entries are often all
+    within a few degrees of each other (an artefact of the Milestone 1.4
+    fine-search cone) — the same answer repeated six times, not six distinct
+    options. Greedily picks the best-scoring candidate, then the best
+    remaining candidate that is at least `min_separation_deg` from every
+    already-picked one, and so on — the standard "diverse top-k" selection
+    (closely related to non-max suppression). Assumes `candidates` is
+    already sorted best-first (lower score = better, matching the
+    optimizer's own ranking).
+    """
+    diverse: list[dict[str, Any]] = []
+    for candidate in candidates:
+        direction = candidate.get("direction")
+        if not isinstance(direction, (list, tuple)) or len(direction) != 3:
+            continue
+        if all(
+            _angular_separation_deg(direction, chosen.get("direction"))
+            >= min_separation_deg
+            for chosen in diverse
+        ):
+            diverse.append(candidate)
+    return diverse
+
+
+def _render_candidate_diversity(direction: dict[str, Any]) -> None:
+    """
+    Layer 1/2 view of genuinely distinct direction options, replacing "top 6
+    near-duplicates" with "here are your real choices and why the best one
+    ranks first" (roadmap §3.7's reframing away from claiming *the* answer).
+    """
+    candidates = direction.get("candidates") or []
+    if not isinstance(candidates, list) or not candidates:
+        return
+
+    best_direction = direction.get("best_direction")
+    diverse = _cluster_diverse_candidates(candidates, min_separation_deg=15.0)
+
+    st.markdown("#### Diverse Candidate Directions")
+    st.caption(
+        f"{len(candidates)} candidates were scored; clustering by ≥15° "
+        f"angular separation finds {len(diverse)} genuinely distinct "
+        "option(s) — not just the same direction repeated with tiny "
+        "perturbations. Validity (undercut-free?), ranking transparency "
+        "(why this beat the others), and stability (do nearby directions "
+        "score similarly?) are the defensible claims here — not that this "
+        "is uniquely *the* answer."
+    )
+
+    rows = []
+    for candidate in diverse:
+        candidate_direction = candidate.get("direction")
+        separation = (
+            _angular_separation_deg(candidate_direction, best_direction)
+            if best_direction else 0.0
+        )
+        percentages = candidate.get("percentages", {}) or {}
+        undercuts = candidate.get("undercuts", {}) or {}
+        rows.append({
+            "Direction": _direction_axis_tilt_text(candidate_direction),
+            "Score": candidate.get("score"),
+            "From best": f"{separation:.1f}°",
+            "Bad draft area": f"{percentages.get('bad_area_pct', 0)}%",
+            "Undercut features": undercuts.get("feature_count", 0),
+            "Boolean-refined": "Yes" if candidate.get("boolean_refined") else "No",
+        })
+    _safe_dataframe(rows, use_container_width=True)
+
+    if len(diverse) <= 1:
+        st.info(
+            "Every scored candidate is within 15° of the best direction — "
+            "this part's real option space is narrow, not an artefact of "
+            "under-searching."
+        )
+
+
+def _direction_label_display(
+    direction: dict[str, Any],
+    *,
+    label_key: str = "best_label",
+    vector_key: str = "best_direction",
+) -> str:
+    """
+    Show the direction's axis label (e.g. "+Z") plus vector+tilt — but
+    without duplicating the vector when the label itself already fell back
+    to raw vector text (`_direction_label` in direction_optimizer.py returns
+    the vector string, not a real axis label, for any non-axis-aligned
+    direction).
+    """
+    label = str(direction.get(label_key, "") or "")
+    vector_text = _direction_axis_tilt_text(direction.get(vector_key))
+    is_axis_label = len(label) == 2 and label[0] in "+-" and label[1] in "XYZ"
+    return f"{label} {vector_text}" if is_axis_label else vector_text
+
+
 def _draft_bad_area_pct(draft: dict[str, Any] | None) -> float:
     if not isinstance(draft, dict):
         return 0.0
@@ -555,8 +798,8 @@ def _before_after_rows(
     return [
         {
             "Metric": "Pull direction",
-            "Before": _vector_text(direction.get("initial_pull_direction")),
-            "After": _vector_text(direction.get("best_direction")),
+            "Before": _direction_axis_tilt_text(direction.get("initial_pull_direction")),
+            "After": _direction_axis_tilt_text(direction.get("best_direction")),
             "Change": direction.get("best_label", "best candidate"),
             "Status": "Computed",
         },
@@ -625,8 +868,8 @@ def _before_after_story_text(
         title = "Best direction keeps the residual Level 1 risk clear"
 
     body = (
-        f"Before uses the selected initial pull vector {_vector_text(direction.get('initial_pull_direction'))}; "
-        f"after uses {direction.get('best_label', 'the best candidate')} {_vector_text(direction.get('best_direction'))}. "
+        f"Before uses the selected initial pull vector {_direction_axis_tilt_text(direction.get('initial_pull_direction'))}; "
+        f"after uses {_direction_label_display(direction)}. "
         f"Bad draft area changes from {before_bad_area:.2f}% to {after_bad_area:.2f}%, "
         f"and undercut features change from {initial_counts['total']} to {optimal_counts['total']}."
     )
@@ -669,12 +912,12 @@ def _render_before_after_story(
         (
             "Before Direction",
             direction.get("initial_label", "Selected initial"),
-            _vector_text(direction.get("initial_pull_direction")),
+            _direction_axis_tilt_text(direction.get("initial_pull_direction")),
         ),
         (
             "After Direction",
             direction.get("best_label", "Best candidate"),
-            _vector_text(direction.get("best_direction")),
+            _direction_axis_tilt_text(direction.get("best_direction")),
         ),
         (
             "Draft Bad Area",
@@ -2015,6 +2258,265 @@ def _reset_analysis_state() -> None:
     st.session_state.pop(STEP_RUNS_KEY, None)
     st.session_state.pop("last_backend_error", None)
     st.session_state.pop("cached_display_mesh", None)
+    _clear_direction_override()
+
+
+# ---------------------------------------------------------------------------
+# Direction override (roadmap Stage 3 §3.6 — Bosch criterion #2)
+#
+# Philosophy: the optimizer recommends, the engineer decides. Overriding the
+# mold direction recomputes draft/undercuts/parting-line/core-cavity for the
+# chosen direction WITHOUT discarding the recommendation — both stay
+# available so the engineer can see exactly what the override costs. Only
+# geometry extraction is never rerun (both directions use the same loaded
+# part). Stored separately from the normal per-step results
+# (`draft_result`, `undercut_result`, ...) rather than overwriting them.
+# ---------------------------------------------------------------------------
+DIRECTION_OVERRIDE_KEY = "direction_override"
+OVERRIDE_RESULT_KEY = "override_result"
+
+
+def _direction_override_state() -> dict[str, Any]:
+    return st.session_state.get(
+        DIRECTION_OVERRIDE_KEY, {"active": False, "vector": None, "label": ""}
+    )
+
+
+def _set_direction_override(vector: tuple[float, float, float], label: str) -> None:
+    st.session_state[DIRECTION_OVERRIDE_KEY] = {
+        "active": True,
+        "vector": vector,
+        "label": label,
+    }
+
+
+def _clear_direction_override() -> None:
+    st.session_state[DIRECTION_OVERRIDE_KEY] = {
+        "active": False,
+        "vector": None,
+        "label": "",
+    }
+    st.session_state.pop(OVERRIDE_RESULT_KEY, None)
+
+
+def _run_direction_override_pipeline(
+    selected_part: str,
+    vector: tuple[float, float, float],
+    *,
+    include_faces: bool,
+    include_mesh: bool,
+    include_boolean_regions: bool,
+    mesh_deflection: float,
+    solid_split: bool = False,
+    generate_side_core: bool = False,
+) -> dict[str, Any]:
+    """
+    Recompute the full downstream pipeline (draft, undercuts, parting line,
+    core/cavity) for a manually overridden direction. Geometry extraction is
+    NOT rerun — every fetch here re-parses the STEP file server-side anyway
+    (the API is stateless), but conceptually this is "downstream of pull
+    direction" recompute only, matching the roadmap's scope for S3.6.
+    """
+    ox, oy, oz = vector
+    draft = _fetch_draft(
+        selected_part, dx=ox, dy=oy, dz=oz,
+        include_faces=include_faces, include_mesh=include_mesh,
+        mesh_deflection=mesh_deflection,
+    )
+    undercuts = _fetch_undercuts(
+        selected_part, dx=ox, dy=oy, dz=oz,
+        include_faces=include_faces, include_mesh=include_mesh,
+        include_boolean_regions=include_boolean_regions,
+        mesh_deflection=mesh_deflection,
+    )
+    parting_line = _fetch_parting_line(
+        selected_part, dx=ox, dy=oy, dz=oz,
+        include_faces=include_faces, include_mesh=include_mesh,
+        mesh_deflection=mesh_deflection, use_optimal_direction=False,
+    )
+    core_cavity = _fetch_core_cavity(
+        selected_part,
+        include_faces=include_faces, include_mesh=include_mesh,
+        mesh_deflection=mesh_deflection,
+        use_optimal_direction=False, dx=ox, dy=oy, dz=oz,
+        solid_split=solid_split,
+        generate_side_core=generate_side_core,
+    )
+    return {
+        "draft": draft,
+        "undercuts": undercuts,
+        "parting_line": parting_line,
+        "core_cavity": core_cavity,
+    }
+
+
+_AXIS_OVERRIDE_PRESETS: list[tuple[str, tuple[float, float, float]]] = [
+    ("+X", (1.0, 0.0, 0.0)),
+    ("-X", (-1.0, 0.0, 0.0)),
+    ("+Y", (0.0, 1.0, 0.0)),
+    ("-Y", (0.0, -1.0, 0.0)),
+    ("+Z", (0.0, 0.0, 1.0)),
+    ("-Z", (0.0, 0.0, -1.0)),
+]
+
+
+def _render_direction_override_controls(
+    selected_part: str,
+    *,
+    include_faces: bool,
+    include_mesh: bool,
+    include_boolean_regions: bool,
+    mesh_deflection: float,
+    solid_split: bool = False,
+    generate_side_core: bool = False,
+) -> None:
+    """
+    Bosch criterion #2. The optimizer recommends; the engineer decides.
+    Applying an override recomputes draft/undercuts/parting-line/core-cavity
+    for the chosen direction and stores the result separately from the
+    recommended pipeline's results — nothing is overwritten or discarded.
+    """
+    state = _direction_override_state()
+    st.markdown("#### Override Mold Direction")
+    st.caption(
+        "The optimizer recommends the geometrically best direction. Real "
+        "constraints — flash, gate location, ejector layout, existing "
+        "tooling — often mean the engineer picks a different one. Applying "
+        "an override recomputes every downstream analysis for that "
+        "direction; the recommendation stays available for comparison below."
+    )
+
+    axis_cols = st.columns(6)
+    for col, (label, vector) in zip(axis_cols, _AXIS_OVERRIDE_PRESETS):
+        if col.button(label, key=f"override_axis_{label}", use_container_width=True):
+            with st.spinner(f"Recomputing draft/undercuts/parting-line/core-cavity for {label}..."):
+                result = _run_direction_override_pipeline(
+                    selected_part, vector,
+                    include_faces=include_faces, include_mesh=include_mesh,
+                    include_boolean_regions=include_boolean_regions,
+                    mesh_deflection=mesh_deflection,
+                    solid_split=solid_split,
+                    generate_side_core=generate_side_core,
+                )
+            _set_direction_override(vector, label)
+            st.session_state[OVERRIDE_RESULT_KEY] = result
+            # The banner/Findings panel are rendered earlier in the script
+            # (before this tab's code runs) and would otherwise show stale
+            # state for one rerun — force an immediate clean rerun so every
+            # render call sees the just-applied override consistently.
+            st.rerun()
+
+    with st.expander("Custom vector"):
+        cx = st.number_input("Override X", value=0.0, step=0.1, format="%.3f", key="override_cx")
+        cy = st.number_input("Override Y", value=0.0, step=0.1, format="%.3f", key="override_cy")
+        cz = st.number_input("Override Z", value=1.0, step=0.1, format="%.3f", key="override_cz")
+        if st.button("Apply custom vector", key="override_apply_custom"):
+            magnitude = (cx * cx + cy * cy + cz * cz) ** 0.5
+            if magnitude < 1e-9:
+                st.error("The override vector cannot be zero.")
+            else:
+                vector = (cx / magnitude, cy / magnitude, cz / magnitude)
+                label = f"custom ({vector[0]:+.3f}, {vector[1]:+.3f}, {vector[2]:+.3f})"
+                with st.spinner("Recomputing draft/undercuts/parting-line/core-cavity for the custom direction..."):
+                    result = _run_direction_override_pipeline(
+                        selected_part, vector,
+                        include_faces=include_faces, include_mesh=include_mesh,
+                        include_boolean_regions=include_boolean_regions,
+                        mesh_deflection=mesh_deflection,
+                        solid_split=solid_split,
+                        generate_side_core=generate_side_core,
+                    )
+                _set_direction_override(vector, label)
+                st.session_state[OVERRIDE_RESULT_KEY] = result
+                st.rerun()
+
+    if state["active"]:
+        st.warning(f"⚠️ Using manual override: **{state['label']}**")
+        if st.button("Clear override — use recommended direction", key="override_clear"):
+            _clear_direction_override()
+            st.rerun()
+    else:
+        st.success("🎯 Using recommended direction (no override applied).")
+
+
+def _render_recommended_vs_override(direction: dict[str, Any]) -> None:
+    """Side-by-side comparison so the engineer can see what an override costs."""
+    state = _direction_override_state()
+    override_result = st.session_state.get(OVERRIDE_RESULT_KEY)
+    if not state.get("active") or not isinstance(override_result, dict):
+        return
+
+    rec_draft = direction.get("optimal_draft", {}) or {}
+    rec_undercuts = direction.get("optimal_undercuts", {}) or {}
+    rec_parting = st.session_state.get("parting_line_result", {}).get("parting_line", {}) or {}
+
+    ov_draft = (override_result.get("draft") or {}).get("draft", {}) or {}
+    ov_undercuts_payload = override_result.get("undercuts") or {}
+    ov_undercuts = ov_undercuts_payload.get("undercuts", {}) or {}
+    ov_parting_payload = override_result.get("parting_line") or {}
+    ov_parting = ov_parting_payload.get("parting_line", {}) or {}
+    ov_core_cavity_payload = override_result.get("core_cavity") or {}
+    ov_core_cavity = ov_core_cavity_payload.get("core_cavity", {}) or {}
+
+    rec_counts = _undercut_counts(rec_undercuts)
+    ov_counts = _undercut_counts(ov_undercuts)
+
+    st.markdown(f"#### Recommended vs Override ({state['label']})")
+    rows = [
+        {
+            "Metric": "Direction",
+            "Recommended": _direction_axis_tilt_text(direction.get("best_direction")),
+            "Override": _direction_axis_tilt_text(state.get("vector")),
+        },
+        {
+            "Metric": "Draft severity",
+            "Recommended": str(rec_draft.get("severity", "unknown")).title(),
+            "Override": str(ov_draft.get("severity", "unknown")).title(),
+        },
+        {
+            "Metric": "Bad draft area",
+            "Recommended": f"{_draft_bad_area_pct(rec_draft):.2f}%",
+            "Override": f"{_draft_bad_area_pct(ov_draft):.2f}%",
+        },
+        {
+            "Metric": "Undercut features",
+            "Recommended": rec_counts["total"],
+            "Override": ov_counts["total"],
+        },
+        {
+            "Metric": "Major undercuts",
+            "Recommended": rec_counts["major"],
+            "Override": ov_counts["major"],
+        },
+        {
+            "Metric": "Parting-line readiness",
+            "Recommended": str(rec_parting.get("readiness", {}).get("status", "not run")).title(),
+            "Override": str(ov_parting.get("readiness", {}).get("status", "not run")).title(),
+        },
+        {
+            "Metric": "Silhouette coverage",
+            "Recommended": f"{_safe_float(rec_parting.get('silhouette_coverage_ratio', 0.0)) * 100:.0f}%",
+            "Override": f"{_safe_float(ov_parting.get('silhouette_coverage_ratio', 0.0)) * 100:.0f}%",
+        },
+        {
+            "Metric": "Cavity/Core/Parting faces",
+            "Recommended": "n/a — see Core/Cavity tab",
+            "Override": (
+                f"{ov_core_cavity.get('face_counts', {}).get('cavity', 0)}/"
+                f"{ov_core_cavity.get('face_counts', {}).get('core', 0)}/"
+                f"{ov_core_cavity.get('face_counts', {}).get('parting', 0)}"
+                if ov_core_cavity else "not run"
+            ),
+        },
+    ]
+    _safe_dataframe(rows, use_container_width=True)
+
+
+def _render_active_direction_banner() -> None:
+    """Always-visible, tab-independent indicator of which direction is active."""
+    state = _direction_override_state()
+    if state.get("active"):
+        st.warning(f"⚠️ Viewing results for a manual direction override: **{state['label']}** (not the optimizer's recommendation).")
 
 
 def _cache_and_strip_mesh(result: dict[str, Any]) -> None:
@@ -2282,6 +2784,99 @@ def _backend_get(
         return None
 
 
+def _backend_post(
+    endpoint: str,
+    *,
+    params: dict[str, Any] | None,
+    timeout: int,
+    failure_label: str,
+) -> dict[str, Any] | None:
+    try:
+        response = requests.post(
+            f"{BACKEND_URL}{endpoint}",
+            params=params,
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            _show_backend_error(
+                response=response,
+                failure_label=failure_label,
+                endpoint=endpoint,
+            )
+            return None
+        return response.json()
+    except requests.RequestException as exc:
+        _record_backend_error(
+            failure_label=failure_label,
+            message=str(exc),
+            endpoint=endpoint,
+            hint="Check that the backend container is running and reachable from the Streamlit container.",
+        )
+        st.error(f"{failure_label}: {exc}")
+        st.info("Check that the backend container is running and reachable from the Streamlit container.")
+        return None
+
+
+def _fetch_agent_analysis(
+    selected_part: str,
+    *,
+    query: str | None,
+    provider: str | None,
+) -> dict[str, Any] | None:
+    params: dict[str, Any] = {}
+    if query:
+        params["query"] = query
+    if provider:
+        params["provider"] = provider
+    return _backend_post(
+        f"/parts/{selected_part}/agent/analyze",
+        params=params,
+        timeout=120,
+        failure_label="AI agent DfM analysis failed",
+    )
+
+
+def _fetch_pdf_report(
+    selected_part: str,
+    *,
+    use_optimal_direction: bool,
+    dx: float,
+    dy: float,
+    dz: float,
+    include_solid_split: bool,
+    include_side_core: bool,
+    include_agent_narrative: bool,
+) -> bytes | None:
+    """
+    Unlike every other `_fetch_*` helper, `/export/report` returns raw
+    `application/pdf` bytes, not JSON -- so this bypasses `_backend_post`
+    (which always calls `.json()`) and handles the response directly.
+    """
+    endpoint = f"/parts/{selected_part}/export/report"
+    params = {
+        "use_optimal_direction": use_optimal_direction,
+        "dx": dx, "dy": dy, "dz": dz,
+        "include_solid_split": include_solid_split,
+        "include_side_core": include_side_core,
+        "include_agent_narrative": include_agent_narrative,
+    }
+    try:
+        response = requests.post(f"{BACKEND_URL}{endpoint}", params=params, timeout=150)
+        if response.status_code >= 400:
+            _show_backend_error(response=response, failure_label="PDF report export failed", endpoint=endpoint)
+            return None
+        return response.content
+    except requests.RequestException as exc:
+        _record_backend_error(
+            failure_label="PDF report export failed",
+            message=str(exc),
+            endpoint=endpoint,
+            hint="Check that the backend container is running and reachable from the Streamlit container.",
+        )
+        st.error(f"PDF report export failed: {exc}")
+        return None
+
+
 def _fetch_summary(
     selected_part: str,
     *,
@@ -2299,6 +2894,22 @@ def _fetch_summary(
         timeout=120,
         failure_label="STEP load failed",
     )
+
+
+def _mesh_geometry_already_cached() -> bool:
+    """
+    Roadmap Stage 3 §3.8 (second item): once the base mesh geometry
+    (points/faces) has been cached client-side (`_cache_and_strip_mesh`),
+    every subsequent analysis fetch for the same part can ask the backend to
+    OMIT points/faces from the response entirely (`include_mesh_geometry=
+    false`) -- `_hydrate_mesh` reconstructs the full mesh by merging the
+    fresh overlay (draft_rgb, etc.) onto the cached geometry either way, so
+    nothing downstream needs to change. This is what actually stops
+    re-downloading identical geometry over the network on every overlay
+    switch; `_cache_and_strip_mesh` alone only ever stopped re-STORING it
+    client-side after it had already been transferred.
+    """
+    return "cached_display_mesh" in st.session_state
 
 
 def _fetch_draft(
@@ -2319,6 +2930,7 @@ def _fetch_draft(
             "dz": dz,
             "include_faces": include_faces,
             "include_mesh": include_mesh,
+            "include_mesh_geometry": not _mesh_geometry_already_cached(),
             "mesh_deflection": mesh_deflection,
         },
         timeout=180,
@@ -2345,6 +2957,7 @@ def _fetch_undercuts(
             "dz": dz,
             "include_faces": include_faces,
             "include_mesh": include_mesh,
+            "include_mesh_geometry": not _mesh_geometry_already_cached(),
             "include_boolean_regions": include_boolean_regions,
             "mesh_deflection": mesh_deflection,
         },
@@ -2372,8 +2985,14 @@ def _fetch_direction(
             "dz": dz,
             "include_faces": include_faces,
             "include_mesh": include_mesh,
+            "include_mesh_geometry": not _mesh_geometry_already_cached(),
             "include_boolean_regions": include_boolean_regions,
             "mesh_deflection": mesh_deflection,
+            # Roadmap Stage 3 §3.7: the default top-10 candidates are all
+            # near-duplicates of the best one (an artefact of the fine-search
+            # cone) -- genuine diversity clustering needs the full candidate
+            # set to find families the top-10 cutoff would otherwise hide.
+            "include_all_candidates": True,
         },
         timeout=240,
         failure_label="Direction optimization failed",
@@ -2386,15 +3005,27 @@ def _fetch_core_cavity(
     include_faces: bool,
     include_mesh: bool,
     mesh_deflection: float,
+    solid_split: bool = False,
+    generate_side_core: bool = False,
+    use_optimal_direction: bool = True,
+    dx: float = 0.0,
+    dy: float = 0.0,
+    dz: float = 1.0,
 ) -> dict[str, Any] | None:
     return _backend_get(
         f"/parts/{selected_part}/core-cavity",
         params={
-            "use_optimal_direction": True,
+            "use_optimal_direction": use_optimal_direction,
+            "dx": dx,
+            "dy": dy,
+            "dz": dz,
             "threshold": 0.05,
             "include_faces": include_faces,
             "include_mesh": include_mesh,
+            "include_mesh_geometry": not _mesh_geometry_already_cached(),
             "mesh_deflection": mesh_deflection,
+            "solid_split": solid_split,
+            "generate_side_core": generate_side_core and solid_split,
         },
         timeout=240,
         failure_label="Core/cavity classification failed",
@@ -2410,6 +3041,7 @@ def _fetch_parting_line(
     include_faces: bool,
     include_mesh: bool,
     mesh_deflection: float,
+    use_optimal_direction: bool = True,
 ) -> dict[str, Any] | None:
     return _backend_get(
         f"/parts/{selected_part}/parting-line",
@@ -2417,9 +3049,10 @@ def _fetch_parting_line(
             "dx": dx,
             "dy": dy,
             "dz": dz,
-            "use_optimal_direction": True,
+            "use_optimal_direction": use_optimal_direction,
             "include_faces": include_faces,
             "include_mesh": include_mesh,
+            "include_mesh_geometry": not _mesh_geometry_already_cached(),
             "include_direction": False,
             "refine": True,
             "mesh_deflection": mesh_deflection,
@@ -2666,6 +3299,376 @@ def _level1_result_rows(
     ]
 
 
+# ---------------------------------------------------------------------------
+# Issue-first summary (roadmap Stage 3 §3.1/§3.4) — three-layer progressive
+# disclosure. Layer 1 (verdict, default view) is the ranked issue list built
+# here; Layer 2 (evidence) is each issue's "Show evidence" expander; Layer 3
+# (provenance/debug) is the existing per-step tabs and their raw-JSON
+# expanders further down the page, unchanged. This is also deliberate
+# groundwork for Stage 5 (the agent will consume exactly these
+# severity/location/reason/recommendation/evidence records).
+# ---------------------------------------------------------------------------
+_ISSUE_SEVERITY_ORDER = {"critical": 0, "review": 1, "info": 2, "ok": 3}
+_ISSUE_SEVERITY_STYLE = {
+    "critical": ("🔴", "Critical"),
+    "review": ("🟡", "Review"),
+    "info": ("ℹ️", "Info"),
+    "ok": ("🟢", "OK"),
+}
+_ISSUE_DEFAULT_VISIBLE = 5
+
+
+def _collect_issues() -> list[dict[str, Any]]:
+    """
+    Scan every pipeline stage's result in session_state and return ranked
+    {severity, location, title, detail, evidence} issue records — the
+    plain-language "what's wrong, why, how serious, what to do" answers a
+    mold engineer actually asks for, in that order (roadmap §3.4).
+    """
+    issues: list[dict[str, Any]] = []
+
+    # Bosch criterion #2 (S3.6): when a direction override is active, the
+    # engineer's chosen direction — not the optimizer's recommendation —
+    # drives these findings ("the engineering report reflects the chosen
+    # direction"). The recommendation itself is never discarded; it stays
+    # available via the Recommended-vs-Override comparison in the Direction
+    # tab. Every issue built while an override is active gets its location
+    # suffixed "(override)" below, so this is never ambiguous.
+    override_state = _direction_override_state()
+    override_active = bool(override_state.get("active"))
+    override_result = st.session_state.get(OVERRIDE_RESULT_KEY) if override_active else None
+
+    direction = st.session_state.get("direction_result", {}).get("direction")
+    if override_active and isinstance(override_result, dict):
+        draft = (override_result.get("draft") or {}).get("draft")
+    else:
+        draft = (
+            (direction or {}).get("optimal_draft")
+            or st.session_state.get("draft_result", {}).get("draft")
+        )
+    if isinstance(draft, dict):
+        # Real vocabulary from draft_analyzer.py: "none" | "minor" | "moderate"
+        # | "critical" — matches _tone_for_draft_severity's mapping, not the
+        # "bad"/"marginal"/"good" guess this used to check against.
+        severity = _normalised_token(draft.get("severity"))
+        bad_pct = _draft_bad_area_pct(draft)
+        bad_faces = _draft_bad_faces(draft)
+        if severity == "critical":
+            issues.append({
+                "severity": "critical",
+                "location": "Draft",
+                "title": "Draft correction required",
+                "detail": (
+                    f"{bad_pct:.1f}% of surface area ({bad_faces} faces) has "
+                    "insufficient or negative draft along the mold-opening "
+                    "direction — the part will stick in the mold."
+                ),
+                "evidence": f"Bad draft area: {bad_pct:.2f}% · Bad faces: {bad_faces}",
+            })
+        elif severity == "moderate":
+            issues.append({
+                "severity": "review",
+                "location": "Draft",
+                "title": "Moderate draft issues on some faces",
+                "detail": (
+                    f"{bad_pct:.1f}% of surface area ({bad_faces} faces) is "
+                    "below the recommended draft angle."
+                ),
+                "evidence": f"Bad draft area: {bad_pct:.2f}% · Faces: {bad_faces}",
+            })
+        elif severity == "minor":
+            issues.append({
+                "severity": "info",
+                "location": "Draft",
+                "title": "Minor draft issues on a few faces",
+                "detail": (
+                    f"{bad_pct:.1f}% of surface area ({bad_faces} face(s)) is "
+                    "slightly below the recommended draft angle."
+                ),
+                "evidence": f"Bad draft area: {bad_pct:.2f}% · Faces: {bad_faces}",
+            })
+        elif severity == "none":
+            issues.append({
+                "severity": "ok",
+                "location": "Draft",
+                "title": "Draft acceptable",
+                "detail": "All analysed faces meet the minimum draft angle.",
+                "evidence": f"Bad draft area: {bad_pct:.2f}%",
+            })
+
+    # The `/direction` endpoint's optimal_undercuts is a SUMMARY (counts and
+    # percentages) with no per-feature "features" list — only the standalone
+    # /undercuts endpoint (undercut_result) returns full feature detail. Use
+    # whichever is available for per-feature detail, but always judge the
+    # residual-risk verdict against the actual chosen (optimal) direction's
+    # summary when one exists, not the initial direction's.
+    if override_active and isinstance(override_result, dict):
+        override_undercuts = (override_result.get("undercuts") or {}).get("undercuts")
+        optimal_undercuts = override_undercuts
+        detailed_undercuts = (
+            override_undercuts
+            if isinstance(override_undercuts, dict) and _feature_list(override_undercuts)
+            else None
+        )
+    else:
+        optimal_undercuts = (direction or {}).get("optimal_undercuts")
+        detailed_undercuts = (
+            st.session_state.get("undercut_result", {}).get("undercuts")
+            if isinstance(st.session_state.get("undercut_result", {}).get("undercuts"), dict)
+            and _feature_list(st.session_state.get("undercut_result", {}).get("undercuts"))
+            else None
+        )
+    if isinstance(optimal_undercuts, dict) and optimal_undercuts:
+        major_count = _safe_int(optimal_undercuts.get("major_undercut_features_count", 0))
+        has_critical = bool(optimal_undercuts.get("has_critical_undercut", False))
+        feature_count = _safe_int(optimal_undercuts.get("feature_count", 0))
+        highest = _highest_severity_feature(detailed_undercuts) if detailed_undercuts else None
+        if has_critical or major_count > 0:
+            depth_text = ""
+            if highest:
+                depth = _safe_float(highest.get("depth_proxy_mm", 0.0))
+                faces = highest.get("face_count", len(highest.get("face_ids", []) or []))
+                depth_text = f" (deepest known: {depth:.1f} mm on {faces} face(s), from the initial-direction scan)"
+            issues.append({
+                "severity": "critical" if has_critical else "review",
+                "location": "Undercuts (optimal direction)",
+                "title": (
+                    "Critical undercut remains at the optimal direction"
+                    if has_critical
+                    else f"{major_count} major undercut feature(s) remain at the optimal direction"
+                ),
+                "detail": f"The chosen mold-opening direction still has residual undercut risk{depth_text}.",
+                "evidence": (
+                    f"feature_count={feature_count} · major={major_count} · "
+                    f"has_critical_undercut={has_critical}"
+                ),
+            })
+        elif feature_count == 0:
+            issues.append({
+                "severity": "ok",
+                "location": "Undercuts",
+                "title": "No undercuts at the optimal direction",
+                "detail": "The chosen mold-opening direction is fully undercut-free by feature count.",
+                "evidence": "feature_count=0",
+            })
+        else:
+            issues.append({
+                "severity": "info",
+                "location": "Undercuts",
+                "title": f"{feature_count} minor undercut feature(s) remain",
+                "detail": "None are flagged critical or major, but worth a quick look.",
+                "evidence": f"feature_count={feature_count} · major=0 · has_critical_undercut=False",
+            })
+    elif detailed_undercuts:
+        highest = _highest_severity_feature(detailed_undercuts)
+        counts = _undercut_counts(detailed_undercuts)
+        if highest:
+            feature_severity = _normalised_token(highest.get("severity"))
+            action = _normalised_token(highest.get("recommended_mold_action"))
+            depth = _safe_float(highest.get("depth_proxy_mm", 0.0))
+            volume = _safe_float(highest.get("interference_volume_mm3", 0.0))
+            faces = highest.get("face_count", len(highest.get("face_ids", []) or []))
+            if action == "side-action" or feature_severity in ("critical", "high"):
+                issues.append({
+                    "severity": "critical" if feature_severity == "critical" else "review",
+                    "location": f"Undercut feature {highest.get('feature_id')}",
+                    "title": (
+                        "Side action required"
+                        if action == "side-action"
+                        else f"{highest.get('severity', 'High').title()} undercut needs review"
+                    ),
+                    "detail": (
+                        f"A {depth:.1f} mm deep undercut on {faces} face(s) cannot "
+                        "release along the mold opening direction."
+                        if action == "side-action"
+                        else f"A {depth:.1f} mm deep undercut on {faces} face(s) is "
+                        "flagged for manual mold-action review."
+                    ),
+                    "evidence": (
+                        f"Depth (proxy): {depth:.2f} mm · Interference volume: "
+                        f"{volume:,.0f} mm³ · Faces: {faces} · Major features: "
+                        f"{counts['major']} · Critical: {counts['critical']}"
+                    ),
+                })
+            elif counts["major"] == 0:
+                issues.append({
+                    "severity": "ok",
+                    "location": "Undercuts",
+                    "title": "No major undercuts detected",
+                    "detail": "No undercut feature requires a side action or critical review.",
+                    "evidence": f"Total undercut features: {counts['total']}",
+                })
+
+    if override_active and isinstance(override_result, dict):
+        parting = (override_result.get("parting_line") or {}).get("parting_line")
+    else:
+        parting = st.session_state.get("parting_line_result", {}).get("parting_line")
+    if isinstance(parting, dict):
+        readiness = parting.get("readiness", {}) or {}
+        refinement = parting.get("refinement", {}) or {}
+        graph_cleanup = refinement.get("graph_cleanup", {}) or {}
+        readiness_status = _normalised_token(readiness.get("status"))
+        coverage_ratio = _safe_float(parting.get("silhouette_coverage_ratio", 0.0))
+        closure_guaranteed = bool(parting.get("closure_guaranteed", False))
+        component_count = len(parting.get("components", []) or [])
+
+        if not closure_guaranteed:
+            issues.append({
+                "severity": "critical",
+                "location": "Parting line",
+                "title": "Parting loop is not guaranteed closed",
+                "detail": (
+                    f"Measured gap: {_safe_float(parting.get('closure_error_mm', 0.0)):.4f} mm. "
+                    "Downstream core/cavity split cannot be trusted until this closes."
+                ),
+                "evidence": f"closure_error_mm={parting.get('closure_error_mm', 0.0)}",
+            })
+        elif readiness_status in ("weak", "failed"):
+            issues.append({
+                "severity": "critical" if readiness_status == "failed" else "review",
+                "location": "Parting line",
+                "title": readiness.get("label") or f"Parting-line readiness: {readiness_status}",
+                "detail": "; ".join(readiness.get("blockers") or readiness.get("reasons") or [
+                    "The selected parting-line candidate needs manual review before use."
+                ]),
+                "evidence": f"readiness_score={readiness.get('score', 0.0)}",
+            })
+        elif coverage_ratio and coverage_ratio < 0.35:
+            issues.append({
+                "severity": "review",
+                "location": "Parting line",
+                "title": f"Parting line covers only {coverage_ratio * 100:.0f}% of the part outline",
+                "detail": (
+                    f"Expected ≥ 35%. The part's silhouette is split across "
+                    f"{component_count} separate edge groups, so the tool could "
+                    "not assemble one dominant loop."
+                ),
+                "evidence": f"silhouette_coverage_ratio={coverage_ratio:.4f}",
+            })
+        else:
+            issues.append({
+                "severity": "ok",
+                "location": "Parting line",
+                "title": "Parting-line candidate ready",
+                "detail": readiness.get("label", "Readiness and coverage checks passed."),
+                "evidence": f"coverage={coverage_ratio * 100:.0f}% · readiness={readiness_status}",
+            })
+
+        if _normalised_token(graph_cleanup.get("strategy")) == "greedy-fallback":
+            issues.append({
+                "severity": "review",
+                "location": "Parting line — wire search",
+                "title": "Exact path search fell back to greedy",
+                "detail": (
+                    "The wire-ordering search exceeded its exact/contracted search "
+                    "budget and used a non-backtracking greedy heuristic instead — "
+                    "the selected wire is not guaranteed to be the best available."
+                ),
+                "evidence": (
+                    f"graph_cleanup.strategy=greedy-fallback · "
+                    f"input_edge_count={graph_cleanup.get('input_edge_count', 'n/a')}"
+                ),
+            })
+
+    if override_active and isinstance(override_result, dict):
+        core_cavity_split = (override_result.get("core_cavity") or {}).get("solid_split")
+    else:
+        core_cavity_split = st.session_state.get("core_cavity_result", {}).get("solid_split")
+    if isinstance(core_cavity_split, dict):
+        split_status = core_cavity_split.get("solid_split_status")
+        if split_status == "split_ok":
+            if core_cavity_split.get("split_tool_kind") == "planar_approximation":
+                issues.append({
+                    "severity": "info",
+                    "location": "Core/cavity split",
+                    "title": "Solid split uses a planar approximation",
+                    "detail": (
+                        "The exported cavity/core solids were bisected with a flat "
+                        "plane through the parting loop's centroid, not the exact "
+                        "3-D parting surface shown above — see split_tool_kind."
+                    ),
+                    "evidence": (
+                        f"cavity={core_cavity_split.get('cavity_solid_volume_mm3', 0):.1f} mm³ · "
+                        f"core={core_cavity_split.get('core_solid_volume_mm3', 0):.1f} mm³"
+                    ),
+                })
+        elif split_status not in (None, "not_attempted", "blocked_by_parting_line"):
+            issues.append({
+                "severity": "review",
+                "location": "Core/cavity split",
+                "title": f"Solid split status: {split_status}",
+                "detail": core_cavity_split.get("failure_reason") or "The Boolean split did not succeed.",
+                "evidence": f"split_solid_count={core_cavity_split.get('split_solid_count', 0)}",
+            })
+
+    if override_active and isinstance(override_result, dict):
+        side_core_result = (override_result.get("core_cavity") or {}).get("side_core")
+    else:
+        side_core_result = st.session_state.get("core_cavity_result", {}).get("side_core")
+    if isinstance(side_core_result, dict):
+        sc_status = side_core_result.get("status")
+        if sc_status == "generated":
+            issues.append({
+                "severity": "info",
+                "location": "Side core (Stage 4)",
+                "title": (
+                    f"Side core generated — {side_core_result.get('containing_half', '?')} "
+                    "half reduced"
+                ),
+                "detail": (
+                    "First increment only (one feature, no lifter/slide/"
+                    "collapsible-core classification) — see roadmap Stage 4 §4.3."
+                ),
+                "evidence": (
+                    f"side_core_volume={side_core_result.get('side_core_volume_mm3', 0):.1f} mm³ · "
+                    f"conservation_error="
+                    f"{side_core_result.get('conservation_error', 0) * 100:.4f}%"
+                ),
+            })
+        elif sc_status not in (None, "no_feature", "not_attempted", "blocked_by_core_cavity_split"):
+            issues.append({
+                "severity": "review",
+                "location": "Side core (Stage 4)",
+                "title": f"Side core status: {sc_status}",
+                "detail": side_core_result.get("failure_reason") or "Side-core generation did not succeed.",
+                "evidence": (
+                    f"containing_half={side_core_result.get('containing_half', 'n/a')}"
+                ),
+            })
+
+    if override_active:
+        for issue in issues:
+            issue["location"] = f"{issue['location']} (override)"
+
+    issues.sort(key=lambda issue: _ISSUE_SEVERITY_ORDER.get(issue["severity"], 9))
+    return issues
+
+
+def _render_issue_summary() -> None:
+    """Layer 1 verdict view: ranked issues, ≤5 by default, rest collapsed."""
+    issues = _collect_issues()
+    if not issues:
+        return
+
+    st.subheader("Findings")
+    visible, hidden = issues[:_ISSUE_DEFAULT_VISIBLE], issues[_ISSUE_DEFAULT_VISIBLE:]
+
+    def _render_issue(issue: dict[str, Any]) -> None:
+        icon, label = _ISSUE_SEVERITY_STYLE.get(issue["severity"], ("⚪", "Unknown"))
+        st.markdown(f"**{icon} {label} — {issue['location']}: {issue['title']}**")
+        st.write(issue["detail"])
+        with st.expander("Show evidence"):
+            st.write(issue["evidence"])
+
+    for issue in visible:
+        _render_issue(issue)
+
+    if hidden:
+        with st.expander(f"Show {len(hidden)} more finding(s)"):
+            for issue in hidden:
+                _render_issue(issue)
+
+
 def _render_level1_result_summary() -> None:
     draft = st.session_state.get("draft_result", {}).get("draft")
     direction = st.session_state.get("direction_result", {}).get("direction")
@@ -2832,7 +3835,7 @@ def _render_dfm_summary_report(selected_part: str) -> None:
         st.markdown("### Draft Analysis Results")
         st.write(
             f"- Initial pull: {direction.get('initial_label', '+Z')}\n"
-            f"- Optimal pull: {direction.get('best_label', 'unknown')} {_vector_text(direction.get('best_direction'))}\n"
+            f"- Optimal pull: {_direction_label_display(direction)}\n"
             f"- Good/Marginal/Bad faces: "
             f"{optimal_draft.get('face_counts', {}).get('good', 0)}/"
             f"{optimal_draft.get('face_counts', {}).get('marginal', 0)}/"
@@ -2886,7 +3889,7 @@ def _render_dfm_summary_report(selected_part: str) -> None:
                 f"({core_cavity.get('percentages', {}).get('cavity_pct', 0)}%)\n"
                 f"- Core faces: {core_cavity.get('face_counts', {}).get('core', 0)} "
                 f"({core_cavity.get('percentages', {}).get('core_pct', 0)}%)\n"
-                f"- Pull direction: {_vector_text(core_cavity.get('pull_direction'))}"
+                f"- Pull direction: {_direction_axis_tilt_text(core_cavity.get('pull_direction'))}"
             )
         else:
             st.write("- Core/cavity classification not run yet.")
@@ -2960,6 +3963,30 @@ with left:
     )
     show_refined_parting_line = st.checkbox("Refined parting curve", value=True)
     show_raw_parting_line = st.checkbox("Raw parting wire", value=True)
+    run_solid_split = st.checkbox(
+        "Boolean solid split (Level 2)",
+        value=False,
+        help=(
+            "Runs the real cavity/core Boolean split (Stage 2). Uses a "
+            "planar-approximation splitting tool, not the exact 3-D parting "
+            "surface shown elsewhere — see split_tool_kind. Slower than "
+            "Level 1 face classification alone."
+        ),
+    )
+    run_side_core = st.checkbox(
+        "Side core / lifter (Stage 4)",
+        value=False,
+        disabled=not run_solid_split,
+        help=(
+            "Bosch criterion #5, first increment: generates ONE side-core "
+            "solid for the single highest-confidence critical undercut "
+            "feature at the current pull direction, and subtracts it from "
+            "whichever mold half contains it. Requires Boolean solid split "
+            "above. The optimal pull direction is chosen to avoid undercuts, "
+            "so this will usually report 'no_feature' there — try a manual "
+            "pull direction below to see it act on a real feature."
+        ),
+    )
     region_opacity = 0.55
     show_region_edges = True
     if include_boolean_regions:
@@ -2996,6 +4023,51 @@ with left:
     run_direction = st.button("Find Best Direction", use_container_width=True)
     run_parting_line = st.button("Detect Parting Line", use_container_width=True)
     run_core_cavity = st.button("Classify Core/Cavity", use_container_width=True)
+
+    st.subheader("PDF Report (Stage 6)")
+    st.caption(
+        "Presentation layer only -- every number in the PDF traces to a "
+        "field already computed by an analysis endpoint below. Generating "
+        "the PDF re-runs the pipeline server-side; it does not reuse "
+        "results from the tabs above."
+    )
+    report_include_solid_split = st.checkbox("Include Boolean solid split", value=True, key="report_solid_split")
+    report_include_side_core = st.checkbox(
+        "Include side core (Stage 4)", value=False, key="report_side_core",
+        disabled=not report_include_solid_split,
+    )
+    report_include_agent = st.checkbox(
+        "Include AI agent narrative (Stage 5)", value=False, key="report_agent",
+        help="Runs a real LLM call via the configured provider -- adds latency and API cost.",
+    )
+    if st.button("Generate PDF Report", key="generate_pdf_report", use_container_width=True):
+        _override_state = _direction_override_state()
+        if _override_state["active"] and _override_state["vector"]:
+            _report_use_optimal = False
+            _rdx, _rdy, _rdz = _override_state["vector"]
+        else:
+            _report_use_optimal = True
+            _rdx, _rdy, _rdz = dx, dy, dz
+        with st.spinner("Building PDF report -- re-running the full analysis pipeline..."):
+            pdf_bytes = _fetch_pdf_report(
+                selected_part,
+                use_optimal_direction=_report_use_optimal,
+                dx=_rdx, dy=_rdy, dz=_rdz,
+                include_solid_split=report_include_solid_split,
+                include_side_core=report_include_side_core,
+                include_agent_narrative=report_include_agent,
+            )
+        st.session_state["pdf_report_bytes"] = pdf_bytes
+
+    pdf_report_bytes = st.session_state.get("pdf_report_bytes")
+    if pdf_report_bytes:
+        st.download_button(
+            "Download PDF Report",
+            data=pdf_report_bytes,
+            file_name=f"{selected_part.replace('.stp', '').replace('.step', '')}_dfm_report.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 
 if reset_journey:
@@ -3072,6 +4144,8 @@ def _run_core_cavity_step() -> bool:
         include_faces=include_faces,
         include_mesh=include_mesh,
         mesh_deflection=mesh_deflection,
+        solid_split=run_solid_split,
+        generate_side_core=run_side_core,
     )
     return _store_step_result("Core/Cavity", "core_cavity_result", result)
 
@@ -3163,19 +4237,24 @@ with center:
     st.subheader("AI Mold Engineer Journey")
     st.caption(_journey_prompt())
     _render_journey_status()
+    _render_active_direction_banner()
+    _render_metric_glossary()
+    _render_issue_summary()
     _render_step_timings()
     _render_step_failures()
     _render_level1_snapshot()
     _render_direction_before_after_from_state(compact=True)
     _render_level1_result_summary()
 
-    raw_tab, draft_tab, undercut_tab, direction_tab, parting_tab, core_cavity_tab = st.tabs([
+    raw_tab, draft_tab, undercut_tab, direction_tab, parting_tab, parting_v2_tab, core_cavity_tab, agent_tab = st.tabs([
         "Raw",
         "Draft",
         "Undercuts",
         "Direction",
         "Parting Line",
+        "Parting Line v2 (experimental)",
         "Core/Cavity",
+        "AI Agent",
     ])
 
     with raw_tab:
@@ -3436,7 +4515,7 @@ with center:
             initial = direction["initial_draft"]
             st.markdown(
                 f"### 🎯 Best Mold Opening Direction: {direction.get('best_label', 'unknown')}\n"
-                f"**Vector:** `{_vector_text(best)}`  \n"
+                f"**Vector:** `{_direction_axis_tilt_text(best)}`  \n"
                 f"**Score:** `{direction.get('best_score', 0):.4f}`"
             )
             initial_undercut_result = st.session_state.get("undercut_result", {})
@@ -3663,8 +4742,10 @@ with center:
                             }
                         })
 
-            st.subheader("Top Candidates")
-            _safe_dataframe(direction["candidates"], use_container_width=True)
+            _render_candidate_diversity(direction)
+
+            with st.expander("Top Candidates (raw, all scored)"):
+                _safe_dataframe(direction["candidates"], use_container_width=True)
 
             if optimal["suggestions"]:
                 st.subheader("Suggestions For Best Direction")
@@ -3681,6 +4762,18 @@ with center:
 
             with st.expander("Direction JSON"):
                 st.json(direction)
+
+            st.divider()
+            _render_direction_override_controls(
+                selected_part,
+                include_faces=include_faces,
+                include_mesh=include_mesh,
+                include_boolean_regions=include_boolean_regions,
+                mesh_deflection=mesh_deflection,
+                solid_split=run_solid_split,
+                generate_side_core=run_side_core,
+            )
+            _render_recommended_vs_override(direction)
 
     with parting_tab:
         st.subheader("Main Parting Line")
@@ -3711,11 +4804,32 @@ with center:
                         or direction_payload.get("undercuts_initial_direction")
                     )
             initial_counts = _undercut_counts(initial_undercuts)
+            graph_cleanup_strategy = str(
+                refinement.get("graph_cleanup", {}).get("strategy", "unknown")
+            )
+            coverage_ratio = _safe_float(parting.get("silhouette_coverage_ratio", 0.0))
+            # These two chips are the flagship fix from roadmap Stage 3 §3.3:
+            # graph_cleanup.strategy was previously visible only inside a
+            # conditionally-collapsed "Graph Cleanup Evidence" expander below
+            # — exposing this alone would have caught Bug B immediately.
             _render_quality_indicators([
                 (
                     "Readiness",
                     str(readiness.get("status", "unknown")).title(),
                     _tone_for_quality_level(readiness.get("status")),
+                    "readiness",
+                ),
+                (
+                    "Search strategy",
+                    graph_cleanup_strategy,
+                    "bad" if graph_cleanup_strategy == "greedy-fallback" else "good",
+                    "graph_cleanup_strategy",
+                ),
+                (
+                    "Silhouette coverage",
+                    f"{coverage_ratio * 100:.0f}%",
+                    "good" if coverage_ratio >= 0.35 else "warning",
+                    "silhouette_coverage_ratio",
                 ),
                 (
                     "Report use",
@@ -3811,7 +4925,7 @@ with center:
             pull = parting.get("pull_direction", [0.0, 0.0, 1.0])
             st.write(
                 f"Pull direction source: `{parting.get('pull_direction_source', 'unknown')}` "
-                f"= ({pull[0]:+.3f}, {pull[1]:+.3f}, {pull[2]:+.3f})"
+                f"= {_direction_axis_tilt_text(pull)}"
             )
             st.write(
                 f"Refinement: `{refinement.get('quality', 'unknown')}` "
@@ -3979,6 +5093,140 @@ with center:
             with st.expander("Parting Line JSON"):
                 st.json(parting)
 
+    with parting_v2_tab:
+        st.subheader("Parting Line v2 (experimental)")
+        st.info(
+            "Clean-room Level 0-2 engine (Track A/B -> stitching -> graph -> "
+            "2-core -> candidate generation -> H0-H7 -> ranking). Not the "
+            "default engine yet -- see docs/IMPLEMENTATION_STATUS.md. "
+            "Direction is always manually supplied here: this engine never "
+            "calls the direction optimizer. Copy in a vector from the "
+            "Direction tab if you want to inspect its suggestion, but note "
+            "that suggestion is not validated evidence for v2."
+        )
+
+        dcol1, dcol2, dcol3 = st.columns(3)
+        with dcol1:
+            pv2_dx = st.number_input("dx", value=0.0, step=0.1, format="%.4f", key="pv2_dx")
+        with dcol2:
+            pv2_dy = st.number_input("dy", value=0.0, step=0.1, format="%.4f", key="pv2_dy")
+        with dcol3:
+            pv2_dz = st.number_input("dz", value=1.0, step=0.1, format="%.4f", key="pv2_dz")
+
+        if st.button("Run v2 analysis", key="pv2_run_button"):
+            if abs(pv2_dx) + abs(pv2_dy) + abs(pv2_dz) < 1e-9:
+                st.error("Direction vector must be nonzero.")
+            else:
+                with st.spinner("Running Track A/B -> graph -> H0-H7 (v2)..."):
+                    try:
+                        pv2_response = requests.get(
+                            f"{BACKEND_URL}/parts/{selected_part}/parting-line-v2",
+                            params={"dx": pv2_dx, "dy": pv2_dy, "dz": pv2_dz},
+                            timeout=120,
+                        )
+                        pv2_response.raise_for_status()
+                        st.session_state["parting_line_v2_result"] = pv2_response.json()
+                    except requests.RequestException as exc:
+                        st.error(f"v2 analysis failed: {exc}")
+
+        pv2_result = st.session_state.get("parting_line_v2_result")
+        if pv2_result is None:
+            st.caption("Set a direction above and click \"Run v2 analysis\".")
+        else:
+            outcome = pv2_result.get("outcome", "unknown")
+            outcome_tone = {
+                "feasible": "good",
+                "no_feasible_candidate": "bad",
+                "referred_to_side_action": "warn",
+            }.get(outcome, "unknown")
+            _render_quality_indicators([
+                ("Outcome", outcome.replace("_", " ").title(), outcome_tone),
+                ("Candidates generated", pv2_result.get("candidate_count", 0), "info"),
+                (
+                    "Direction source",
+                    pv2_result.get("pull_direction", {}).get("source", "unknown"),
+                    "info",
+                ),
+            ])
+
+            track_a = pv2_result.get("track_a", {})
+            track_b = pv2_result.get("track_b", {})
+            reduction = pv2_result.get("reduction", {})
+            _render_summary_grid([
+                ("Track A segments", track_a.get("segment_count", 0), "Sharp-edge silhouette"),
+                ("Track B segments", track_b.get("segment_count", 0), "Face-interior silhouette"),
+                ("Graph nodes (post 2-core)", reduction.get("nodes_after", 0), "Welded points"),
+                ("Graph edges (post 2-core)", reduction.get("edges_after", 0), "Curve segments"),
+                ("Cyclomatic number", reduction.get("cyclomatic_number", 0), "Independent loops available"),
+            ])
+
+            rejection_summary = pv2_result.get("rejection_summary", {})
+            if rejection_summary:
+                st.markdown("**Rejection breakdown (why candidates failed)**")
+                _safe_dataframe(
+                    [{"gate": gate, "candidates_rejected": count} for gate, count in rejection_summary.items()],
+                    use_container_width=True,
+                )
+
+            selected = pv2_result.get("selected")
+            if selected is not None:
+                st.success(
+                    f"Selected candidate {selected.get('candidate_id')}: "
+                    f"{selected.get('segment_count')} segments, "
+                    f"discovered by {selected.get('discovered_by')}."
+                )
+                score = selected.get("score") or {}
+                if score:
+                    _render_summary_grid([
+                        ("Coverage", f"{score.get('coverage', 0):.1%}" if score.get("coverage") is not None else "n/a", "Of projected part extent"),
+                    ])
+                regions = pv2_result.get("regions")
+                if regions:
+                    _render_summary_grid([
+                        ("Cavity faces", regions.get("cavity_face_count", 0), "Graph-connectivity based"),
+                        ("Core faces", regions.get("core_face_count", 0), "Graph-connectivity based"),
+                        (
+                            "Ambiguous/split faces",
+                            len(regions.get("inconsistent_face_ids", []) or []),
+                            "Reported, not hidden",
+                        ),
+                    ])
+                    _render_summary_grid([
+                        ("Cavity area", f"{regions.get('cavity_area_mm2', 0):.1f} mm²", ""),
+                        ("Core area", f"{regions.get('core_area_mm2', 0):.1f} mm²", ""),
+                        (
+                            "Ambiguous area fraction",
+                            f"{regions.get('ambiguous_area_fraction', 0):.1%}",
+                            "Genuinely split/inconsistent faces",
+                        ),
+                    ])
+            else:
+                st.warning(
+                    "No feasible candidate at this direction. This may mean the direction "
+                    "is not moldable, or that a genuine global loop exists but requires "
+                    "further investigation -- see docs/DECISIONS_AND_ALGORITHMS.md for the "
+                    "ongoing Part3 feasibility investigation. The gates were not loosened to "
+                    "force a result."
+                )
+
+            line_paths_v2 = [pv2_result["parting_line_path"]] if pv2_result.get("parting_line_path") else []
+            if "display_mesh" in pv2_result:
+                _mesh_payload_v2 = _hydrate_mesh(pv2_result.get("display_mesh"))
+                shown_v2 = _show_mesh(
+                    _mesh_payload_v2,
+                    color_key="__none__",
+                    line_paths=line_paths_v2,
+                    viewer_key=f"parting-line-v2-{selected_part}-{outcome}-{len(line_paths_v2)}",
+                )
+                if not shown_v2:
+                    _render_summary_grid([
+                        ("Mesh Points", _mesh_payload_v2.get("point_count", 0), "Fallback display"),
+                        ("Mesh Triangles", _mesh_payload_v2.get("triangle_count", 0), "Fallback display"),
+                    ])
+
+            with st.expander("Parting Line v2 JSON"):
+                st.json(pv2_result)
+
     with core_cavity_tab:
         st.subheader("Core/Cavity Classification")
         result = st.session_state.get("core_cavity_result")
@@ -4006,10 +5254,95 @@ with center:
                 f"{percentages.get('core_pct', 0)}%",
             )
             c3.metric("Parting Faces", counts.get("parting", 0))
-            st.write(f"Pull direction used: `{_vector_text(pull)}`")
+            st.write(f"Pull direction used: `{_direction_axis_tilt_text(pull)}`")
             st.caption(
                 "Core/cavity classification uses the optimal mold direction found in Step 4."
             )
+
+            solid_split = result.get("solid_split")
+            if isinstance(solid_split, dict):
+                st.subheader("Boolean Solid Split (Level 2)")
+                split_status = solid_split.get("solid_split_status", "unknown")
+                tool_kind = solid_split.get("split_tool_kind", "none")
+                _render_quality_indicators([
+                    (
+                        "Split status",
+                        split_status,
+                        "good" if split_status == "split_ok" else "bad",
+                    ),
+                    ("Solids", solid_split.get("split_solid_count", 0), "neutral"),
+                    (
+                        "Splitting tool",
+                        tool_kind,
+                        "info" if tool_kind == "planar_approximation" else "neutral",
+                        "split_tool_kind",
+                    ),
+                ])
+                if tool_kind == "planar_approximation":
+                    st.info(
+                        "The cavity/core solids are bisected with a flat plane "
+                        "through the parting loop's centroid, not the exact 3-D "
+                        "parting surface shown in the Parting Line tab — a real, "
+                        "labeled approximation, not a measurement of that curve."
+                    )
+                if split_status == "split_ok":
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.metric("Cavity volume", f"{solid_split.get('cavity_solid_volume_mm3', 0):.1f} mm³")
+                    sc2.metric("Core volume", f"{solid_split.get('core_solid_volume_mm3', 0):.1f} mm³")
+                    sc3.metric("Blank volume", f"{solid_split.get('blank_volume_mm3', 0):.1f} mm³")
+                elif solid_split.get("failure_reason"):
+                    st.warning(solid_split["failure_reason"])
+                with st.expander("Solid Split JSON"):
+                    st.json(solid_split)
+
+            side_core_data = result.get("side_core")
+            if isinstance(side_core_data, dict):
+                st.subheader("Side Core / Lifter (Stage 4 — Bosch criterion #5)")
+                st.caption(
+                    "First increment only: one side core for the single "
+                    "highest-confidence critical undercut feature at this "
+                    "pull direction. Does not decide lifter vs. slide vs. "
+                    "collapsible-core mechanism — see docs/ARCHITECTURE_"
+                    "ROADMAP.md Stage 4 §4.3 Q4."
+                )
+                sc_status = side_core_data.get("status", "unknown")
+                _render_quality_indicators([
+                    (
+                        "Side core status",
+                        sc_status,
+                        "good" if sc_status == "generated" else (
+                            "neutral" if sc_status == "no_feature" else "bad"
+                        ),
+                    ),
+                ])
+                if sc_status == "generated":
+                    sd1, sd2, sd3 = st.columns(3)
+                    sd1.metric("Containing half", side_core_data.get("containing_half", "—"))
+                    sd2.metric(
+                        "Side core volume",
+                        f"{side_core_data.get('side_core_volume_mm3', 0):.1f} mm³",
+                    )
+                    sd3.metric(
+                        "Reduced half volume",
+                        f"{side_core_data.get('reduced_half_volume_mm3', 0):.1f} mm³",
+                    )
+                    st.caption(
+                        f"Volume conservation error: "
+                        f"{side_core_data.get('conservation_error', 0) * 100:.4f}%"
+                    )
+                elif sc_status == "no_feature":
+                    st.info(
+                        "No undercut features at this pull direction — nothing "
+                        "for a side core to act on. This is expected at the "
+                        "optimizer's recommended direction, which specifically "
+                        "searches for undercut-free directions. Try a manual "
+                        "override direction below to see a real side core."
+                    )
+                elif side_core_data.get("failure_reason"):
+                    st.warning(side_core_data["failure_reason"])
+                with st.expander("Side Core JSON"):
+                    st.json(side_core_data)
+
             if include_mesh and "display_mesh" in result:
                 _mesh_payload = _hydrate_mesh(result.get("display_mesh"))
                 shown = _show_mesh(
@@ -4026,5 +5359,101 @@ with center:
                     })
             with st.expander("Core/Cavity JSON"):
                 st.json(core_cavity)
+
+    with agent_tab:
+        st.subheader("AI DfM Agent (Stage 5)")
+        st.caption(
+            "Provider-agnostic tool-calling agent that drives the same "
+            "deterministic geometry engine used elsewhere in this app -- it "
+            "never invents a measurement, only calls tools and narrates "
+            "what they returned. See backend/agent/prompts.py for the exact "
+            "honesty constraints given to the model."
+        )
+
+        agent_providers_info = st.session_state.get("agent_providers_info")
+        if agent_providers_info is None:
+            agent_providers_info = _backend_get(
+                "/agent/providers", params=None, timeout=15,
+                failure_label="Could not list agent providers",
+            )
+            st.session_state["agent_providers_info"] = agent_providers_info
+
+        available_providers = ["gemini", "anthropic", "openai", "grok"]
+        default_provider = "gemini"
+        if agent_providers_info:
+            available_providers = [
+                name for name in ["gemini", "anthropic", "openai", "grok"]
+                if agent_providers_info.get("available", {}).get(name)
+            ] or available_providers
+            default_provider = agent_providers_info.get("configured_provider", "gemini")
+
+        provider_choice = st.selectbox(
+            "Provider",
+            available_providers,
+            index=available_providers.index(default_provider)
+            if default_provider in available_providers else 0,
+            help="Overrides config.yaml's agent.provider for this run only.",
+        )
+        agent_query = st.text_input(
+            "Specific focus (optional)",
+            placeholder="e.g. Focus on undercuts requiring side actions.",
+        )
+
+        if st.button("Run AI DfM Review", key="run_agent_review"):
+            with st.spinner(f"Running the {provider_choice} agent -- calling geometry tools..."):
+                agent_result = _fetch_agent_analysis(
+                    selected_part, query=agent_query or None, provider=provider_choice,
+                )
+            st.session_state["agent_result"] = agent_result
+
+        agent_result = st.session_state.get("agent_result")
+        if agent_result is None:
+            st.info("Click \"Run AI DfM Review\" to have the agent call the geometry tools and report findings.")
+        else:
+            report = agent_result.get("report", {})
+            manufacturability = report.get("overall_manufacturability", "unknown")
+            _manufacturability_tone = {
+                "good": "good", "acceptable": "info", "problematic": "review", "not_manufacturable": "bad",
+            }.get(manufacturability, "neutral")
+            _render_quality_indicators([
+                ("Manufacturability", manufacturability, _manufacturability_tone),
+                ("Tools called", len(report.get("tools_called", [])), "neutral"),
+                ("Findings", len(report.get("findings", [])), "neutral"),
+            ])
+            st.write(
+                f"Pull direction used: `{_direction_axis_tilt_text(report.get('pull_direction', [0, 0, 1]))}` "
+                f"({report.get('pull_direction_source', 'unknown')})"
+            )
+            st.markdown(f"**Summary**: {report.get('summary', '')}")
+
+            for warning in report.get("analysis_warnings", []):
+                st.warning(warning)
+
+            _AGENT_SEVERITY_STYLE = {
+                "critical": ("🔴", "bad"), "high": ("🟠", "review"),
+                "medium": ("🟡", "info"), "low": ("🔵", "neutral"),
+            }
+            for finding in report.get("findings", []):
+                icon, _tone = _AGENT_SEVERITY_STYLE.get(finding.get("severity"), ("⚪", "neutral"))
+                with st.expander(f"{icon} [{finding.get('severity', '?')}] {finding.get('title', 'Untitled finding')}"):
+                    st.write(finding.get("description", ""))
+                    ev_source = finding.get("evidence_source", "unknown")
+                    st.caption(
+                        f"Category: {finding.get('category', '?')} · "
+                        f"Evidence: {ev_source} · "
+                        f"Confidence: {finding.get('confidence', 0):.0%}"
+                    )
+                    if finding.get("affected_face_ids"):
+                        st.write(f"Affected faces: {finding['affected_face_ids']}")
+                    if finding.get("measured_values"):
+                        st.write("Measured values:", finding["measured_values"])
+                    st.markdown(f"**Recommendation**: {finding.get('recommendation', '')}")
+                    if finding.get("estimated_tooling_impact"):
+                        st.caption(f"Tooling impact: {finding['estimated_tooling_impact']}")
+
+            with st.expander("Tools called (audit trail)"):
+                st.json(report.get("tools_called", []))
+            with st.expander("Full report JSON"):
+                st.json(report)
 
     _render_dfm_summary_report(selected_part)

@@ -1,0 +1,624 @@
+{
+  "Part1": {
+    "+X": {
+      "direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "near_zero_face_count": 83,
+      "near_zero_area_mm2": 1235.681,
+      "near_zero_area_pct": 42.94,
+      "near_zero_component_count": 15,
+      "largest_component_face_count": 39,
+      "largest_component_area_mm2": 973.282,
+      "largest_component_area_fraction_of_near_zero": 0.7876,
+      "component_face_counts_sorted": [
+        39,
+        13,
+        13,
+        7,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "-X": {
+      "direction": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "near_zero_face_count": 83,
+      "near_zero_area_mm2": 1235.681,
+      "near_zero_area_pct": 42.94,
+      "near_zero_component_count": 15,
+      "largest_component_face_count": 39,
+      "largest_component_area_mm2": 973.282,
+      "largest_component_area_fraction_of_near_zero": 0.7876,
+      "component_face_counts_sorted": [
+        39,
+        13,
+        13,
+        7,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "+Y": {
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "near_zero_face_count": 93,
+      "near_zero_area_mm2": 1253.81,
+      "near_zero_area_pct": 43.57,
+      "near_zero_component_count": 11,
+      "largest_component_face_count": 59,
+      "largest_component_area_mm2": 1041.711,
+      "largest_component_area_fraction_of_near_zero": 0.8308,
+      "component_face_counts_sorted": [
+        59,
+        13,
+        13,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "-Y": {
+      "direction": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "near_zero_face_count": 93,
+      "near_zero_area_mm2": 1253.81,
+      "near_zero_area_pct": 43.57,
+      "near_zero_component_count": 11,
+      "largest_component_face_count": 59,
+      "largest_component_area_mm2": 1041.711,
+      "largest_component_area_fraction_of_near_zero": 0.8308,
+      "component_face_counts_sorted": [
+        59,
+        13,
+        13,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "+Z": {
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "near_zero_face_count": 78,
+      "near_zero_area_mm2": 2063.12,
+      "near_zero_area_pct": 71.7,
+      "near_zero_component_count": 7,
+      "largest_component_face_count": 60,
+      "largest_component_area_mm2": 2039.13,
+      "largest_component_area_fraction_of_near_zero": 0.9884,
+      "component_face_counts_sorted": [
+        60,
+        8,
+        4,
+        2,
+        2,
+        1,
+        1
+      ]
+    },
+    "-Z": {
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "near_zero_face_count": 78,
+      "near_zero_area_mm2": 2063.12,
+      "near_zero_area_pct": 71.7,
+      "near_zero_component_count": 7,
+      "largest_component_face_count": 60,
+      "largest_component_area_mm2": 2039.13,
+      "largest_component_area_fraction_of_near_zero": 0.9884,
+      "component_face_counts_sorted": [
+        60,
+        8,
+        4,
+        2,
+        2,
+        1,
+        1
+      ]
+    },
+    "(1,1,0)": {
+      "direction": [
+        0.7071067811865475,
+        0.7071067811865475,
+        0.0
+      ],
+      "near_zero_face_count": 69,
+      "near_zero_area_mm2": 931.942,
+      "near_zero_area_pct": 32.39,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 49,
+      "largest_component_area_mm2": 824.407,
+      "largest_component_area_fraction_of_near_zero": 0.8846,
+      "component_face_counts_sorted": [
+        49,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,-1,0)": {
+      "direction": [
+        0.7071067811865475,
+        -0.7071067811865475,
+        0.0
+      ],
+      "near_zero_face_count": 69,
+      "near_zero_area_mm2": 931.942,
+      "near_zero_area_pct": 32.39,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 49,
+      "largest_component_area_mm2": 824.407,
+      "largest_component_area_fraction_of_near_zero": 0.8846,
+      "component_face_counts_sorted": [
+        49,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,0,1)": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        0.7071067811865475
+      ],
+      "near_zero_face_count": 34,
+      "near_zero_area_mm2": 659.235,
+      "near_zero_area_pct": 22.91,
+      "near_zero_component_count": 22,
+      "largest_component_face_count": 4,
+      "largest_component_area_mm2": 157.246,
+      "largest_component_area_fraction_of_near_zero": 0.2385,
+      "component_face_counts_sorted": [
+        4,
+        4,
+        3,
+        3,
+        3,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,0,-1)": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        -0.7071067811865475
+      ],
+      "near_zero_face_count": 34,
+      "near_zero_area_mm2": 659.235,
+      "near_zero_area_pct": 22.91,
+      "near_zero_component_count": 22,
+      "largest_component_face_count": 4,
+      "largest_component_area_mm2": 157.246,
+      "largest_component_area_fraction_of_near_zero": 0.2385,
+      "component_face_counts_sorted": [
+        4,
+        4,
+        3,
+        3,
+        3,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(0,1,1)": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        0.7071067811865475
+      ],
+      "near_zero_face_count": 44,
+      "near_zero_area_mm2": 677.364,
+      "near_zero_area_pct": 23.54,
+      "near_zero_component_count": 26,
+      "largest_component_face_count": 4,
+      "largest_component_area_mm2": 157.246,
+      "largest_component_area_fraction_of_near_zero": 0.2321,
+      "component_face_counts_sorted": [
+        4,
+        4,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        1
+      ]
+    },
+    "(0,1,-1)": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        -0.7071067811865475
+      ],
+      "near_zero_face_count": 44,
+      "near_zero_area_mm2": 677.364,
+      "near_zero_area_pct": 23.54,
+      "near_zero_component_count": 26,
+      "largest_component_face_count": 4,
+      "largest_component_area_mm2": 157.246,
+      "largest_component_area_fraction_of_near_zero": 0.2321,
+      "component_face_counts_sorted": [
+        4,
+        4,
+        3,
+        3,
+        3,
+        3,
+        3,
+        2,
+        2,
+        1
+      ]
+    }
+  },
+  "Part3": {
+    "+X": {
+      "direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "near_zero_face_count": 43,
+      "near_zero_area_mm2": 1915.982,
+      "near_zero_area_pct": 25.34,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 23,
+      "largest_component_area_mm2": 753.982,
+      "largest_component_area_fraction_of_near_zero": 0.3935,
+      "component_face_counts_sorted": [
+        23,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "-X": {
+      "direction": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "near_zero_face_count": 43,
+      "near_zero_area_mm2": 1915.982,
+      "near_zero_area_pct": 25.34,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 23,
+      "largest_component_area_mm2": 753.982,
+      "largest_component_area_fraction_of_near_zero": 0.3935,
+      "component_face_counts_sorted": [
+        23,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "+Y": {
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "near_zero_face_count": 54,
+      "near_zero_area_mm2": 4062.743,
+      "near_zero_area_pct": 53.73,
+      "near_zero_component_count": 24,
+      "largest_component_face_count": 31,
+      "largest_component_area_mm2": 3482.955,
+      "largest_component_area_fraction_of_near_zero": 0.8573,
+      "component_face_counts_sorted": [
+        31,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "-Y": {
+      "direction": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "near_zero_face_count": 54,
+      "near_zero_area_mm2": 4062.743,
+      "near_zero_area_pct": 53.73,
+      "near_zero_component_count": 24,
+      "largest_component_face_count": 31,
+      "largest_component_area_mm2": 3482.955,
+      "largest_component_area_fraction_of_near_zero": 0.8573,
+      "component_face_counts_sorted": [
+        31,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "+Z": {
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "near_zero_face_count": 97,
+      "near_zero_area_mm2": 4245.973,
+      "near_zero_area_pct": 56.15,
+      "near_zero_component_count": 16,
+      "largest_component_face_count": 34,
+      "largest_component_area_mm2": 1432.566,
+      "largest_component_area_fraction_of_near_zero": 0.3374,
+      "component_face_counts_sorted": [
+        34,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "-Z": {
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "near_zero_face_count": 97,
+      "near_zero_area_mm2": 4245.973,
+      "near_zero_area_pct": 56.15,
+      "near_zero_component_count": 16,
+      "largest_component_face_count": 34,
+      "largest_component_area_mm2": 1432.566,
+      "largest_component_area_fraction_of_near_zero": 0.3374,
+      "component_face_counts_sorted": [
+        34,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    "(1,1,0)": {
+      "direction": [
+        0.7071067811865475,
+        0.7071067811865475,
+        0.0
+      ],
+      "near_zero_face_count": 39,
+      "near_zero_area_mm2": 1894.063,
+      "near_zero_area_pct": 25.05,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 19,
+      "largest_component_area_mm2": 753.982,
+      "largest_component_area_fraction_of_near_zero": 0.3981,
+      "component_face_counts_sorted": [
+        19,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,-1,0)": {
+      "direction": [
+        0.7071067811865475,
+        -0.7071067811865475,
+        0.0
+      ],
+      "near_zero_face_count": 39,
+      "near_zero_area_mm2": 1894.063,
+      "near_zero_area_pct": 25.05,
+      "near_zero_component_count": 21,
+      "largest_component_face_count": 19,
+      "largest_component_area_mm2": 753.982,
+      "largest_component_area_fraction_of_near_zero": 0.3981,
+      "component_face_counts_sorted": [
+        19,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,0,1)": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        0.7071067811865475
+      ],
+      "near_zero_face_count": 24,
+      "near_zero_area_mm2": 326.682,
+      "near_zero_area_pct": 4.32,
+      "near_zero_component_count": 24,
+      "largest_component_face_count": 1,
+      "largest_component_area_mm2": 155.501,
+      "largest_component_area_fraction_of_near_zero": 0.476,
+      "component_face_counts_sorted": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(1,0,-1)": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        -0.7071067811865475
+      ],
+      "near_zero_face_count": 24,
+      "near_zero_area_mm2": 198.766,
+      "near_zero_area_pct": 2.63,
+      "near_zero_component_count": 24,
+      "largest_component_face_count": 1,
+      "largest_component_area_mm2": 57.757,
+      "largest_component_area_fraction_of_near_zero": 0.2906,
+      "component_face_counts_sorted": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(0,1,1)": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        0.7071067811865475
+      ],
+      "near_zero_face_count": 28,
+      "near_zero_area_mm2": 1860.79,
+      "near_zero_area_pct": 24.61,
+      "near_zero_component_count": 28,
+      "largest_component_face_count": 1,
+      "largest_component_area_mm2": 1432.566,
+      "largest_component_area_fraction_of_near_zero": 0.7699,
+      "component_face_counts_sorted": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "(0,1,-1)": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        -0.7071067811865475
+      ],
+      "near_zero_face_count": 28,
+      "near_zero_area_mm2": 1860.79,
+      "near_zero_area_pct": 24.61,
+      "near_zero_component_count": 28,
+      "largest_component_face_count": 1,
+      "largest_component_area_mm2": 1432.566,
+      "largest_component_area_fraction_of_near_zero": 0.7699,
+      "component_face_counts_sorted": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  }
+}

@@ -6,7 +6,8 @@ planned for later phases.
 
 ## Current Level 1 Build
 
-The current build supports a complete Level 1 analysis flow for `Part1.stp`:
+The current build supports a complete Level 1 analysis flow for both
+`Part1.stp` and `Part3.stp`:
 
 1. Load STEP B-Rep geometry through pythonOCC.
 2. Extract solids, faces, edges, vertices, topology, face normals, surface types,
@@ -31,6 +32,36 @@ The current build supports a complete Level 1 analysis flow for `Part1.stp`:
     refine/smooth it, display it as an overlay in Streamlit, and report
     readiness/diagnostic-gate status through validation/performance harnesses.
 
+## Current Level 2 Build (partial)
+
+Beyond Level 1, the build also supports:
+
+1. Guaranteed loop closure and parting-surface generation (PCA planar
+   extrusion, `BRepFill_Filling` fallback) from the selected parting-line
+   candidate.
+2. Real Boolean core/cavity solid split (`split_core_cavity_solids()`),
+   verified `split_ok` with exactly 2 solids on both real demo parts,
+   classified by pull-direction sign. The Boolean splitting tool is a
+   separate, labeled planar approximation
+   (`build_planar_split_tool()`/`split_tool_kind="planar_approximation"`),
+   not the surface from (1) above — that real 3-D `BRepFill_Filling` patch
+   is confirmed topologically invalid on both parts (see CHANGELOG.md
+   "Stage 2b", 2026-07-28) and cannot currently be used as a Boolean tool.
+3. AP214 STEP export of the resulting mold halves (`export_mold_halves()`,
+   `POST /parts/{filename}/export/mold-halves`), verified to reload with
+   exactly 2 solids on both real demo parts.
+4. Side-core generation (Bosch criterion #5, first increment,
+   `backend/geometry/side_core.py`): one side-core solid for the single
+   highest-confidence critical undercut feature, Boolean-subtracted from its
+   containing mold half, exported as a third solid in the same AP214 file.
+   Verified 3-solid STEP export/reload with conserved volumes on both real
+   demo parts. Grouped/multi-feature generation is not implemented.
+
+This is face/solid-level Level 2 work, not full mold-design validation —
+see Known Limitations below, and `CHANGELOG.md`'s Bug H/H-2/H-3 entries for
+how selection quality on fragmented-silhouette parts (`Part3.stp`) was
+measured and improved.
+
 ## Implemented Modules
 
 | Module | Status | Notes |
@@ -45,9 +76,12 @@ The current build supports a complete Level 1 analysis flow for `Part1.stp`:
 | `backend/geometry/parting_line.py` | Foundation implemented | Nee-style adjacent-normal silhouette and near-parting edge candidates, connected components, ordered wire construction, projection-aware loop selection, undercut-conflict scoring, and Hou-inspired graph cleanup/display smoothing; full Hou global optimization still planned. |
 | `backend/validation/part_validation.py` | Implemented | STEP smoke validation, topology checks, draft/undercut/direction checks, and parting-line readiness reporting. |
 | `backend/validation/performance_profile.py` | Implemented | Pipeline timing budgets for load, display mesh, draft, undercuts, direction search, and parting-line readiness. |
-| `backend/geometry/core_cavity.py` | Not implemented yet | Planned Level 2 item after parting line is stable. |
-| `backend/agent/dfm_agent.py` | Not implemented yet | Current UI uses deterministic geometry outputs and explanations; LangChain layer is planned. |
-| `backend/agent/tools.py` | Not implemented yet | Planned wrapper layer for LangChain tool-calling. |
+| `backend/geometry/core_cavity.py` | Implemented, verified end-to-end | Grown from face-classification-only (139 lines) to a real Boolean solid split: oversized mold blank via `BRepPrimAPI_MakeBox`, `BRepAlgoAPI_Cut` against the part, `BRepAlgoAPI_Splitter` against a labeled planar-approximation tool (`build_planar_split_tool()`) → 2 solids, classified cavity/core by centroid-offset sign along the pull direction. `export_mold_halves()` writes them to AP214 STEP via `STEPControl_Writer`. Both stages report structured failure reasons rather than raising. Verified `split_ok` + reloadable 2-solid STEP export on both `Part1.stp` and `Part3.stp` (Stage 2b, 2026-07-28). |
+| `backend/geometry/side_core.py` | First increment implemented, verified end-to-end | Bosch criterion #5. Generates ONE side-core solid for the single highest-confidence critical undercut feature: sweeps a planar proxy of its face footprint along its `release_direction`, Boolean-subtracts it from whichever mold half contains it, exports as a third AP214 solid alongside cavity/core. Verified 3-solid STEP export/reload with conserved volumes (<0.001% error) on both `Part1.stp` and `Part3.stp` (Stage 4, 2026-07-28). Grouped/multi-feature generation and lifter-vs-slide-vs-collapsible-core classification are explicitly out of scope — see `docs/ARCHITECTURE_ROADMAP.md` Stage 4 §4.3/§4.6. |
+| `backend/agent/dfm_agent.py` | Implemented, verified end-to-end | Provider-agnostic tool-calling orchestration loop (NOT LangChain — calls each provider's native SDK directly via `backend/agent/providers.py`). Verified live against real `Part1.stp` through Gemini: real tool calls, a schema-valid `DfMReport` citing a genuine measured finding (face 232, 1.075°/1.5° draft). `tools_called`/`pull_direction`/`pull_direction_source` are tracked mechanically, never model-reported. |
+| `backend/agent/tools.py` | Implemented, verified end-to-end | 6 tools wrapping `analyze_draft`/`detect_undercuts`/`optimize_mold_direction`/`detect_parting_line_candidates`/`classify_core_cavity`/part loading. Never returns OCC handles, always `mutate=False`, truncates face-ID lists, never raises (structured `{"status":"error",...}` instead) — all four verified against real Part1.stp geometry. |
+| `backend/agent/providers.py` / `schemas.py` / `prompts.py` | Implemented | `LLMProvider` protocol + Gemini (live-verified)/Anthropic/OpenAI/Grok adapters; pydantic `DfMReport`/`DfMFinding` with `evidence_source`; system prompt enforcing this project's own honesty rules. Anthropic/OpenAI/Grok built from verified real SDK signatures and unit-tested with mocks, not live-tested (no API key available for those three). |
+| `backend/report/pdf_export.py` / `templates.py` | Implemented, verified end-to-end | Pure presentation layer: takes the same `.to_dict()` payloads every analysis endpoint returns and lays them out via reportlab's Platypus — no recomputation. Aggregates every warning/degraded-confidence flag from every source into a top-of-report "Warnings" section. Verified on real `Part1.stp`/`Part3.stp` and via the live `POST /parts/{filename}/export/report` endpoint + frontend button. |
 
 ## Research Fidelity
 
@@ -143,16 +177,29 @@ Planned:
 - Final fully optimized and visualized parting line generation is not available yet.
 - Undercut-aware parting-line conflict scoring is still an engineering
   heuristic, not an exact proof that a line is mold-safe.
-- Core/cavity extraction is not available yet.
-- The LangChain AI agent layer is not available yet.
-- PDF report export is not available yet.
+- Core/cavity real solid split and AP214 mold-half STEP export are
+  implemented (`backend/geometry/core_cavity.py`), but on parts whose
+  parting surface is fragmented (e.g. `Part3.stp`'s silhouette is split
+  across many disconnected B-Rep components) the split can fail or the
+  resulting solids can be lower quality than on a clean single-loop part.
+  Not a substitute for a full mold-design review.
+- The AI agent layer (`backend/agent/`) is implemented and live-verified
+  against Gemini (not LangChain — a provider-agnostic layer calling each
+  provider's native SDK directly). Anthropic/OpenAI/Grok are structurally
+  verified, not yet live-tested.
+- PDF report export (`backend/report/`) is implemented and verified
+  end-to-end — a pure presentation layer over already-computed analysis
+  results, no new computation. Screenshot embedding and AI agent narrative
+  inclusion are both opt-in.
 - Boolean refinement is selective, not exhaustive across every candidate.
 - Undercut depth is still an engineering estimate, although it now prefers
   Boolean geometry evidence when available.
 - Internal/external feature typing is rule-based and may misclassify complex
   interacting or nested geometry.
-- UI quality depends on PyVista, VTK, stpyvista, and an Xvfb-capable Docker
-  runtime.
+- The interactive Plotly viewer is used on both macOS (`sys.platform ==
+  "darwin"`) and Docker (`DFM_FORCE_PLOTLY=1` in `docker-compose.yml`), so
+  both environments now render identically; a PyVista/VTK/stpyvista/Xvfb
+  fallback remains for non-Plotly environments.
 
 ## Graceful Degradation
 
@@ -194,9 +241,9 @@ python -m backend.validation.part_validation --json
 
 Current workspace status:
 
-- `Part1.stp` is present in `data/parts`.
-- `Part2.stp` is not present yet, so the harness reports it in
-  `missing_expected_files`.
+- `Part1.stp` and `Part3.stp` are both present in `data/parts` and both
+  validated end to end (Level 1 flow plus core/cavity solid split and
+  mold-half STEP export).
 
 For a deeper Docker/conda validation pass with the full direction optimizer:
 
@@ -245,9 +292,20 @@ python -m backend.validation.performance_profile \
 
 ## Next Implementation Phases
 
-1. Validate current Level 1 flow on `Part2.stp` when available.
-2. Capture Docker/conda validation and performance results for `Part1.stp`.
-3. Implement full Hou-style parting-line optimization and final visualization polish.
-4. Implement Level 2 core/cavity classification and extraction.
-5. Add LangChain tool-calling agent using the deterministic geometry outputs.
-6. Add PDF DFM report export with snapshots and annotations.
+1. Implement full Hou-style parting-line optimization and final visualization polish.
+2. Improve core/cavity solid-split robustness on parts with fragmented
+   silhouettes (see Bug H-2/H-3 in `CHANGELOG.md` — ring bridging now
+   produces a genuinely closeable loop on `Part3.stp`, but the split itself
+   isn't yet re-verified against the newest parting-line output).
+3. Generalize side-core/lifter generation (`backend/geometry/side_core.py`,
+   Bosch criterion #5) beyond its current first-increment scope: grouped/
+   multi-feature side cores, and lifter-vs-slide-vs-collapsible-core
+   mechanism classification (both explicitly deferred — see
+   `docs/ARCHITECTURE_ROADMAP.md` Stage 4 §4.3/§4.6).
+4. Add a streaming `/agent/chat` endpoint (the agent layer's `/agent/analyze`
+   single-shot sweep is implemented; conversational follow-up is not) and
+   live-verify the Anthropic/OpenAI/Grok adapters once an API key is
+   available for one of them.
+5. PDF DFM report export (`backend/report/`) is implemented and verified —
+   remaining polish is optional (e.g. embedding the refined parting-curve
+   image directly rather than text/table only), not a functional gap.

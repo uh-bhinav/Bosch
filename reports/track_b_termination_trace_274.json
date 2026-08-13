@@ -1,0 +1,540 @@
+{
+  "part": "Part3",
+  "direction_label": "+X",
+  "direction": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "direction_source": "manual",
+  "faces": [
+    {
+      "face_id": 274,
+      "grid_resolution": [
+        8,
+        8
+      ],
+      "uv_bounds": [
+        0.005651208629300964,
+        1.0,
+        -5.349182960071799e-07,
+        1.012130235738299
+      ],
+      "chain_count": 2,
+      "chains": [
+        {
+          "point_count": 10,
+          "points": [
+            {
+              "uv": [
+                0.005651209,
+                1.0
+              ],
+              "classifier_state": "OUT",
+              "g_value": 0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                0,
+                6
+              ],
+              "bracket_g": [
+                -0.102932,
+                -0.064394,
+                0.005773,
+                0.009208
+              ],
+              "point_3d": [
+                -7.848796,
+                9.802866,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.147701036,
+                1.0
+              ],
+              "classifier_state": "OUT",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                0,
+                6
+              ],
+              "bracket_g": [
+                -0.102932,
+                -0.064394,
+                0.005773,
+                0.009208
+              ],
+              "point_3d": [
+                -7.629184,
+                9.934715,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.289750863,
+                0.999999996
+              ],
+              "classifier_state": "OUT",
+              "g_value": -6.6e-10,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                1,
+                6
+              ],
+              "bracket_g": [
+                -0.064394,
+                -0.023305,
+                0.002103,
+                0.005773
+              ],
+              "point_3d": [
+                -7.392057,
+                10.001211,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.371507112,
+                0.867540126
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                5
+              ],
+              "bracket_g": [
+                -0.048756,
+                0.036005,
+                0.016792,
+                -0.023305
+              ],
+              "point_3d": [
+                -7.253098,
+                9.968399,
+                32.003558
+              ]
+            },
+            {
+              "uv": [
+                0.370720632,
+                0.722950016
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                4
+              ],
+              "bracket_g": [
+                -0.073059,
+                0.054968,
+                0.036005,
+                -0.048756
+              ],
+              "point_3d": [
+                -7.254997,
+                9.921231,
+                32.016189
+              ]
+            },
+            {
+              "uv": [
+                0.370149733,
+                0.578359905
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                3
+              ],
+              "bracket_g": [
+                -0.095058,
+                0.072158,
+                0.054968,
+                -0.073059
+              ],
+              "point_3d": [
+                -7.255924,
+                9.876496,
+                32.038277
+              ]
+            },
+            {
+              "uv": [
+                0.369907693,
+                0.433769795
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                2
+              ],
+              "bracket_g": [
+                -0.113796,
+                0.086067,
+                0.072158,
+                -0.095058
+              ],
+              "point_3d": [
+                -7.255746,
+                9.837047,
+                32.069084
+              ]
+            },
+            {
+              "uv": [
+                0.370072786,
+                0.289179685
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                1
+              ],
+              "bracket_g": [
+                -0.128619,
+                0.095656,
+                0.086067,
+                -0.113796
+              ],
+              "point_3d": [
+                -7.254463,
+                9.80523,
+                32.106812
+              ]
+            },
+            {
+              "uv": [
+                0.37065403,
+                0.144589575
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                0
+              ],
+              "bracket_g": [
+                -0.139198,
+                0.100655,
+                0.095656,
+                -0.128619
+              ],
+              "point_3d": [
+                -7.25221,
+                9.782447,
+                32.14894
+              ]
+            },
+            {
+              "uv": [
+                0.371582814,
+                -5.35e-07
+              ],
+              "classifier_state": "OUT",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                0
+              ],
+              "bracket_g": [
+                -0.139198,
+                0.100655,
+                0.095656,
+                -0.128619
+              ],
+              "point_3d": [
+                -7.249218,
+                9.768988,
+                32.192735
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "last_kept_uv": [
+                0.371507112,
+                0.867540126
+              ],
+              "last_kept_point_3d": [
+                -7.253098,
+                9.968399,
+                32.003558
+              ],
+              "first_rejected_uv": [
+                0.289750863,
+                0.999999996
+              ],
+              "first_rejected_point_3d": [
+                -7.392057,
+                10.001211,
+                32.0
+              ],
+              "bisected_boundary_uv": [
+                0.338012552,
+                0.921807355
+              ],
+              "bisected_boundary_point_3d": [
+                -7.308617,
+                9.984624,
+                32.001205
+              ],
+              "grid_resolution_gap_mm": 0.142825,
+              "unrefined_vs_true_boundary_gap_mm": 0.057889
+            },
+            {
+              "last_kept_uv": [
+                0.37065403,
+                0.144589575
+              ],
+              "last_kept_point_3d": [
+                -7.25221,
+                9.782447,
+                32.14894
+              ],
+              "first_rejected_uv": [
+                0.371582814,
+                -5.35e-07
+              ],
+              "first_rejected_point_3d": [
+                -7.249218,
+                9.768988,
+                32.192735
+              ],
+              "bisected_boundary_uv": [
+                0.371582813,
+                -4.38e-07
+              ],
+              "bisected_boundary_point_3d": [
+                -7.249218,
+                9.768988,
+                32.192735
+              ],
+              "grid_resolution_gap_mm": 0.045914,
+              "unrefined_vs_true_boundary_gap_mm": 0.045914
+            }
+          ]
+        },
+        {
+          "point_count": 6,
+          "points": [
+            {
+              "uv": [
+                1.0,
+                1.0
+              ],
+              "classifier_state": "ON",
+              "g_value": 0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                6,
+                6
+              ],
+              "bracket_g": [
+                0.132036,
+                0.167207,
+                -0.014803,
+                -0.011736
+              ],
+              "point_3d": [
+                -6.343976,
+                9.488089,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.857950173,
+                1.0
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                5,
+                6
+              ],
+              "bracket_g": [
+                0.09357,
+                0.132036,
+                -0.011736,
+                -0.008314
+              ],
+              "point_3d": [
+                -6.49713,
+                9.69063,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.715900345,
+                1.0
+              ],
+              "classifier_state": "IN",
+              "g_value": 0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                4,
+                6
+              ],
+              "bracket_g": [
+                0.055314,
+                0.09357,
+                -0.008314,
+                -0.004906
+              ],
+              "point_3d": [
+                -6.689951,
+                9.847062,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.573850518,
+                1.0
+              ],
+              "classifier_state": "IN",
+              "g_value": 0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                3,
+                6
+              ],
+              "bracket_g": [
+                0.016792,
+                0.055314,
+                -0.004906,
+                -0.001475
+              ],
+              "point_3d": [
+                -6.911004,
+                9.953535,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.431800691,
+                1.0
+              ],
+              "classifier_state": "IN",
+              "g_value": -0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                6
+              ],
+              "bracket_g": [
+                -0.023305,
+                0.016792,
+                -0.001475,
+                0.002103
+              ],
+              "point_3d": [
+                -7.148852,
+                10.006201,
+                32.0
+              ]
+            },
+            {
+              "uv": [
+                0.372397762,
+                1.012130236
+              ],
+              "classifier_state": "OUT",
+              "g_value": 0.0,
+              "is_root_of_g": true,
+              "within_silhouette_tau": true,
+              "cell_ij": [
+                2,
+                6
+              ],
+              "bracket_g": [
+                -0.023305,
+                0.016792,
+                -0.001475,
+                0.002103
+              ],
+              "point_3d": [
+                -7.250448,
+                10.015201,
+                32.000028
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "last_kept_uv": [
+                0.431800691,
+                1.0
+              ],
+              "last_kept_point_3d": [
+                -7.148852,
+                10.006201,
+                32.0
+              ],
+              "first_rejected_uv": [
+                0.372397762,
+                1.012130236
+              ],
+              "first_rejected_point_3d": [
+                -7.250448,
+                10.015201,
+                32.000028
+              ],
+              "bisected_boundary_uv": [
+                0.372586768,
+                1.012091641
+              ],
+              "bisected_boundary_point_3d": [
+                -7.250123,
+                10.015189,
+                32.000028
+              ],
+              "grid_resolution_gap_mm": 0.101994,
+              "unrefined_vs_true_boundary_gap_mm": 0.10167
+            }
+          ]
+        }
+      ],
+      "real_segments_emitted_for_this_face": 2,
+      "real_segment_point_counts": [
+        6,
+        5
+      ]
+    }
+  ]
+}

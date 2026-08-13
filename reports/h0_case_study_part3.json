@@ -1,0 +1,558 @@
+{
+  "part": "Part3",
+  "note": "Controlled directions only (direction_source=manual). Read-only.",
+  "directions": [
+    {
+      "direction_label": "+X",
+      "direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "total_candidates": 327,
+      "h0_failure_count": 4,
+      "cases": [
+        {
+          "candidate_id": 102,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.004719578393634263,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 2.124850320667707e-14,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 585,
+              "point": [
+                -7.148408,
+                10.0109,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 585,
+            "point": [
+              -7.1484075566149095,
+              10.010899692091376,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 274,
+              "uv_start": [
+                0.9999999999999999,
+                1.0000000000000047
+              ],
+              "uv_end": [
+                0.4306804864572464,
+                1.010971955349446
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 585,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 274
+            },
+            {
+              "segment_id": 320,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 367,
+              "t_start": 0.0954870469002027,
+              "t_end": 1.0
+            }
+          ]
+        },
+        {
+          "candidate_id": 103,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 1.77636e-15 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.00466801387423688,
+            "max_edge_deviation_mm": 1.7763568394002505e-15,
+            "max_silhouette_error": 7.36495956216302e-15,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 348,
+              "point": [
+                -6.905735,
+                -9.957492,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 348,
+            "point": [
+              -6.905735054883713,
+              -9.95749220097831,
+              32.0
+            ],
+            "segment_kind": "tangential",
+            "backing": {
+              "provenance": "edge",
+              "edge_id": 411,
+              "adjacent_face_ids": [
+                64,
+                233
+              ],
+              "t_start": 0.0,
+              "t_end": 0.9041062018061713
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 570,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 233
+            },
+            {
+              "segment_id": 348,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 411,
+              "t_start": 0.0,
+              "t_end": 0.9041062018061713
+            }
+          ]
+        },
+        {
+          "candidate_id": 104,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.0038064250845210204,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 5.024294596358835e-15,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 587,
+              "point": [
+                -10.717009,
+                -5.186632,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 587,
+            "point": [
+              -10.71700902282248,
+              -5.1866320783532975,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 275,
+              "uv_start": [
+                0.712205329097494,
+                -0.0055463939035083
+              ],
+              "uv_end": [
+                1.000000000000001,
+                -3.9213364372568243e-16
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 587,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 275
+            },
+            {
+              "segment_id": 359,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 430,
+              "t_start": 0.0,
+              "t_end": 0.45723710758575514
+            }
+          ]
+        },
+        {
+          "candidate_id": 105,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.004719578393770984,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 1.1624928513597912e-14,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 596,
+              "point": [
+                7.148408,
+                -10.0109,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 596,
+            "point": [
+              7.148407556614782,
+              -10.010899692091408,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 309,
+              "uv_start": [
+                0.9999999999999968,
+                0.9999999999999998
+              ],
+              "uv_end": [
+                0.4306804864572644,
+                1.0109719553500558
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 596,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 309
+            },
+            {
+              "segment_id": 390,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 481,
+              "t_start": 0.09548704690029464,
+              "t_end": 1.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "direction_label": "+Y",
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "total_candidates": 321,
+      "h0_failure_count": 4,
+      "cases": [
+        {
+          "candidate_id": 99,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.0038064250846317,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 5.372651651739947e-15,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 586,
+              "point": [
+                5.186632,
+                10.717009,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 586,
+            "point": [
+              5.186632078353184,
+              10.717009022822152,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 295,
+              "uv_start": [
+                1.000000000000001,
+                1.0000000000000002
+              ],
+              "uv_end": [
+                0.7119414074846515,
+                1.0055514802140342
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 586,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 295
+            },
+            {
+              "segment_id": 303,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 329,
+              "t_start": 0.5423435839032955,
+              "t_end": 1.0
+            }
+          ]
+        },
+        {
+          "candidate_id": 100,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.004719578393436122,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 2.9832226151540566e-15,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 582,
+              "point": [
+                -10.0109,
+                -7.148408,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 582,
+            "point": [
+              -10.010899692091396,
+              -7.148407556615092,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 281,
+              "uv_start": [
+                0.9999999999999999,
+                1.0000000000000002
+              ],
+              "uv_end": [
+                0.43068048645727236,
+                1.0109719553487022
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 582,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 281
+            },
+            {
+              "segment_id": 359,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 424,
+              "t_start": 0.09548704690001655,
+              "t_end": 1.0
+            }
+          ]
+        },
+        {
+          "candidate_id": 101,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.004668013874211958,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 7.364959562169853e-15,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 566,
+              "point": [
+                10.010848,
+                -7.148411,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 566,
+            "point": [
+              10.010848259182254,
+              -7.14841145600971,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 247,
+              "uv_start": [
+                0.4309365042929736,
+                -0.010967021360333179
+              ],
+              "uv_end": [
+                1.0000000000000013,
+                -2.9255882670122814e-15
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 566,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 247
+            },
+            {
+              "segment_id": 387,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 468,
+              "t_start": 0.0,
+              "t_end": 0.9041062018062324
+            }
+          ]
+        },
+        {
+          "candidate_id": 102,
+          "reason": "Curve is not provably on the B-Rep: failed H0.3 (max edge deviation 0 mm).",
+          "on_surface": {
+            "passed": false,
+            "max_surface_deviation_mm": 0.004719578393772928,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 1.3790725409444725e-14,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 572,
+              "point": [
+                10.0109,
+                7.148408,
+                32.0
+              ]
+            },
+            "failed_subtests": [
+              "H0.3"
+            ],
+            "notes": []
+          },
+          "candidate_segment_count": 2,
+          "candidate_provenance_mix": {
+            "edge": 1,
+            "face": 1
+          },
+          "worst_offender": {
+            "segment_id": 572,
+            "point": [
+              10.010899692091407,
+              7.148407556614741,
+              32.0
+            ],
+            "segment_kind": "silhouette",
+            "backing": {
+              "provenance": "face",
+              "face_id": 260,
+              "uv_start": [
+                0.9999999999999986,
+                1.0000000000000049
+              ],
+              "uv_end": [
+                0.4306804864572891,
+                1.0109719553504035
+              ]
+            }
+          },
+          "all_segments": [
+            {
+              "segment_id": 572,
+              "kind": "silhouette",
+              "provenance": "face",
+              "face_id": 260
+            },
+            {
+              "segment_id": 412,
+              "kind": "tangential",
+              "provenance": "edge",
+              "edge_id": 519,
+              "t_start": 0.09548704690031952,
+              "t_end": 1.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

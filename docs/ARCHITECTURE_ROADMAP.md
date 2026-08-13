@@ -1,34 +1,179 @@
 # DfM Agent — Architecture Roadmap & Master Specification
 
-> **Status**: Specification. Nothing in this document is implemented yet unless
-> explicitly marked "Implemented today".
-> **Created**: 2026-07-26
+> **Created**: 2026-07-26 · **Revised**: 2026-07-28
 > **Authority**: This document describes *planned* work. For what the code does
 > *today*, `docs/IMPLEMENTATION_STATUS.md` and the source remain authoritative.
 > Where this document and `IMPLEMENTATION_STATUS.md` disagree about current
 > state, `IMPLEMENTATION_STATUS.md` wins.
+>
+> **⚠️ 2026-07-28 revision.** Phase 1 (geometry engine) is now **substantially
+> complete and verified against real geometry**. Phase 2 (React migration) is
+> **CANCELLED** — see §0.2. The remaining work is re-planned into Stages 2–6
+> in §0.3, driven by `docs/ENGINE_AUDIT_2026-07-27.md` and
+> `docs/RECOVERY_PLAN.md`. Sections marked **[HISTORICAL]** describe the
+> pre-fix state and are kept for context on *why* a design choice was made —
+> they are not current status.
+
+---
+
+## ▶️ START HERE — next action
+
+**Stage 2 is DONE (2026-07-28).** `split_core_cavity_solids()` and
+`export_mold_halves()` are verified end-to-end on both real demo parts:
+`split_ok`, exactly 2 solids, AP214 export that reloads with 2 solids. The
+real 3-D parting surface turned out to be topologically invalid and
+unfixable by standard OCC healing (`BRepCheck_Analyzer`,
+`ShapeFix`/`Sewing` all tried) — the Boolean split now uses a separate,
+honestly-labeled planar approximation tool instead
+(`core_cavity.build_planar_split_tool`). See CHANGELOG.md "Stage 2b" and
+`TODO.md` S2.3/S2.4/S2.5.
+
+**Stage 3 is also DONE (2026-07-28), all of S3.1-S3.8.** Issue-first UI,
+metric glossary, `graph_cleanup.strategy` always visible, direction
+axis+tilt formatting, direction override (Bosch criterion #2), diverse
+candidate clustering, and a backend LRU cache + mesh/analysis payload
+split — all measured against real data, see `CHANGELOG.md` 2026-07-28
+entries.
+
+**Stage 4's first increment is DONE (2026-07-28).** `backend/geometry/
+side_core.py` generates one side-core solid (Bosch criterion #5) for the
+single highest-confidence critical undercut feature, Boolean-subtracted
+from its containing mold half, exported as a third AP214 solid. §4.4's gate
+is verified on both real parts: exported STEP reloads with exactly 3
+solids, volumes conserve within 0.001%. §4.3's six design questions are all
+answered explicitly (see §4.3 and `side_core.py`'s module docstring).
+Grouped/multi-feature generation (§4.3 Q1) remains explicitly out of scope.
+
+**Stage 5 (AI agent layer) is DONE (2026-07-28).** New `backend/agent/`
+package — provider-agnostic tool-calling agent (Gemini/Anthropic/OpenAI/
+Grok) driving the same 6 deterministic geometry functions the API already
+exposes. Verified live, end-to-end, against real `Part1.stp` through
+Gemini (`gemini-2.5-flash` — the roadmap's original `gemini-2.0-flash`
+pick returns zero free-tier quota on the team's key, confirmed live).
+Anthropic/OpenAI/Grok adapters are structurally verified against real SDK
+signatures and unit-tested with mocks, not yet live-tested (no key
+available for those three). See `CHANGELOG.md` 2026-07-28 for the two real
+bugs found and fixed during live verification. **Stage 6 (PDF export) is DONE (2026-07-29).** New `backend/report/`
+package finally uses `reportlab` (pinned since the initial scaffold,
+imported nowhere until now) — a pure presentation layer over the same
+`.to_dict()` payloads every analysis endpoint already returns, aggregating
+every warning from every source rather than dropping any for a
+cleaner-looking page. Verified end-to-end via `POST /parts/{filename}/
+export/report` and a new frontend "PDF Report" section. Two real bugs
+found and fixed, both known bug patterns from earlier stages this new
+module had silently reintroduced (`best_label` duplication — the exact
+S3.5 bug; a misleading 100% "conservation error" for `side_core.status ==
+"no_feature"`). See `CHANGELOG.md` 2026-07-29.
+
+**All six roadmap stages are now built.** The only work remaining is S4.3
+(generalizing side-core generation to multiple/grouped features — now in
+progress, partly motivated by a real robustness finding surfaced during
+Stage 6 verification: a different undercut-detection parameterization on
+Part1 hit a genuine 36.59% conservation error on a larger face grouping,
+correctly caught by `side_core.py`'s own check) and the "Deferred/
+Unscheduled" backlog in `TODO.md` (exhaustive Bassi Boolean analysis, full
+Sangolli volumetric decomposition, `backend/geometry/__init__.py`, mypy/
+ruff, splitting `undercut_detector.py`).
+`TODO.md` S2.5 (tightening the ~4% volume-conservation gap in the *main*
+core/cavity split) is a low-priority bounded follow-up, not a blocker.
+
+| Doc | Read it for |
+|---|---|
+| `STATUS.md` | Current state of every module, open items, test status |
+| `TODO.md` | Execution checklist |
+| `CHANGELOG.md` | What changed and why, with measured evidence |
+| `docs/ENGINE_AUDIT_2026-07-27.md` | Why Stage 1 was needed — the defect analysis |
+| `docs/RECOVERY_PLAN.md` | The staged recovery this document now absorbs |
+| This document | The plan and its rationale |
 
 ---
 
 ## 0. Execution Order and Rationale
 
-Five phases, strictly ordered. Each phase's output is the next phase's input.
+### 0.1 Original five-phase plan — what actually happened
 
-| Phase | Scope | Why it comes here |
+| Phase | Original scope | Outcome |
 |---|---|---|
-| **1** | Geometry engine hardening | Everything downstream consumes geometry results. A frontend rewrite over an unfinished engine means rewriting the frontend twice. |
-| **2** | Frontend migration to React + Vite + Three.js | Needs stable result schemas from Phase 1 to design against. Also unblocks visual verification of Phase 1 output. |
-| **3** | End-to-end real-world testing | Needs both a correct engine and a UI that can render its output for visual confirmation. |
-| **4** | AI agent orchestration | Wraps a *verified* engine. Wrapping an unverified one produces confident natural-language descriptions of wrong geometry — the worst possible failure mode for a DfM tool. |
-| **5** | PDF report export | Needs a stable engine (Phase 1) to source metrics from, a UI (Phase 2) to source screenshots from, and optionally agent narrative (Phase 4) to embed. Confirmed deliverable, deliberately last. |
+| **1** | Geometry engine hardening | ✅ **Done, then repaired.** Milestones 1.1–1.11 shipped, but an audit found four of the last six had been marked complete on "tests pass / function exists" rather than "output is geometrically correct". Nine defects (Bugs A–H-3) found and fixed 2026-07-27/28. |
+| **2** | Frontend migration to React + Vite + Three.js | ❌ **CANCELLED** — see §0.2. Value redirected into Streamlit (Stage 3). |
+| **3** | End-to-end real-world testing | 🔁 Partially absorbed into the cross-cutting geometry-assertion work (§0.4), which is the real fix for what Phase 3 was trying to catch. |
+| **4** | AI agent orchestration | 📋 Still last, still deliberate — now Stage 5. |
+| **5** | PDF report export | 📋 Still last. Now Stage 6. |
 
-**The Phase 4 placement is deliberate.** An LLM narrating incorrect undercut
-counts is more dangerous than no LLM at all, because it launders a geometry bug
-into an authoritative-sounding engineering recommendation.
+**The agent's placement remains deliberate.** An LLM narrating incorrect
+undercut counts is more dangerous than no LLM at all, because it launders a
+geometry bug into an authoritative-sounding engineering recommendation. The
+audit proved this risk is not hypothetical: the parting-line stage reported
+`closure_guaranteed=True, closure_error_mm=0.0` on a curve with a **17.35 mm
+gap**. An agent wrapped around that would have confidently described a valid
+mold split that did not exist.
+
+### 0.2 Phase 2 (React migration) — cancelled
+
+The original justification was rendering performance: server-side re-render
+per interaction, full mesh re-sent per overlay. But the **Plotly/WebGL viewer
+already in `frontend/app.py` renders client-side and interactively**, which
+removes most of that pain. As of 2026-07-28 it is also the renderer in Docker
+(`DFM_FORCE_PLOTLY=1`), so local and container now match.
+
+A rewrite would consume the entire remaining budget and deliver **no new
+engineering capability**. The genuinely valuable parts of the Phase 2 plan —
+mesh/analysis split, backend `PartGeometry` caching, issue-first UI — are
+folded into **Stage 3** and applied to Streamlit. The React specification in
+the Phase 2 section below is retained as **[HISTORICAL]** for its transport
+and caching design, which still applies.
+
+### 0.3 Current plan — Stages 2 through 6
+
+Stage 1 (parting-line correctness) is **complete**. What remains, ordered by
+what unblocks the most:
+
+| Stage | Scope | Status | Why here |
+|---|---|---|---|
+| **1** | Parting-line correctness | ✅ **Done** | Blocked everything. Bugs A, B, D, E, F, G, H, H-2, H-3 all fixed and verified on real geometry. |
+| **2** | Unblock Level 2 — core/cavity + STEP export | ⬜ Next | Code exists and is unit-tested but has **never run against a valid parting surface**. Should mostly fall out of Stage 1. Small, high-confidence. |
+| **3** | Engineering-review UI (Streamlit) | ⬜ Highest visible value | Metrics are visible but unreadable (§2.x). Also delivers Bosch criterion #2 (direction override), which is currently missing. |
+| **4** | Side-core / lifter PL generation | ✅ First increment done | **Bosch criterion #5 — one side core generated, Boolean-subtracted, exported.** Grouped/multi-feature generation (§4.3 Q1) out of scope. |
+| **5** | AI agent orchestration | ✅ Done | Provider-agnostic tool-calling agent (Gemini/Anthropic/OpenAI/Grok), Gemini live-verified end-to-end. Wraps the verified engine only — adds no new geometric capability. |
+| **6** | PDF report export | ✅ Done | Pure presentation layer over already-computed results; `reportlab` finally imported. Verified end-to-end via the API + a frontend button. |
+
+```
+Stage 2  ███         Level 2 unblock            ← small, mostly falls out of Stage 1
+Stage 3  ███████     engineering review UI      ← highest visible value
+Stage 4  █████       criterion #5 first inc.    ← done
+Stage 5  ██████      AI agent                   ← done
+Stage 6  ███         PDF export                 ← done
+```
+
+### 0.4 Cross-cutting: the process defect that caused all of this
+
+**Every bug in the 2026-07-27 audit survived a fully green test suite.** The
+tests are mock-based and assert *structure* (does the function return the
+right shape?) rather than *geometry* (is the curve actually closed?). Four
+milestones were marked complete on that basis.
+
+This is the actual root cause, and it is **not yet fixed**. Required, before
+any further milestone is marked complete:
+
+| Assertion | Catches |
+|---|---|
+| Measured first→last gap ≤ tolerance (**not** the reported flag) | Bug A |
+| `graph_cleanup.strategy` is the exact optimiser, not `greedy-fallback` | Bug B |
+| Every stage inside its time budget | Bug D |
+| `parting_surface.status` is a generated status, not `failed` | Bug E |
+| Solid split returns exactly 2 solids | Stage 2 gate |
+| `silhouette_coverage_ratio` above threshold, or explicitly warned | Bug H |
+
+These belong in `backend/validation/part_validation.py` as assertion flags
+(`--assert-parting-line-closed`, `--assert-core-cavity-solids=2`,
+`--assert-exact-optimiser`), runnable in CI against real OCC in Docker.
+
+**Rule going forward: a milestone is complete when a real part produces
+geometrically correct output, not when a mock test returns the right shape.**
 
 ---
 
-## 0.1 Blocking Findings (address before Phase 3, ideally before Phase 1)
+## 0.1 Blocking Findings — original survey (all resolved)
 
 These were found while surveying the repo for this roadmap. They are not
 speculative.
@@ -83,12 +228,30 @@ The rule file documented `/parts/{filename}/display-mesh` and
 lists only the six real endpoints, with a note documenting `include_mesh` and
 `include_boolean_regions` as the actual mechanism.
 
-### F4 — `networkx==3.3` is a declared dependency with zero imports
+### F4 — `networkx==3.3` is a declared dependency with zero imports (RESOLVED 2026-07-28 — see the caveat)
 
 `requirements.txt:44` pins it with the comment "Graph algorithms for Hou 2018
 parting line". No file imports it. The current graph work in `parting_line.py`
 is a hand-rolled bounded DFS (`_trace_best_weighted_path`, edge limit 22, state
 limit 75,000) with a greedy fallback. Milestone 1.6 makes the dependency real.
+
+**⚠️ This was marked resolved once, prematurely.** The first fix imported
+`networkx` and used `nx.MultiGraph` for *adjacency queries only* — the actual
+best-loop **search** remained the 22-edge bounded DFS with a non-backtracking
+greedy fallback. Since real parts have ~206 candidate edges (206 ≫ 22),
+**every real part still took the greedy fallback**. The dependency became
+"used" without the algorithm becoming better. This is Bug B in the audit, and
+it is the clearest example of the §0.4 process defect: a milestone marked
+complete against its letter rather than its intent.
+
+**Genuinely resolved 2026-07-28** via a shared exact-search dispatcher,
+`_best_path_with_contraction_fallback`, used by **both** wire-ordering paths
+(refinement *and* initial selection — the second one had no exact search at
+all, which is why the first attempt at this fix didn't change real-part
+behaviour). Degree-2 chains are contracted into hyper-edges so the search
+scales with real branch points rather than raw edge count (Part3: 254 edges →
+50 hyper-edges), with a polynomial-time `nx.cycle_basis` / `nx.find_cycle`
+correctness fallback for when the exhaustive search exhausts its budget.
 
 ### F5 — the documented test command never actually worked (RESOLVED 2026-07-27, Phase 0.4)
 
@@ -120,6 +283,11 @@ Not yet investigated; tracked in `TODO.md`.
 ---
 
 # PHASE 1 — Geometry Engine Fixes & Innovations
+
+> **✅ Substantially complete (2026-07-28).** The algorithm specifications below
+> are still the reference for *how* each milestone works and are accurate.
+> For what shipped, what broke, and what was repaired, see the execution table
+> in "STEP-BY-STEP IMPLEMENTATION ROADMAP → Phase 1" and `STATUS.md`.
 
 ## 1a. Parting Line: Guaranteed Closed Loop + Parting Surface
 
@@ -658,7 +826,283 @@ own texture marking or from a heuristic they can override.
 
 ---
 
+# STAGE 2 — Unblock Level 2 (core/cavity + STEP export)
+
+> **✅ STATUS 2026-07-28 — DONE.** Two real bugs (dead import,
+> `SetArguments` TypeError) plus a volume-sanity gap were found and fixed
+> (Stage 2a). The predicted blocker (Part3 coverage) was NOT the real one —
+> the real blocker was `BRepFill_Filling`'s patch never reaching the mold
+> blank's bounds, THEN (once a shoulder extension was built) that the patch
+> is topologically invalid independent of any extension, confirmed by
+> `BRepCheck_Analyzer` and unfixable by `ShapeFix`/`Sewing` (Stage 2b). Fixed
+> by using a separate, labeled planar-approximation Boolean tool instead of
+> the real 3-D surface. Verified: `split_ok` + 2 solids + reloadable 2-solid
+> STEP export on **both** Part1 and Part3. See CHANGELOG.md "Stage 2b" for
+> full detail and `TODO.md` S2.1–S2.5. The plan below is kept for historical
+> context on what was originally scoped.
+
+## 2.1 What to do
+
+1. Re-run `split_core_cavity_solids()` on both parts against the parting
+   surface Stage 1 now produces (`generated_filling`, live `occ_shape`).
+2. Re-run `export_mold_halves()` on the resulting solids.
+3. **Reload the exported STEP file** and confirm it parses back to 2 solids.
+
+## 2.2 Gates (measured, not reported)
+
+| Gate | Assertion |
+|---|---|
+| Split succeeds | `solid_split_status` is a success status, not `blocked_by_parting_line` / `failed` |
+| Exactly two solids | `split_solid_count == 2` |
+| Volume conservation | cavity volume + core volume ≈ blank volume − part volume, within fuzzy tolerance |
+| Export round-trips | exported `.stp` reloads via `load_step()` and yields 2 solids |
+| Time budget | stage completes inside its performance budget |
+
+## 2.3 Known risk
+
+**Part3 may not pass.** Its parting loop covers only 18.1% of the projected
+extent (its silhouette is genuinely fragmented across 22 B-Rep components), so
+the surface built from it may not cleanly separate the blank. Part1 (94.8%
+coverage) is the higher-confidence case.
+
+If Part3 fails here, that is a **legitimate finding to report, not a bug to
+hide** — it means fragmented-silhouette parts need either better loop
+selection or manual parting-line input. The `silhouette_coverage_ratio`
+warning already flags this honestly; Stage 2 should confirm what it means
+downstream rather than paper over it.
+
+---
+
+# STAGE 3 — Engineering-Review UI (Streamlit)
+
+> **Status**: ⬜ Highest visible value.
+> **Replaces**: the cancelled Phase 2 React migration (§0.2).
+> **Also delivers**: Bosch criterion #2 (direction override), currently missing.
+
+## 3.1 The metrics problem — stated precisely
+
+**The metrics are visible. That is not the problem.** The problem is that
+there are a *lot* of them, presented as a flat dump, with no indication of
+what any individual number means, what a good value looks like, or what to do
+about a bad one. Two different people are failed by this:
+
+- **The developer**, who cannot debug because they don't know what
+  `depth_proxy_mm` or `pull_alignment=0.000` actually signify, or which
+  numbers matter versus which are internal bookkeeping.
+- **The mold engineer / viewer**, who needs to reach a conclusion in minutes
+  and instead gets tables to scroll through.
+
+**Critically: the engine already computes excellent explanation data.** This
+is not a missing-data problem. `UndercutFeature` alone carries
+`action_explanation`, `action_reason`, `action_confidence_factors`, and a
+full `action_confidence_breakdown` with per-term `code` / `impact` /
+`explanation` entries. Measured from a real Part1 export:
+
+```
+action_confidence_breakdown = {
+  'base_score': 0.5, 'final_score': 0.98, 'label': 'high',
+  'terms': [
+    {'code': 'evidence.boolean_confirmed', 'impact':  0.25, ...},
+    {'code': 'depth.vertex',               'impact':  0.12, ...},
+    {'code': 'severity.critical',          'impact':  0.08, ...},
+    {'code': 'type.silhouette',            'impact': -0.03, ...},   # negative!
+  ],
+  'summary': 'High confidence: Boolean-confirmed interference, depth from
+              vertex-reference, critical severity; reduced by silhouette
+              category is inherently ambiguous.'
+}
+```
+
+That is genuinely well-designed provenance — it even tracks what *reduced*
+confidence. **The failure is entirely presentational**: a real CSV export of
+this data has ~45 columns, including `grouping_factors` with 25 repeated
+`linked 30-31: bbox_gap_mm=0.0000 <= threshold_mm=4.6168` entries and
+`boolean_intersection` containing ten identical repeated geometry analyses.
+
+**So Stage 3 is an information-architecture task, not a data task.**
+
+## 3.2 Three-layer progressive disclosure
+
+Every metric surface should resolve to one of three layers. The default view
+shows **Layer 1 only**.
+
+### Layer 1 — Verdict (default, ≤ 5 items)
+
+What a mold engineer needs to decide. Plain language, no jargon, no raw
+numbers unless the number *is* the point.
+
+```
+🔴 Critical — Side action required
+   A 26.9 mm deep undercut on 10 faces cannot release along the mold
+   opening direction. This needs a side core.
+   [ Show evidence ▾ ]
+
+🟡 Review — Parting line covers 18% of the part outline
+   Expected ≥ 35%. The part's silhouette is split across 22 separate
+   edge groups, so the tool could not assemble one main loop.
+   [ Show evidence ▾ ]
+
+🟢 OK — Mold opening direction found
+   (+0.232, +0.357, +0.905) ≈ +Z, tilted 25°
+   0 faces with bad draft · 0% undercut area
+   [ Compare alternatives ▾ ]
+```
+
+### Layer 2 — Evidence (one click)
+
+*Why* the tool reached that verdict. This is where the existing `explanation`
+/ `summary` / top confidence terms go — already computed, just not shown.
+
+```
+Confidence: high (0.98)
+  ↑ +0.25  Boolean-confirmed interference
+  ↑ +0.12  depth measured from vertex-reference
+  ↑ +0.08  critical severity
+  ↓ −0.03  silhouette category is inherently ambiguous
+Depth 26.86 mm · interference volume 14,401 mm³ · 10/10 faces confirmed
+```
+
+### Layer 3 — Provenance / Debug (collapsed, developer-facing)
+
+The full factor lists, method names, per-face IDs, raw breakdown dicts.
+Everything currently dumped by default belongs **here**. Explicitly labelled
+as diagnostic output.
+
+## 3.3 Metric glossary — what each number means
+
+A definition surface (inline tooltip **and** a reference page) covering, at
+minimum:
+
+| Metric | Must state |
+|---|---|
+| `readiness_status` / `score` | What ready/review/weak/failed *permit*; what blocks the next stage |
+| `closure_error_mm` | Whether the loop is physically closed, and against what tolerance |
+| **`graph_cleanup.strategy`** | **Whether the exact optimiser or the greedy fallback ran.** Exposing this alone would have caught Bug B immediately — it is the single highest-value metric to surface |
+| `silhouette_coverage_ratio` | What fraction of the part outline the parting loop spans; that low means "probably a local feature, not the main line" |
+| `undercut_area_pct` / severity | What fraction of the part is problematic; whether tooling is implied |
+| Direction `score` | That it is **relative and unitless** — only meaningful compared to other candidates |
+| `depth_proxy_mm` | That it is a **conservative upper bound, not a measurement** (per the locked decision in `TODO.md`) |
+| `pull_alignment` | That 0.0 means fully transverse → side action; 1.0 means aligned with pull |
+| `bridging_status` | Whether component bridging ran, was skipped, or was tried and discarded — and why |
+
+**Each entry answers three questions: what it means · what good looks like ·
+what to do if it's bad.**
+
+## 3.4 Issue-first layout
+
+Lead with **ranked issues**, not module panels. An engineer asks "what is
+wrong, why, how serious, what should I change?" — the UI should answer in
+that order. Module-by-module panels answer "what did each subsystem compute?",
+which is a developer's question, and belongs in Layer 3.
+
+This issue model is also **deliberate groundwork for Stage 5**: the agent will
+consume exactly these `{severity, location, reason, recommendation, evidence}`
+records.
+
+## 3.5 Direction presented for humans
+
+Show the vector **plus its closest axis and tilt angle**:
+
+```
+(+0.232, +0.357, +0.905)  ≈  +Z, tilted 25°
+```
+
+The pull direction is a continuous unit vector (correctly — it should not be
+snapped to an axis), but "≈ +Z tilted 25°" is what a mold engineer actually
+reasons about.
+
+## 3.6 Direction override — Bosch criterion #2
+
+**✅ DONE (2026-07-28).** ±X/±Y/±Z presets + a custom-vector input in the
+Direction tab. Applying an override recomputes draft, undercuts, parting
+line, and core/cavity against it via `_run_direction_override_pipeline()`,
+stores the result separately (`override_result`) from the recommended
+pipeline's own results — the recommendation is never overwritten — and
+renders a "Recommended vs Override" comparison table plus an
+always-visible "using an override" banner. The Findings panel (§3.1/§3.4)
+switches to the override's results while one is active. Found and fixed a
+real backend gap along the way: `/core-cavity` accepted
+`use_optimal_direction=false` but silently ignored any supplied `dx/dy/dz`,
+always falling back to a hardcoded `+Z` — fixed to match `/parting-line`'s
+existing correct behavior. See `CHANGELOG.md` 2026-07-28 "S3.6" for full
+detail and verification evidence.
+
+## 3.7 Candidate comparison — the "multiple optimal solutions" story
+
+**✅ DONE (2026-07-28).** `_cluster_diverse_candidates()` in
+`frontend/app.py` greedily selects candidates ≥15° apart (candidates
+pre-sorted best-first by score) instead of the raw top-N. The frontend now
+fetches the full candidate set (`include_all_candidates=true`) — the
+default top-10 the frontend previously requested is exactly where the
+near-duplicate problem was hiding. Verified on real Part1: 114 scored
+candidates → 17 genuinely distinct families. See `CHANGELOG.md` 2026-07-28
+"S3.7" for full detail.
+
+A real finding from the live Part1 run that motivated this fix: the top
+candidates were **not diverse** — they were the same answer six times.
+
+```
+(+0.232,+0.357,+0.905) score 0.313   0.0° from best
+(+0.211,+0.366,+0.906) score 0.348   1.3°
+(+0.193,+0.380,+0.905) score 0.348   2.6°
+(+0.218,+0.362,+0.906) score 0.385   0.9°
+(+0.225,+0.359,+0.906) score 0.385   0.4°
+(+0.326,+0.453,+0.829) score 0.532   8.9°
+```
+
+Six results within 9° — an artefact of the Milestone 1.4 fine-search cone.
+Useless to an engineer asking "what are my options?"
+
+**Fix**: cluster candidates by angular separation and surface the best of each
+*distinct* family (≥ 15° apart) with score breakdowns. This directly serves
+the robustness question: since multiple directions can be legitimately
+acceptable, "does our answer equal *the* answer" is the wrong test. The
+defensible claims are **validity** (is it genuinely undercut-free?),
+**ranking transparency** (why did this beat the others?), **stability** (do
+small perturbations change it wildly?), and **agreement where obvious** (does
+a simple box give the obvious answer?).
+
+Stop claiming *the* answer; start showing *the defensible options and why this
+one ranks first*.
+
+## 3.8 Performance items carried over from the cancelled React plan
+
+**✅ DONE (2026-07-28).**
+
+| Item | Benefit | Result |
+|---|---|---|
+| Backend `PartGeometry` LRU cache keyed on `(path, mtime_ns)` | Removes the STEP re-parse on every endpoint call — the single biggest latency source | `load_step_cached()` in `step_loader.py`. Measured: 0.79s cold → ~0.003s warm (≈250x). |
+| Split `/geometry/mesh` (fetch once) from `/analysis/*` (no mesh in payload) | Stops re-downloading identical geometry on every overlay switch | The backend already had `to_payload(include_geometry=...)`; every endpoint just hardcoded `True`. New `include_mesh_geometry` query param + frontend `_mesh_geometry_already_cached()` check. Measured: same `/draft` call 682,742 → 224,780 bytes (≈67% smaller). |
+
+Both were backend changes, independent of the UI framework — no React
+migration needed to get them. The `mutate`-flag regression test the roadmap
+called mandatory: `_clone_pristine_part()` ensures only a pristine,
+never-mutated template is cached, and every caller gets an independently
+mutable clone — `tests/test_step_loader.py::TestLoadStepCached` locks this
+in directly (mutate one clone's fields, assert a second clone from the same
+cache entry is unaffected). Mesh correctness verified by inspecting the
+actual rendered Plotly `mesh3d` traces via `AppTest` across all 5 analysis
+tabs — real vertex/face counts every time, zero regression. See
+`CHANGELOG.md` 2026-07-28 "S3.8" for full detail.
+
+## 3.9 Gates
+
+- A first-time viewer can state the part's top 3 issues **without scrolling**. ✅
+- Every number on screen has a reachable definition. ✅
+- `graph_cleanup.strategy` is visible somewhere in the default view. ✅
+- Direction override recomputes the full downstream chain and shows the delta. ✅
+- Candidate list shows genuinely distinct directions, not near-duplicates. ✅
+
+**All Stage 3 gates met (2026-07-28). Stage 3 is complete.**
+
+---
+
 # PHASE 2 — Frontend Migration: Streamlit → React + Vite + Three.js
+
+> **⚠️ [HISTORICAL — CANCELLED 2026-07-28]** This migration is **not
+> happening**; see §0.2. Retained because its transport format, client-side
+> overlay-switching, and `PartGeometry` caching designs are still correct and
+> partially carried into Stage 3.8. Read it as design rationale, not as a plan.
 
 ## 2.1 Why migrate
 
@@ -879,7 +1323,146 @@ CLAUDE.md invariant #3 ("Never import OCC in `frontend/`") extends to
 
 ---
 
+# STAGE 4 — Side-Core / Lifter PL Generation (Bosch criterion #5)
+
+> **Status**: ✅ **First increment (§4.4) done, 2026-07-28.** All six §4.3
+> design questions are answered (see §4.3 below and
+> `backend/geometry/side_core.py`'s module docstring). §4.4's gate is
+> verified on both real demo parts. §4.3 Q1 (grouped/multi-feature
+> generation) is explicitly deferred — see §4.6.
+
+## 4.1 What existed before this stage (historical)
+
+Nothing geometric. A `grep` for lifter/side-core work found only
+**recommendation strings** in `undercut_detector.py` — e.g. the
+`"lifter-or-collapsible-core-review"` action text and
+`recommended_mold_action="side-action"`. The engine correctly *identified*
+that a side action was needed and *why*; it produced no side-core parting
+surface, no lifter geometry, and no side-core pull direction.
+
+## 4.2 Why this is tractable now
+
+The hard input already exists and is high quality. Measured on Part1:
+
+```
+Feature 0 — critical, side-action, high confidence (0.98)
+  10 faces · depth 26.86 mm · interference volume 14,401 mm³
+  release_direction        [-0.680, +0.734, 0.000]   ← transverse to pull
+  release_direction_method boolean-region-center-transverse
+  pull_alignment           0.000                     ← fully transverse
+  Boolean-confirmed on 10/10 faces
+```
+
+A per-feature **release direction**, a **confirmed Boolean interference
+volume**, and the **exact face set** are exactly the inputs a side-core
+generator consumes. The undercut engine has already done the analysis work.
+
+## 4.3 Design questions — resolved (2026-07-28)
+
+Each question below is answered with a concrete decision, implemented in
+`backend/geometry/side_core.py` (see its module docstring for the same list
+with the "why", kept in sync with this section):
+
+1. **Per-feature or grouped?** → **Per-feature only.**
+   `select_primary_side_core_feature()` picks the single highest-interference
+   critical feature; `generate_side_core()` handles exactly one feature per
+   call. Grouping spatially-close features into a shared side core is
+   explicitly deferred — see §4.6.
+2. **Side-core pull direction** → **Verbatim `release_direction`**, never
+   snapped to a machine axis. The undercut engine already computed it from
+   real Boolean-confirmed geometry; there is no concrete reason yet to
+   distrust it.
+3. **Parting surface per side core** → **NOT `BRepFill_Filling`** (this
+   section originally speculated that as "most likely reuse" — it isn't).
+   That machinery is confirmed topologically invalid on both real parts for
+   the *main* parting surface (Stage 2, S2.3) and there is no reason to
+   expect it more reliable on a smaller, still-curved side feature. Reuses
+   Stage 2b's proven fix instead: a flat planar Boolean-split tool
+   (`core_cavity.build_planar_split_tool`), sized to the feature's own local
+   footprint (via each feature face's `Bnd_Box` corners — see §4.4) and swept
+   along `release_direction`.
+4. **Lifter vs. side core vs. collapsible core** → **Not decided by this
+   module, and it must never be described as if it were.** This module
+   answers only "what volume of steel must retract, and along which
+   direction" — the actuation-mechanism choice is a tooling-design decision
+   outside geometry.
+5. **Interaction with the main split** → the side core is subtracted from
+   whichever main half (cavity or core) has the larger `BRepAlgoAPI_Common`
+   overlap with the swept side-core volume.
+6. **Output format** → additional solid in the **same** AP214 STEP file as
+   cavity/core. `core_cavity.export_mold_halves` gained
+   `solid_overrides`/`extra_solids` parameters (plain OCC shapes, not a
+   `side_core.py` import — that would have been circular, since
+   `side_core.py` already imports from `core_cavity.py`).
+
+## 4.4 First increment — done (2026-07-28)
+
+The smallest useful slice, as originally scoped:
+
+> For the single highest-confidence, Boolean-confirmed, critical side-action
+> feature: generate one side-core solid by sweeping a planar proxy of its
+> face set along its computed `release_direction`, subtract it from the
+> containing mold half, and export it as a third solid.
+
+**Gate — verified on both real demo parts**: the three solids (cavity,
+core, side core) reload from STEP with exactly 3 `TopAbs_SOLID`s, and their
+volumes are consistent with the blank minus the part
+(`reduced_half + untouched_half + side_core` matches the original
+`cavity + core` total to within 0.001% on both parts):
+
+```
+Part1 @ pull=(0,0,1): feature 0, 6 faces, depth 26.97mm
+  side_core_volume=9219.8 mm³, containing_half=core, conservation_error=0.00%
+Part3 @ pull=(0,0,-1): feature 0, 1 face, depth 40.01mm, release≈+X
+  side_core_volume=46967.3 mm³, containing_half=cavity, conservation_error=0.00%
+```
+
+Both parts' *optimal* pull direction eliminates undercuts by design (that's
+what the direction optimizer searches for), so demonstrating this required a
+fixed non-optimal direction — the API and frontend both support this via the
+same manual-direction override mechanism as S3.6 (Bosch criterion #2).
+
+Two real sizing/tolerance bugs were found and fixed while prototyping this
+against real geometry (full detail in `side_core.py`'s module docstring and
+`CHANGELOG.md` 2026-07-28):
+- Footprint sizing must use each feature face's `Bnd_Box` corners, not face
+  centroids (zero scatter for a single-face feature) or vertex-only sampling
+  (misses curved-edge extrema — measured a 24x undersizing on Part3).
+- The `BRepAlgoAPI_Common` fuzzy tolerance that measures the side-core
+  overlap must be reused, unchanged, for the following `BRepAlgoAPI_Cut` —
+  a mismatched pair measured 37.72% volume-conservation error on Part1 even
+  though both Boolean operations individually reported success.
+
+## 4.5 Honesty constraint
+
+**Criterion #5 may now be described as**: "a real side-core solid exists for
+the single highest-confidence critical feature, Boolean-subtracted from the
+containing mold half, and exported alongside cavity/core in the same AP214
+STEP file." Do **not** describe it as "side-core generation is complete" —
+grouped/multi-feature generation (§4.3 Q1, §4.6) is explicitly out of scope
+— and do **not** describe it as "lifter/slide/collapsible-core selection is
+implemented" (§4.3 Q4 is explicitly not decided by this module; it answers
+only what volume must retract and along which direction, not what kind of
+moving part does it).
+
+## 4.6 Explicitly deferred — not this increment
+
+Grouping multiple/spatially-close undercut features into a shared side core
+(§4.3 Q1) needs its own design pass if/when it becomes a requirement:
+ordering when several side cores interact with the same mold half, how to
+decide "spatially close enough to share," and whether a shared side core
+should use one release direction or per-feature directions swept
+independently and then fused. Not attempted here — see `TODO.md` S4.3.
+
+---
+
 # PHASE 3 — End-to-End Real-World Testing
+
+> **⚠️ [HISTORICAL — partially superseded]** F1 is resolved. The core intent of
+> this phase — catching geometry defects that mock tests miss — is now the
+> cross-cutting work in §0.4, which is more specific about *which* assertions
+> would have caught *which* bugs. The test matrix and Docker-evidence sections
+> below remain valid.
 
 ## 3.1 Prerequisite
 
@@ -887,6 +1470,10 @@ CLAUDE.md invariant #3 ("Never import OCC in `frontend/`") extends to
 validates nothing about generalization. Restore the true `Part1.stp` (likely
 `rename.stp` / `Element_Packaging_Cap.stp`), confirm with the team, and only
 then proceed.
+
+**[RESOLVED 2026-07-27]** — Part1 = 522,419 B / `d0c89a7c…` (311 faces,
+30.78 mm bbox); Part3 = 863,881 B / `a373ffdf…` (414 faces, 68.12 mm bbox).
+Genuinely different geometry. There is no `Part2.stp`.
 
 ## 3.2 Test matrix
 
@@ -972,23 +1559,33 @@ Production changes:
 
 ---
 
-# PHASE 4 — AI Agent Orchestration Layer
+# STAGE 5 — AI Agent Orchestration Layer — DONE (2026-07-28)
 
-> **Current state, stated plainly**: `backend/agent/dfm_agent.py` and
-> `backend/agent/tools.py` are **0 bytes**. Nothing exists. Per
-> `.claude/rules/honesty-and-scope.md`, do not describe this layer as
-> implemented, partially implemented, or scaffolded until code lands.
+> *(Originally "Phase 4". Renumbered 2026-07-28 — content unchanged and still current.)*
 
-## 4.1 Provider strategy: provider-agnostic, Gemini default
+> **Status, stated plainly**: `backend/agent/` is implemented and verified.
+> Gemini live-verified end-to-end against real `Part1.stp`; Anthropic/
+> OpenAI/Grok structurally verified (real SDK signatures, mocked-provider
+> unit tests) but not live-tested — no key was available for those three
+> this session. See `CHANGELOG.md` 2026-07-28 for full detail, including
+> two real bugs found and fixed during live verification.
 
-**Decision (2026-07-26)**: the agent layer is built against a provider-agnostic
-interface, with **Google Gemini as the default provider** for cost and ease of
-testing, and Anthropic and OpenAI as first-class swappable adapters.
+## 4.1 Provider strategy: provider-agnostic, Gemini default — resolved with corrections
 
-This supersedes the `agent.model: "gpt-4o-mini"` value currently in
-`config.yaml` and the matching note in `TODO.md`.
+**Decision (2026-07-26), reaffirmed 2026-07-28 against real conflicting
+evidence**: the agent layer is built against a provider-agnostic interface.
+This section originally named Gemini as default with Anthropic/OpenAI as
+adapters — but the *actual* `docker-compose.yml` only ever wired through
+`OPENAI_API_KEY`/`GROK_API_KEY`, and `requirements.txt` already pinned
+`langchain-openai`/`openai`, never `google-generativeai`/`anthropic`. Per
+this project's own honesty rules (actual source/config outranks a planning
+doc when they disagree), this was surfaced to the user rather than
+silently resolved either way. The user chose **provider-agnostic, all
+three adapters** — Gemini, Anthropic, and OpenAI all built, plus Grok as a
+fourth option reusing the OpenAI adapter class via its OpenAI-compatible
+endpoint (matching the scaffold that was already there).
 
-Rationale:
+Rationale (still holds):
 
 - Gemini is the cheapest per-token option of the three at the tier this project
   needs, and the team can test against it without budget friction.
@@ -997,24 +1594,39 @@ Rationale:
 - All three providers expose equivalent function/tool-calling semantics, so the
   abstraction is thin.
 
+**Two corrections made during live verification, before any code was
+written against a wrong assumption:**
+
+1. **Model**: `gemini-2.0-flash` (this section's original pick) returns
+   **zero free-tier quota** on the team's real key — confirmed via a live
+   `generateContent` call returning HTTP 429 `RESOURCE_EXHAUSTED` with
+   `limit: 0`. `gemini-2.5-flash` works with real successful responses on
+   the same key and was chosen as the default instead.
+2. **Package**: `google-generativeai` (named below) is the **legacy** SDK.
+   The current, actually-installable, maintained package is `google-genai`
+   — verified via a real `pip install` + a real live tool-calling round
+   trip, rather than guessing at the legacy package's API surface.
+
 ```yaml
 agent:
-  provider: "gemini"            # gemini | anthropic | openai
+  provider: "gemini"            # gemini | anthropic | openai | grok
   temperature: 0.1
   max_tool_iterations: 8
+  max_face_ids_per_tool: 25
   models:
-    gemini:    "gemini-2.0-flash"
+    gemini:    "gemini-2.5-flash"   # was gemini-2.0-flash -- see correction 1 above
     anthropic: "claude-opus-5"
     openai:    "gpt-4o-mini"
+    grok:      "grok-2-latest"
 ```
 
-New dependencies (add to `requirements.txt`; all pip-installable, none are
-conda-only like OCC):
+Dependencies actually added to `requirements.txt` (all pip-installable, none
+conda-only like OCC; also bumped `openai` 1.25.0 → 1.109.1 after a real
+`httpx`-compatibility conflict — see `CHANGELOG.md`):
 
 ```
-google-generativeai          # gemini
-langchain-google-genai       # only if the LangChain path is kept
-anthropic                    # anthropic adapter
+google-genai==2.14.0          # gemini -- the modern unified SDK, NOT google-generativeai (see correction 2)
+anthropic==0.120.1            # anthropic adapter
 # openai / langchain-openai already pinned
 ```
 
@@ -1247,26 +1859,32 @@ language").
 
 ---
 
-# PHASE 5 — PDF Report Export
+# STAGE 6 — PDF Report Export — DONE (2026-07-29)
+
+> *(Originally "Phase 5". Renumbered 2026-07-28 — content unchanged and still current.)*
+
+> **Status**: ✅ Implemented and verified end-to-end. See `CHANGELOG.md`
+> 2026-07-29 for full detail, including two real bugs found and fixed
+> during verification.
 
 ## 5.1 Scope
 
 Confirmed deliverable (2026-07-27), deliberately sequenced last. `reportlab`
-has been pinned in `requirements.txt` since the initial scaffold and is
-imported nowhere — this phase is what finally uses it.
+had been pinned in `requirements.txt` since the initial scaffold and was
+imported nowhere — `backend/report/pdf_export.py` is what finally uses it.
 
 ## 5.2 Content sourced from prior phases
 
-| Section | Source |
-|---|---|
-| Part summary, topology | `PartGeometry.to_dict()` (Phase 1, already exists) |
-| Draft compliance | `DraftAnalysisResult` — %s, bad face count, `threshold_source` (Phase 1e) |
-| Undercut findings | `UndercutDetectionResult.features` — severity, type, evidence source (Phase 1c) |
-| Pull direction | `DirectionOptimizationResult.best_direction` + ranking (Phase 1d) |
-| Parting line | Readiness, closure, refined curve image (Phase 1a) |
-| Core/cavity | Areas, solid split status (Phase 1b) |
-| Viewport screenshots | React viewer canvas → PNG via `renderer.domElement.toDataURL()` (Phase 2) |
-| Narrative summary | `DfMReport.summary` + findings, if the agent has run (Phase 4) — optional, the report must be generatable without it |
+| Section | Source | Status |
+|---|---|---|
+| Part summary, topology | `PartGeometry.to_dict()` (Phase 1, already exists) | ✅ |
+| Draft compliance | `DraftAnalysisResult` — %s, bad face count | ✅ (`threshold_source` lives per-suggestion, not top-level — not surfaced as a standalone field) |
+| Undercut findings | `UndercutDetectionResult.features` — severity, type, evidence source | ✅ |
+| Pull direction | `DirectionOptimizationResult.best_direction` + ranking | ✅ |
+| Parting line | Readiness, closure, silhouette coverage, bridging status, parting-surface status | ✅ (no embedded curve image — text/table only) |
+| Core/cavity | Areas, solid split status, side-core status (Stage 4) | ✅ |
+| Viewport screenshots | Frontend-supplied base64 PNG (NOT `renderer.domElement.toDataURL()` — that assumed the cancelled React viewer; the actual frontend is Streamlit, so the screenshot must come from whatever the client can capture) | ✅ opt-in, verified with a real embedded PNG |
+| Narrative summary | `DfMReport.summary` + findings, if the agent has run (Stage 5) — optional, the report must be generatable without it | ✅ opt-in via `include_agent_narrative`, degrades gracefully on failure |
 
 ## 5.3 Module layout
 
@@ -1277,26 +1895,33 @@ backend/report/
   templates.py        section layout, styles, Bosch-neutral branding placeholders
 ```
 
-`pdf_export.py` takes the same result dataclasses every other module already
-produces (`DraftAnalysisResult`, `UndercutDetectionResult`,
-`DirectionOptimizationResult`, `PartingLineResult`, `CoreCavityResult`, and
-optionally `DfMReport`) — it does not recompute anything. This keeps the
-report a pure presentation layer over already-validated engine output, which
-matters for the honesty rules: the PDF can never say something the engine
-didn't already assert.
+`pdf_export.py`'s single entry point, `build_dfm_report_pdf()`, takes the
+same `.to_dict()` payloads every analysis endpoint already returns as JSON
+(not the dataclasses directly — this matches how `backend/api/main.py`
+already assembles responses, and keeps `pdf_export.py` decoupled from
+importing the geometry dataclasses at all) — it does not recompute
+anything. This keeps the report a pure presentation layer over
+already-validated engine output, which matters for the honesty rules: the
+PDF can never say something the engine didn't already assert.
 
 ## 5.4 API surface
 
 ```
 POST /parts/{filename}/export/report
-     { pull_direction?, include_agent_narrative? }
+     ?use_optimal_direction&dx&dy&dz            (S3.6 direction-override pattern)
+     &include_solid_split&include_side_core&include_agent_narrative
+     { screenshot_png_base64? }                 (optional JSON body)
      → application/pdf
 ```
 
 Screenshots are supplied by the frontend as base64 PNG in the request body
 (the backend has no renderer and must not gain one — CLAUDE.md invariant #3
 keeps OCC/rendering out of anything client-facing, and the reverse holds too:
-the backend should not attempt to rasterize a Three.js scene).
+the backend should not attempt to rasterize a viewport itself). The original
+text here referenced `renderer.domElement.toDataURL()`, which assumed the
+cancelled React viewer (§0.2) — the actual frontend is Streamlit, so
+screenshot capture is left entirely to whatever the client can produce; the
+endpoint just accepts base64 PNG bytes from any source.
 
 ## 5.5 Honesty constraint
 
@@ -1320,7 +1945,7 @@ milestone until the previous gate passes.**
 | 0.1 | Resolve F1: confirm and restore the true `Part1.stp` | Two distinct MD5s in `data/parts/`; both load | ✅ Done — `Part1.stp` (522,419 B) and `Part3.stp` (863,881 B) are distinct, both AP214 |
 | 0.2 | Fix F2: add `core_cavity.threshold` to `config.yaml`, wire through `backend/config.py`, remove hardcoded defaults | No literal `0.05` default in `classify_core_cavity()`'s signature or the `/core-cavity` `Query()`; `load_settings().dfm.core_cavity.threshold == 0.05` | ✅ Done |
 | 0.3 | Fix F3: correct `.claude/rules/api-layer.md` endpoint table | Documented endpoints match `main.py` | ✅ Done |
-| 0.4 | Run the full OCC validation in Docker, commit real artifacts | No `status: "skipped"` in `reports/` | 🔄 In progress |
+| 0.4 | Run the full OCC validation in Docker, commit real artifacts | No `status: "skipped"` in `reports/` | ✅ Done — evidence in `reports/level1_validation/` |
 
 Also completed as part of Phase 0: corrected the overclaimed "Complete" status
 for parting line and core/cavity in `docs/SUBMISSION_REPORT.md`'s evaluation
@@ -1336,12 +1961,35 @@ file).
 | 1.3 | Extremal vertex depth | Exact depth along release vector, parting-plane reference | Known-geometry boss: depth within 1% of hand calculation | ⚠️ Reassessed (2026-07-27) — see note below |
 | 1.4 | Flash risk + coarse-to-fine direction search | New scoring term; two-stage search | Fine stage finds a direction scoring ≤ coarse winner on Part1. **`mutate=False` regression test passes** | ✅ Done (2026-07-27) — see note below |
 | 1.5 | Draft conditional thresholds | Per-face override, surface-type table, deep-rib detection | Marking a face textured raises its requirement to 3.0°; `threshold_source` reported | ✅ Done, scoped down (2026-07-27) — see note below |
-| 1.6 | networkx parting-line graph | Real graph replaces bounded DFS | Existing `test_parting_line.py` passes unchanged | |
-| 1.7 | Component bridging | Bridge via real B-Rep edges using `is_boundary` | A part with a split silhouette yields one connected path | |
-| 1.8 | Closed-loop guarantee | Min-cost cycle over components | `is_closed == True` and closure error < 0.05 mm on Part1 | |
-| 1.9 | Parting surface | Planar extrusion + `BRepFill_Filling` fallback | A valid `TopoDS_Face`/`Shell` covering the loop; planar path taken on Part1 | |
-| 1.10 | Core/cavity solid split | Blank → cut → split → two solids | Exactly 2 solids; volumes sum to blank − part within tolerance | |
-| 1.11 | Multi-solid STEP export | `STEPControl_Writer` | Written file reloads in pythonOCC with 2 solids; opens in a viewer | |
+| 1.6 | networkx parting-line graph | Real graph replaces bounded DFS | ~~Existing `test_parting_line.py` passes unchanged~~ → **revised**: `graph_cleanup.strategy` ≠ `greedy-fallback` on a real part | ✅ Done 2026-07-28 (Bug B) — **first attempt failed this milestone's intent**, see F4 |
+| 1.7 | Component bridging | Bridge via real B-Rep edges using `is_boundary` | A part with a split silhouette yields one connected path | ✅ Done, then repaired twice (Bug F, Bug D, Bug H-2) |
+| 1.8 | Closed-loop guarantee | Min-cost cycle over components | ~~`is_closed == True`~~ → **revised**: *measured* first→last gap ≤ 0.05 mm, not the reported flag | ✅ Done, repaired (Bug A) — measured 0.000000 mm on both parts |
+| 1.9 | Parting surface | Planar extrusion + `BRepFill_Filling` fallback | A valid `TopoDS_Face`/`Shell` covering the loop | ✅ Done, repaired (Bug E) — both parts `generated_filling`. **Filling is the normal path, not a fallback**: both parts have genuinely 3-D parting lines |
+| 1.10 | Core/cavity solid split | Blank → cut → split → two solids | Exactly 2 solids; volumes sum to blank − part within tolerance | ⚠️ Implemented, **gate never verified** against a valid surface → **Stage 2** |
+| 1.11 | Multi-solid STEP export | `STEPControl_Writer` | Written file reloads in pythonOCC with 2 solids; opens in a viewer | ⚠️ Implemented, **gate never verified** → **Stage 2** |
+
+**Milestones 1.6–1.11 — what went wrong, and the lesson.** These six were
+marked complete in a separate session on the basis of "tests pass / function
+exists". An independent audit (`docs/ENGINE_AUDIT_2026-07-27.md`) found that
+four of them did not actually produce correct geometry, and that the
+parting-line stage was **reporting success while emitting a curve with a
+17.35 mm gap** — a false guarantee that silently invalidated everything
+downstream.
+
+Note the gate revisions marked above. Several original gates were satisfiable
+*without the feature working*:
+
+- 1.6's gate ("existing tests pass unchanged") is satisfied by changing
+  nothing that matters — which is exactly what happened.
+- 1.8's gate (`is_closed == True`) checks a **reported flag**, which Bug A set
+  unconditionally. A gate must measure the geometry, not read the claim.
+
+Nine defects were found and fixed (Bugs A, B, D, E, F, G, H, H-2, H-3). The
+full test suite now runs 237/237 with zero exclusions — previously 2–3 tests
+hung indefinitely on real OCC and were permanently skipped, masking the
+problem further.
+
+**Every gate from here on must be measured against real geometry.** See §0.4.
 
 **Milestone 1.5 implementation note — scoped down deliberately**: implemented
 tiers 1 and 4 of the roadmap's resolution order (explicit per-face override
@@ -1530,88 +2178,139 @@ Milestone 1.6+).
 **Phase 1 exit gate**: full validation harness passes on the restored `Part1.stp`
 inside Docker, with a closed parting loop and two exported solids.
 
-## Phase 2 — Frontend (7–10 days)
+## ~~Phase 2 — Frontend (7–10 days)~~ — CANCELLED
 
-| # | Milestone | Deliverable | Gate |
+> React migration cancelled 2026-07-28 (§0.2). Items 2.1–2.3 were backend
+> work and survive as **Stage 3.8**; the rest is dropped.
+
+| # | Milestone | Fate |
+|---|---|---|
+| 2.1 | `PartGeometry` LRU cache | ➡️ **Kept** — Stage 3.8. Backend work, framework-independent |
+| 2.2 | Split geometry/analysis endpoints | ➡️ **Kept** — Stage 3.8 |
+| 2.3 | Binary mesh transport | 🤔 Optional — revisit only if payload size is measured to be a real bottleneck in Streamlit |
+| 2.4–2.9 | Vite/R3F scaffold, client overlays, gizmo, split-screen, panels | ❌ Dropped. The Plotly/WebGL viewer already renders client-side and interactively |
+
+## Stage 2 — Unblock Level 2 (½–1 day)
+
+| # | Milestone | Gate (measured on real geometry) |
+|---|---|---|
+| S2.1 | Re-run core/cavity solid split against the valid parting surface | Exactly 2 solids; volumes sum to blank − part within fuzzy tolerance |
+| S2.2 | Re-run AP214 mold-half export | Exported file **reloads** via `load_step()` and yields 2 solids |
+| S2.3 | Record the Part3 outcome honestly | Either it passes, or the failure and its cause (18.1% silhouette coverage) are documented — **not** worked around |
+
+**Stage 2 exit gate**: Level 2 produces verified output for at least Part1,
+with Part3's status recorded truthfully either way.
+
+## Stage 3 — Engineering-Review UI (Streamlit)
+
+| # | Milestone | Gate |
+|---|---|---|
+| S3.1 | Three-layer progressive disclosure (verdict / evidence / provenance) | Default view shows ≤ 5 verdict items; raw factor dumps are collapsed by default |
+| S3.2 | Metric glossary — inline tooltips + reference page | Every number on screen has a reachable definition stating *meaning / good value / what to do* |
+| S3.3 | Surface `graph_cleanup.strategy` in the default view | A greedy-fallback run is visible **without** opening a debug panel |
+| S3.4 | Issue-first layout | Findings ranked by severity with location + reason + recommendation, not module-by-module panels |
+| S3.5 | Direction shown as vector + closest axis + tilt | "(+0.232,+0.357,+0.905) ≈ +Z, tilted 25°" |
+| S3.6 | **Direction override (Bosch criterion #2)** | ±X/±Y/±Z/custom recomputes the full downstream chain and shows the delta vs. optimal |
+| S3.7 | Diverse candidate comparison | Candidate list shows directions ≥ 15° apart, not six near-duplicates |
+| S3.8 | Backend `PartGeometry` LRU cache + mesh/analysis split | Second call ≥ 10× faster; cached `FaceData` provably unmutated (`mutate` regression test) |
+
+**Stage 3 exit gate**: a first-time viewer can state the part's top three
+issues without scrolling, and a developer can determine which code path ran
+from the UI alone.
+
+## Stage 4 — Side-Core / Lifter PL (Bosch criterion #5)
+
+| # | Milestone | Gate |
+|---|---|---|
+| S4.1 | **Design pass** — answer the six questions in Stage 4 §4.3 | Written decisions, reviewed, before any code |
+| S4.2 | First increment: one side core for Part1's critical feature | Three solids (cavity, core, side core) reload from STEP with consistent volumes |
+| S4.3 | Generalize to multiple / grouped features | Documented grouping rule; no regression on Part1 |
+
+**Stage 4 exit gate**: criterion #5 can be demonstrated with geometry, not
+recommendation strings.
+
+## Cross-cutting — Real-Geometry Assertions (do this alongside Stage 2)
+
+| # | Milestone | Gate |
+|---|---|---|
+| X.1 | Assertion flags in `part_validation.py` | `--assert-parting-line-closed`, `--assert-core-cavity-solids=2`, `--assert-exact-optimiser` each **fail correctly on deliberately bad input** |
+| X.2 | Synthetic known-answer fixtures | Box and box+boss produce hand-verified results |
+| X.3 | Real-OCC integration suite in CI | Runs in the backend image; artifacts committed |
+| X.4 | Performance budgets enforced | All stages within budget; recorded in `reports/` |
+| X.5 | Production Docker build | No source mounts, multi-stage, health checks green |
+
+**This is the highest-leverage non-feature work in the plan.** Every bug in
+the 2026-07-27 audit would have been caught by X.1 alone.
+
+## Stage 5 — AI Agent — DONE (2026-07-28)
+
+| # | Milestone | Gate | Status |
 |---|---|---|---|
-| 2.1 | `PartGeometry` LRU cache | mtime-keyed cache + mutation regression test | Second `/direction` call ≥ 10× faster; cached `FaceData` provably unmutated |
-| 2.2 | Split geometry/analysis endpoints | `/geometry/mesh` + `/analysis/*` | Analysis payloads carry no mesh arrays |
-| 2.3 | Binary mesh transport | base64 typed arrays | Mesh payload ≥ 5× smaller than current JSON |
-| 2.4 | Vite + R3F scaffold | App shell, part list, mesh render | Part renders; orbit at 60 fps (Chrome perf panel) |
-| 2.5 | Client-side overlays | Draft, undercut, core/cavity via `faceId` LUT | Overlay switch issues zero network requests |
-| 2.6 | Parting line + undercut volumes | Fat lines, translucent regions | Refined curve renders over the part; volumes are translucent |
-| 2.7 | Pull-direction gizmo | Draggable arrow, re-analyze on release | Direction change triggers exactly one analysis round-trip |
-| 2.8 | Split-screen before/after | Shared camera, dual viewport | Both panes render; cameras stay synchronized |
-| 2.9 | Panels + report view | Findings, tables, legends | Feature parity with the Streamlit panels |
+| 4.1 | `providers.py` + Gemini adapter | Round-trip tool call against Gemini succeeds | ✅ Live-verified — real function-calling round trip against `gemini-2.5-flash` |
+| 4.2 | Anthropic + OpenAI adapters | Same tool spec works on all three; provider swap needs only a config edit | ✅ Built + unit-tested against real SDK signatures (0.120.1 / 1.109.1); not live-tested (no key). Grok added as a 4th, reusing the OpenAI adapter class |
+| 4.3 | `tools.py` — six tools | Each returns JSON-safe truncated dicts; **no OCC handle escapes** (assert in test) | ✅ Verified against real Part1.stp, including a direct mutate-safety check |
+| 4.4 | `schemas.py` + `prompts.py` | `DfMReport` validates; prompt encodes the honesty rules | ✅ Done |
+| 4.5 | `dfm_agent.py` loop | Full analysis on Part1 in ≤ 8 iterations | ✅ Live-verified — completed in 1-3 tool calls |
+| 4.6 | `/agent/analyze` endpoint | Returns a valid `DfMReport` | ✅ Live-verified via FastAPI TestClient, success + error paths |
+| 4.7 | Frontend agent panel | Findings render with evidence-source badges | ✅ Verified via Streamlit AppTest, including a real rate-limit error rendering gracefully |
+| 4.8 | Accuracy validation | Every numeric claim in the report traces to a tool result | ✅ Confirmed on the one real live finding (face 232, 1.075°/1.5° draft) |
 
-**Phase 2 exit gate**: React app covers every Streamlit capability; Streamlit
-still runs as fallback.
+**Stage 5 exit gate met**: the agent produced a real DfM report on Part1.stp
+whose every number (face 232, 1.075°/1.5° draft) traces to an actual tool
+result, with `evidence_source="boolean_confirmed"` visually distinguished
+from proxy heuristics. `tools_called`/`pull_direction`/
+`pull_direction_source` are tracked mechanically, never taken from the
+model's own text. See `CHANGELOG.md` 2026-07-28 for the two real bugs found
+and fixed during live verification (direction-tracking mis-classification;
+an `openai`/`httpx` version conflict).
 
-## Phase 3 — Testing & Production (4–6 days)
+**Deferred, not built this pass**: `/agent/chat` streaming endpoint (only
+`/agent/analyze`'s single-shot sweep was built); Anthropic/OpenAI/Grok live
+verification (no API key available for those three this session).
 
-| # | Milestone | Gate |
-|---|---|---|
-| 3.1 | Synthetic known-answer fixtures | Box and box+boss produce hand-verified results |
-| 3.2 | Real-OCC integration suite | Runs in Docker; no mocks; committed artifacts |
-| 3.3 | Assertion flags in validation harness | `--assert-parting-line-closed` etc. fail correctly on bad input |
-| 3.4 | Part3 Level 2 pass | Solid split + export succeed on Part3 |
-| 3.5 | Performance budgets | All stages within budget; recorded in `reports/` |
-| 3.6 | Production Docker build | No source mounts, no Xvfb, multi-stage frontend, health checks green |
-| 3.7 | CI pipeline | GitHub Actions runs the OCC suite in the backend image |
+## Stage 6 — PDF Report Export — DONE (2026-07-29)
 
-**Phase 3 exit gate**: both parts pass end-to-end in a production image with
-committed evidence.
+| # | Milestone | Gate | Status |
+|---|---|---|---|
+| 5.1 | `backend/report/pdf_export.py` + `templates.py` | A minimal PDF (part summary only) generates from a real `PartGeometry` | ✅ Verified on real Part1/Part3 |
+| 5.2 | Section builders per result dict | Every section renders from its `.to_dict()` payload with no recomputation | ✅ |
+| 5.3 | Screenshot embedding | Frontend-supplied base64 PNG embeds correctly in the PDF | ✅ Verified with a real embedded PNG via FastAPI TestClient |
+| 5.4 | `/parts/{filename}/export/report` endpoint | Returns `application/pdf`; structured error on failure | ✅ Verified: success, 404 missing-part, 400 invalid-base64 |
+| 5.5 | Frontend "Export PDF Report" action | One click produces a downloadable file end-to-end | ✅ Verified via Streamlit AppTest — real click, real bytes, no exception |
+| 5.6 | Honesty audit | Every warning/degraded-confidence flag from the source dataclasses appears in the PDF | ✅ `_collect_warnings()` aggregates all sources; 2 real display bugs found and fixed (see CHANGELOG.md 2026-07-29) |
 
-## Phase 4 — AI Agent (4–6 days)
-
-| # | Milestone | Gate |
-|---|---|---|
-| 4.1 | `providers.py` + Gemini adapter | Round-trip tool call against Gemini succeeds |
-| 4.2 | Anthropic + OpenAI adapters | Same tool spec works on all three; provider swap needs only a config edit |
-| 4.3 | `tools.py` — six tools | Each returns JSON-safe truncated dicts; **no OCC handle escapes** (assert in test) |
-| 4.4 | `schemas.py` + `prompts.py` | `DfMReport` validates; prompt encodes the honesty rules |
-| 4.5 | `dfm_agent.py` loop | Full analysis on Part1 in ≤ 8 iterations |
-| 4.6 | `/agent/analyze` endpoint | Returns a valid `DfMReport` |
-| 4.7 | Frontend agent panel | Findings render with evidence-source badges |
-| 4.8 | Accuracy validation | Every numeric claim in the report traces to a tool result |
-
-**Phase 4 exit gate**: agent produces a DfM report whose every number is
-traceable to engine output, with proxy and Boolean-confirmed evidence visually
-distinguished.
-
-## Phase 5 — PDF Report Export (2–3 days)
-
-| # | Milestone | Gate |
-|---|---|---|
-| 5.1 | `backend/report/pdf_export.py` + `templates.py` | A minimal PDF (part summary only) generates from a real `PartGeometry` |
-| 5.2 | Section builders per result dataclass | Every section renders from its dataclass with no recomputation |
-| 5.3 | Screenshot embedding | Frontend-supplied base64 PNG embeds correctly in the PDF |
-| 5.4 | `/parts/{filename}/export/report` endpoint | Returns `application/pdf`; structured error on failure |
-| 5.5 | Frontend "Export PDF Report" action | One click produces a downloadable file end-to-end |
-| 5.6 | Honesty audit | Every warning/degraded-confidence flag from the source dataclasses appears in the PDF |
-
-**Phase 5 exit gate**: a generated PDF for Part1 (and, if solid split has
-landed, Part3) contains every section, embeds at least one viewport
-screenshot, and surfaces any engine warnings rather than omitting them.
+**Stage 6 exit gate met**: a generated PDF for both Part1 and Part3
+contains every section, embeds a real screenshot when supplied, and
+surfaces every engine warning rather than omitting any. 18 new tests in
+`tests/test_pdf_export.py`.
 
 ---
 
 ## Cross-Cutting Invariants (apply to every milestone)
 
-1. **`mutate=True` only for the final displayed result.** Never in a scoring
+1. **A gate must measure geometry, not read a reported flag.** If a no-op
+   change could satisfy a gate, the gate is wrong. *(Added 2026-07-28 — this
+   is the single lesson from the 1.6–1.11 failure. Bug A set
+   `closure_guaranteed=True` unconditionally; Bug B satisfied "existing tests
+   pass unchanged" by changing nothing that mattered.)*
+2. **"Tests pass" is necessary, never sufficient.** Mock tests assert
+   structure; only real geometry proves correctness.
+3. **Never leave a `-k` exclusion in a documented test command.** It hides
+   exactly the thing it excludes (Bug G hid for weeks this way).
+4. **`mutate=True` only for the final displayed result.** Never in a scoring
    loop. This gets more dangerous, not less, once `PartGeometry` is cached.
-2. **No OCC in any frontend.** Applies to `frontend-web/` exactly as it does to
-   `frontend/`.
-3. **No OCC via pip.** conda-forge only.
-4. **No new magic numbers.** Every threshold introduced here goes in
+5. **No OCC in the frontend.** `frontend/` talks to the API only.
+6. **No OCC via pip.** conda-forge only.
+7. **No new magic numbers.** Every threshold introduced here goes in
    `config.yaml` and `backend/config.py`.
-5. **`data/parts/` is read-only.** The F1 restoration is a one-time
+8. **`data/parts/` is read-only.** The F1 restoration is a one-time
    human-approved exception.
-6. **Structured errors everywhere**: `code`, `message`, `operation`,
+9. **Structured errors everywhere**: `code`, `message`, `operation`,
    `recovery_hint`, `details`.
-7. **Update `STATUS.md`, `CHANGELOG.md`, `TODO.md` after every milestone.**
-8. **Never claim a capability before its gate passes.** `IMPLEMENTATION_STATUS.md`
-   is updated when a milestone lands, not when it starts.
+10. **Update `STATUS.md`, `CHANGELOG.md`, `TODO.md` after every milestone.**
+11. **Never claim a capability before its gate passes.**
+    `IMPLEMENTATION_STATUS.md` is updated when a milestone lands, not when it
+    starts.
 
 ---
 
@@ -1619,14 +2318,17 @@ screenshot, and surfaces any engine warnings rather than omitting them.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| `BRepFill_Filling` fails on complex non-planar loops | Blocks 1.9 → 1.10 → 1.11 | Planar-first strategy; most automotive parts admit a planar or near-planar parting line. Gate on flatness and report honestly when it fails |
-| Boolean split yields ≠ 2 solids | Blocks 1.10 | Report actual count and the fuzzy value used; do not guess. Usually means the sheet did not fully cut the blank — extend it further |
-| Caching + `mutate` interaction corrupts state | Silent wrong results across users | Rule: analysis handlers use `mutate=False`. Add the regression test in 2.1, before any caching ships |
-| Fine-grained search inflates `/direction` runtime | Poor UX | Fine stage is prefilter-only, no Booleans. Budget-gated in 3.5. `fine_search_enabled: false` is a one-line rollback |
-| React migration overruns | No demo UI | Strangler fig: Streamlit stays live through 2.6 |
-| Convexity sign convention inverted | Systematically wrong undercut suppression | Milestone 1.1's gate is a synthetic box with hand-known answers — precisely to catch this |
-| Agent narrates wrong geometry convincingly | Worst-case failure for a DfM tool | Phase 4 is last, by design. Every number must trace to a tool result (gate 4.8) |
-| Gemini's JSON Schema subset rejects a tool schema | Blocks 4.1 | Author all schemas to Gemini's subset — the most restrictive of the three — so the other adapters are trivial |
+| **A milestone is marked complete without producing correct geometry** | 🔴 **MATERIALISED — this is what happened to 1.6–1.11.** Four milestones passed their gates while emitting broken output; the parting line reported a closed loop with a 17.35 mm gap | §0.4 real-geometry assertions (X.1). **Gates must measure geometry, not read a reported flag.** Rewrite any gate that a no-op change could satisfy |
+| **Green mock tests give false confidence** | 🔴 **MATERIALISED — every audit bug survived a fully green suite** | Mock tests assert structure; add real-OCC assertions (X.1–X.3). Treat "tests pass" as necessary, never sufficient |
+| **A test hangs on real OCC and gets permanently skipped** | 🟠 **MATERIALISED (Bug G)** — 2–3 tests hung indefinitely and were excluded via `-k` for weeks, masking further problems | Fixed by an `isinstance` type guard before SWIG calls. **Never leave a `-k` exclusion in a documented test command** — it hides the thing it excludes |
+| Part3's fragmented silhouette blocks Level 2 | Level 2 may only work on Part1 | Already flagged honestly by `silhouette_coverage_ratio`. Stage 2 gate S2.3 requires recording the outcome truthfully rather than working around it |
+| `BRepFill_Filling` fails on complex non-planar loops | Blocks 1.9 → 1.10 → 1.11 | ✅ Handled: fixed constructor args + loop decimation. Note **filling is the normal path, not a fallback** — both parts have genuinely 3-D parting lines |
+| Boolean split yields ≠ 2 solids | Blocks 1.10 | Report actual count and the fuzzy value used; do not guess. Usually means the sheet did not fully cut the blank — extend it further. **Gate S2.1** |
+| Caching + `mutate` interaction corrupts state | Silent wrong results across users | Rule: analysis handlers use `mutate=False`. Add the regression test in **S3.8**, before any caching ships |
+| Fine-grained search inflates `/direction` runtime | Poor UX | Fine stage is prefilter-only, no Booleans. `fine_search_enabled: false` is a one-line rollback. **Side effect found**: the fine cone makes top candidates near-duplicates — see Stage 3.7 |
+| Convexity sign convention inverted | Systematically wrong undercut suppression | Milestone 1.1's gate is a synthetic box with hand-known answers. **Still open**: Part3's 16 → 0 undercut swing needs mold-engineer sign-off |
+| Agent narrates wrong geometry convincingly | Worst-case failure for a DfM tool | Stage 5 is last, by design — and the audit proved the risk is real, not hypothetical. Every number must trace to a tool result (gate 4.8) |
+| Gemini's JSON Schema subset rejects a tool schema | Blocks 5.1 | Author all schemas to Gemini's subset — the most restrictive of the three — so the other adapters are trivial |
 
 ---
 
@@ -1636,11 +2338,27 @@ These were open questions in the original draft. Recorded here, with the
 original question preserved for context, so the reasoning isn't lost.
 
 1. **F1 — Part1/Part3 identity.** *Was*: which file is the true Level 1 input?
-   *Resolved*: no mix-up. `Part1.stp` is genuinely the Level 1 input and
-   `Part3.stp` is genuinely the Level 2 input, confirmed by the team.
-   `rename.stp` (`Element_Packaging_Cap.stp`) is unrelated and is not part of
-   the Level 1/2 pipeline. No data restoration needed — F1 is closed without
-   any change to `data/parts/`.
+
+   > **⚠️ CORRECTED 2026-07-28.** This entry previously read "no mix-up …
+   > no data restoration needed — F1 is closed without any change to
+   > `data/parts/`." That **contradicted** `TODO.md` and `STATUS.md`, which
+   > both record a genuine mix-up and a restoration. Re-verified against the
+   > filesystem; the correction below reflects the evidence.
+
+   *Resolved*: there **was** a genuine mix-up — `Part1.stp` and `Part3.stp`
+   originally shared an MD5 (both were the Level 2 file). `rename.stp`
+   (`Element_Packaging_Cap.stp`) was restored as `Part1.stp`.
+
+   Verified state (2026-07-28):
+
+   | File | Size | MD5 | Geometry |
+   |---|---|---|---|
+   | `Part1.stp` | 522,419 B | `d0c89a7c…` | 311 faces, 30.78 mm bbox (Level 1) |
+   | `Part3.stp` | 863,881 B | `a373ffdf…` | 414 faces, 68.12 mm bbox (Level 2) |
+
+   Two genuinely different parts. `rename.stp` no longer exists — its content
+   *is* `Part1.stp`. This is the one human-approved exception to the
+   "`data/parts/` is read-only" invariant.
 2. **Level 2 part.** `Part3.stp` is confirmed as the intended Level 2 input —
    no third file is expected.
 3. **Mold-half STEP export schema.** *Was*: AP203 vs AP214? *Resolved*: match

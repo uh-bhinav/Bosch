@@ -1,0 +1,9 @@
+﻿,Decision Area,Result,Evidence,Status
+0,Mold opening,"(+0.232, +0.357, +0.905)","Vector (+0.232, +0.357, +0.905)",Computed
+1,Draft,—,0.0% bad area,OK
+2,Detected undercuts,8 undercut features,1 major | 1 critical | 1 side-action | 1 high-confidence,Review
+3,Mold action,Side-action review,1 side-action feature(s),Review
+4,Residual undercuts,0 undercut features,after best direction,OK
+5,Parting line,Weak,score 0.08,Review
+6,Downstream use,Not report-ready,core/cavity block: True,Blocked
+7,Undercut conflict,—,optimal context clear; initial major feature exists,Review

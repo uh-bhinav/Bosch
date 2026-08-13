@@ -1,0 +1,30 @@
+{
+  "part": "Part3",
+  "note": "Controlled directions only (direction_source=manual). Read-only.",
+  "directions": [
+    {
+      "direction_label": "+X",
+      "direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "total_candidates": 329,
+      "h0_failure_count": 0,
+      "cases": []
+    },
+    {
+      "direction_label": "+Y",
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "total_candidates": 325,
+      "h0_failure_count": 0,
+      "cases": []
+    }
+  ]
+}

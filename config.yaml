@@ -46,6 +46,10 @@ dfm:
     fine_search_cone_half_angle_deg: 15.0
     fine_search_max_candidates: 60
   parting_line:
+    # Which engine runs. v1 stays the default until v2 wins or ties on every
+    # corpus part (docs/PARTING_LINE_ALGORITHM_PLAN.md, P6 cutover). v1 is
+    # frozen -- bug fixes only -- so this stays a genuine A/B.
+    engine: "v1"        # v1 | v2
     dot_tolerance: 0.01
     boundary_dot_tolerance: 0.15
     point_tolerance: 0.0001
@@ -60,6 +64,104 @@ dfm:
     # Milestone 1.8: closure guarantee
     max_closure_error_mm: 0.05
     max_components_exact_cycle: 8
+    # Bug H: flag loops that are too small to be the main parting line
+    # (fraction of the part's projected extent perpendicular to pull).
+    min_silhouette_coverage_ratio: 0.35
+  # ---------------------------------------------------------------------
+  # v2 parting-line engine (P0, 2026-08-09).
+  # Full rationale for every value: docs/PARTING_LINE_ALGORITHM_PLAN.md §13.
+  # NOTHING here may be hardcoded in algorithm code -- v1's buried
+  # search_edge_limit=22 / max_search_states=75000 made a silent fallback to a
+  # degraded strategy invisible in the result. Do not repeat that.
+  # ---------------------------------------------------------------------
+  parting_line_v2:
+    # --- visibility band ---
+    silhouette_epsilon: 0.02          # |g| <= this is zero-draft (~1.15 deg)
+    orientation_epsilon: 0.05         # H4 slack
+    orientation_violation_max: 0.02   # H4 rho_max (area fraction)
+
+    # --- scale-aware tolerances (x bbox diagonal at runtime) ---
+    weld_tolerance_rel: 1.0e-6        # floor 1e-7 mm; max'd with BRep vertex tol
+    closure_tolerance_rel: 1.0e-5     # H1
+    sag_tolerance_rel: 1.0e-3         # marching-squares grid + edge sampling
+    # How far a Track-B face curve's endpoint may be from the real bounding
+    # edge before stitch.py gives up snapping/cutting a junction there. The
+    # candidate edge search stays restricted to part.face_to_edges[face_id]
+    # (structurally real neighbours only), so raising this is safe. Was
+    # weld_tolerance_rel*100 (~6.8e-3mm on Part3); the 2026-08-12
+    # controlled-direction diagnostic measured real junction gaps of
+    # 0.043-1.05mm on Part3 -- 6x to 150x that radius. See backend/config.py.
+    stitch_snap_tolerance_rel: 2.0e-2 # floor 1e-6 mm
+
+    # --- H0 ON-SURFACE INVARIANT (definitional; plan §7.0 and H0) ---
+    # Both are max'd at runtime with the KERNEL's own declared tolerance for
+    # the specific face/edge (BRep_Tool.Tolerance), never used bare.
+    surface_tolerance_rel: 1.0e-6     # tau_surface, floor 1e-7 mm
+    edge_tolerance_rel: 1.0e-6        # tau_edge,    floor 1e-7 mm
+    # tau_silhouette = silhouette_epsilon * this (10x tighter than the band)
+    silhouette_error_factor: 0.1
+    # Smoothed curves are display-only unless they pass H0 themselves (§9.5).
+    # False by default so v1's levitating-curve defect cannot recur by omission.
+    allow_smoothed_as_geometry: false
+
+    # --- Track A: edge-local silhouette (§3) ---
+    edge_samples_min: 5
+    edge_samples_max: 33
+
+    # --- Track B: face-interior silhouette (§4) ---
+    uv_grid_min: 8
+    uv_grid_max: 256
+    newton_max_iterations: 8
+    newton_tolerance: 1.0e-9
+
+    # --- enumeration bounds (§6.1) ---
+    # P3a measures the mu distribution across the corpus BEFORE any search
+    # strategy is written. If mu = 1 dominates after reduction, Johnson and
+    # beam search are never built and these stay unused.
+    mu_max_for_johnson: 12
+    # "basis" | "johnson". Default "basis" -- decided by MEASUREMENT, not
+    # preference. P3a's mu distribution justified building bounded Johnson;
+    # P3b then measured that it changes ZERO outcomes across the corpus at up
+    # to 22x the candidates and 10x the runtime. 6 of the 8 failing parts have
+    # branch_node_count == 0, where Johnson and the basis are identical by
+    # construction. Kept, but opt-in.
+    enumeration_strategy: "basis"
+    max_candidates: 200
+    beam_width: 3
+    # Gamma is a disjoint union of closed curves; a genus-g part needs g+1.
+    # Pairs were shown insufficient at P3 (Part3 needs 3). 2^n - 1 subsets,
+    # n in the low single digits across the measured corpus.
+    max_loop_union_size: 4
+    enumeration_time_budget_s: 5.0
+
+    # --- hard filter ---
+    # H7. PROVISIONAL -- a configuration decision, NOT an engineering truth and
+    # NOT a manufacturing law. Calibrated from corpus data in P3a. H3
+    # (topological separation) is the real validity test; if H3 and H7
+    # disagree, H3 is right. Never quote this as "a valid parting line covers
+    # >= 50% of projected area".
+    min_coverage_ratio: 0.50
+    min_length_rel: 0.05              # H6, x bbox diagonal
+    min_projected_area_rel: 1.0e-4    # H6, x bbox_diagonal^2
+
+    # --- ranking tie bands (§8) ---
+    # A difference within these counts as a TIE and falls through to the next
+    # tier, so near-equal candidates aren't separated by numerical noise.
+    tier_epsilon:
+      coverage: 0.01
+      undercut_proximity: 0.02
+      pull_axis_span_mm: 0.10
+      ambiguous_area_fraction: 0.01
+      excess_turning: 0.02
+      length_3d_mm: 0.50
+
+    # --- core/cavity (§9) + Cauchy quadrature (§8.1) ---
+    # MEASURED convergence vs the sphere's exact pi*r^2 (P2, 2026-08-09):
+    #   5x5 -4.89% | 7x7 -2.51% | 9x9 -1.52% | 11x11 -1.02% | 15x15 -0.55%
+    # The denominator is common to all candidates of a part, so this error
+    # cannot affect RANKING -- only reported coverage and the H7 comparison.
+    face_sample_grid: 11
+
   core_cavity:
     threshold: 0.05
     cavity_color: [0.2, 0.8, 0.3]
@@ -68,6 +170,57 @@ dfm:
     solid_split_enabled: true
     export_dir: "output/mold_halves"
     split_fuzzy_factor: 0.1
+    # Stage 2 (2026-07-28): reject a split that reports 2 solids but isn't
+    # actually a usable split (e.g. one near-full-blank solid plus a
+    # degenerate sliver from a parting sheet that doesn't fully bisect the
+    # tooling).
+    min_solid_volume_fraction: 0.01
+    # Stage 2b (2026-07-28): the split now uses a flat planar approximation
+    # tool (the real BRepFill_Filling parting surface is confirmed
+    # topologically invalid on both real parts). Measured conservation
+    # error: 4.04% (Part1) / 3.81% (Part3) — 0.06 covers both with margin.
+    volume_conservation_tolerance: 0.06
+    # Half-width (x bbox diagonal) of the planar Boolean-split tool — must
+    # comfortably clear the mold blank (itself blank_margin_factor beyond
+    # the part) on every side.
+    split_plane_half_size_factor: 2.0
+  side_core:
+    # Stage 4 (2026-07-28) — Bosch criterion #5, "smallest useful slice"
+    # per docs/ARCHITECTURE_ROADMAP.md §4.4: one side-core solid for the
+    # single highest-confidence critical side-action feature.
+    enabled: true
+    # Half-width of the feature's local planar sweep tool, as a multiple of
+    # the feature's own lateral footprint (footprint_percentile-ranked
+    # distance from the feature's face centroid to a face bounding-box
+    # corner, projected perpendicular to release_direction). NOT the same
+    # knob as core_cavity.split_plane_half_size_factor, which scales off the
+    # whole part's bbox diagonal -- side-core features are local, so their
+    # sweep tool must be sized off the feature's own extent, not the part's.
+    footprint_margin_factor: 1.5
+    # Floor so a degenerate single-point footprint still gets a real plane.
+    min_half_size_mm: 2.0
+    # Boolean fuzzy tolerance. MUST be reused unchanged between the
+    # Common(half, swept) that measures the side core and the following
+    # Cut(half, side_core) that removes it -- a mismatched pair (e.g. 0.01
+    # then 0.1) measured 37.72% volume-conservation error on Part1 even
+    # though both Booleans individually reported success. A consistent 0.01
+    # measured 0.00-0.02% error on both Part1 and Part3 across every plane
+    # size tested.
+    fuzzy_tolerance: 0.01
+    # side_core_volume + reduced_half_volume vs. the original containing
+    # half's volume. Measured 0.00% on both real parts with a consistent
+    # fuzzy tolerance; kept generous since this is a single-sample
+    # validation per part (see known-gaps.md).
+    volume_conservation_tolerance: 0.05
+    # S4.3 (2026-07-29): footprint sizing uses this percentile of face
+    # Bnd_Box corner radii, NOT the max. A real case on Part1 (an 11-face
+    # critical feature at default undercut-detection settings) has one face
+    # far from an otherwise tight cluster; a max-based size is dragged out
+    # by that single outlier enough to make the Boolean split numerically
+    # unstable -- measured 36.59% conservation error at the max, 0.00% at
+    # this percentile, with no regression on the simpler cases (percentile
+    # and max coincide when there's no lone outlier).
+    footprint_percentile: 0.75
   display:
     max_triangle_count: 100000
   parting_surface:
@@ -75,9 +228,36 @@ dfm:
     extension_factor: 1.5
     filling_max_degree: 3
     filling_tolerance_mm: 0.01
+    # A best-fit plane is only a valid PARTING plane if its normal is close to
+    # the pull direction — a mold opens along the pull axis. Measured on
+    # Part3, PCA finds a plane that fits the loop to 0.74 mm but sits 60 deg
+    # off the pull axis; using it would slice the mold diagonally.
+    planar_pull_alignment_min: 0.90
+    # BRepFill_Filling takes one edge constraint per loop segment. The display
+    # curve carries ~24,000 points, which is unusable as a constraint set, so
+    # the loop is decimated to this many segments before filling.
+    filling_max_constraint_edges: 120
   undercut:
     convexity_tangent_tolerance: 0.01
     convexity_suppression_enabled: true
 agent:
-  model: "gpt-4o-mini"
+  # Stage 5 (2026-07-28) — provider-agnostic AI agent layer (roadmap §4.1).
+  # Supersedes the old single `model:` key. Gemini is the default: cheapest
+  # per-token option and the team has a working key. Anthropic/OpenAI are
+  # first-class swappable adapters; "grok" reuses the OpenAI adapter via
+  # Grok's OpenAI-compatible endpoint (docker-compose.yml already wired
+  # GROK_API_KEY through before this stage existed).
+  provider: "gemini"  # gemini | anthropic | openai | grok
   temperature: 0.1
+  max_tool_iterations: 8
+  # Rule 3 (roadmap §4.3): cap face-ID lists returned by any tool so a
+  # 200-face part's undercut/draft results don't blow out agent context.
+  max_face_ids_per_tool: 25
+  models:
+    # gemini-2.0-flash (the roadmap's original pick) returns zero free-tier
+    # quota on the team's key as of 2026-07-28 (confirmed via a live 429);
+    # gemini-2.5-flash is confirmed working end-to-end with the same key.
+    gemini: "gemini-2.5-flash"
+    anthropic: "claude-opus-5"
+    openai: "gpt-4o-mini"
+    grok: "grok-2-latest"

@@ -27,10 +27,19 @@ services:
       - ./reports:/app/reports    # Generated DFM reports here
       - ./backend:/app/backend    # Live-reload during development
       - ./config.yaml:/app/config.yaml:ro  # Live config without image rebuild
+      # Without this, `docker compose exec backend pytest tests/` runs
+      # whatever tests/ tree was baked into the image at last build — a
+      # stale, partial copy silently missing every test file added since
+      # (found 2026-07-28: 6 of 12 test files were absent, so "pytest tests/"
+      # was never exercising current source). Mirrors ./backend above.
+      - ./tests:/app/tests
     environment:
       - DFM_CONFIG=/app/config.yaml
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GROK_API_KEY=${GROK_API_KEY:-}
+      # Stage 5 (2026-07-28): provider-agnostic agent layer, Gemini default.
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - LOG_LEVEL=INFO
     healthcheck:
       test:
@@ -70,6 +79,14 @@ services:
       - DFM_CONFIG=/app/config.yaml
       - PYVISTA_OFF_SCREEN=true
       - LOG_LEVEL=INFO
+      # FIX C: without this, Docker (Linux) silently falls through to the
+      # PyVista/stpyvista/Xvfb renderer while local macOS dev uses the
+      # interactive Plotly viewer (`_USE_PLOTLY_VIEWER` in frontend/app.py
+      # checks `sys.platform == "darwin"` first) — same backend data, two
+      # different viewer UX depending on where you run it. Forcing Plotly
+      # here makes both environments render identically; `plotly==5.21.0`
+      # is already a Dockerfile.frontend dependency, no image change needed.
+      - DFM_FORCE_PLOTLY=1
     depends_on:
       - backend
 

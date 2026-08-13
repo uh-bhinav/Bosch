@@ -1,0 +1,480 @@
+{
+  "Part1": {
+    "+X": {
+      "direction_label": "+X",
+      "direction_raw": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 404,
+      "track_b_segment_count": 58,
+      "track_b_segment_kinds": {
+        "silhouette": 55,
+        "tangential": 3
+      },
+      "stitched_segment_count": 491,
+      "graph_node_count": 358,
+      "graph_edge_count": 459,
+      "graph_component_count": 12,
+      "graph_branch_node_count": 184,
+      "graph_mu": 113,
+      "candidate_count": 313,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 213,
+      "h4_failures": 100,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "-X": {
+      "direction_label": "-X",
+      "direction_raw": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 404,
+      "track_b_segment_count": 58,
+      "track_b_segment_kinds": {
+        "silhouette": 55,
+        "tangential": 3
+      },
+      "stitched_segment_count": 491,
+      "graph_node_count": 358,
+      "graph_edge_count": 459,
+      "graph_component_count": 12,
+      "graph_branch_node_count": 184,
+      "graph_mu": 113,
+      "candidate_count": 313,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 213,
+      "h4_failures": 100,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "+Y": {
+      "direction_label": "+Y",
+      "direction_raw": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 424,
+      "track_b_segment_count": 63,
+      "track_b_segment_kinds": {
+        "silhouette": 59,
+        "tangential": 4
+      },
+      "stitched_segment_count": 524,
+      "graph_node_count": 389,
+      "graph_edge_count": 492,
+      "graph_component_count": 12,
+      "graph_branch_node_count": 194,
+      "graph_mu": 115,
+      "candidate_count": 315,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 212,
+      "h4_failures": 103,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "-Y": {
+      "direction_label": "-Y",
+      "direction_raw": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 424,
+      "track_b_segment_count": 63,
+      "track_b_segment_kinds": {
+        "silhouette": 58,
+        "tangential": 5
+      },
+      "stitched_segment_count": 524,
+      "graph_node_count": 389,
+      "graph_edge_count": 492,
+      "graph_component_count": 12,
+      "graph_branch_node_count": 194,
+      "graph_mu": 115,
+      "candidate_count": 315,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 212,
+      "h4_failures": 103,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "+Z": {
+      "direction_label": "+Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 460,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 460,
+      "graph_node_count": 356,
+      "graph_edge_count": 460,
+      "graph_component_count": 9,
+      "graph_branch_node_count": 200,
+      "graph_mu": 113,
+      "candidate_count": 113,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 0,
+      "h4_failures": 109,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 4,
+      "best_valid_candidate": {
+        "candidate_id": 49,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 8,
+          "face": 0
+        },
+        "coverage": 0.9989,
+        "pull_axis_span_mm": 0.0,
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            9.5
+          ],
+          "y": [
+            -9.5,
+            9.5
+          ],
+          "z": [
+            15.0,
+            15.0
+          ]
+        },
+        "cavity_area_mm2": 362.34,
+        "core_area_mm2": 1203.81,
+        "ambiguous_area_fraction": 0.4557,
+        "won_at_tier": "T3"
+      },
+      "outcome": "feasible"
+    },
+    "-Z": {
+      "direction_label": "-Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 460,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 460,
+      "graph_node_count": 356,
+      "graph_edge_count": 460,
+      "graph_component_count": 9,
+      "graph_branch_node_count": 200,
+      "graph_mu": 113,
+      "candidate_count": 113,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 0,
+      "h4_failures": 109,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 4,
+      "best_valid_candidate": {
+        "candidate_id": 49,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 8,
+          "face": 0
+        },
+        "coverage": 0.9989,
+        "pull_axis_span_mm": 0.0,
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            9.5
+          ],
+          "y": [
+            -9.5,
+            9.5
+          ],
+          "z": [
+            15.0,
+            15.0
+          ]
+        },
+        "cavity_area_mm2": 1203.81,
+        "core_area_mm2": 362.34,
+        "ambiguous_area_fraction": 0.4557,
+        "won_at_tier": "T3"
+      },
+      "outcome": "feasible"
+    }
+  },
+  "Part3": {
+    "+X": {
+      "direction_label": "+X",
+      "direction_raw": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 332,
+      "track_b_segment_count": 175,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 29
+      },
+      "stitched_segment_count": 626,
+      "graph_node_count": 440,
+      "graph_edge_count": 566,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 191,
+      "graph_mu": 129,
+      "candidate_count": 329,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 282,
+      "h4_failures": 47,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "-X": {
+      "direction_label": "-X",
+      "direction_raw": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 332,
+      "track_b_segment_count": 174,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 28
+      },
+      "stitched_segment_count": 624,
+      "graph_node_count": 439,
+      "graph_edge_count": 564,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 190,
+      "graph_mu": 128,
+      "candidate_count": 328,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 281,
+      "h4_failures": 47,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "+Y": {
+      "direction_label": "+Y",
+      "direction_raw": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 336,
+      "track_b_segment_count": 169,
+      "track_b_segment_kinds": {
+        "silhouette": 144,
+        "tangential": 25
+      },
+      "stitched_segment_count": 620,
+      "graph_node_count": 438,
+      "graph_edge_count": 559,
+      "graph_component_count": 4,
+      "graph_branch_node_count": 185,
+      "graph_mu": 125,
+      "candidate_count": 325,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 287,
+      "h4_failures": 38,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "-Y": {
+      "direction_label": "-Y",
+      "direction_raw": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 336,
+      "track_b_segment_count": 171,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 25
+      },
+      "stitched_segment_count": 622,
+      "graph_node_count": 440,
+      "graph_edge_count": 562,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 187,
+      "graph_mu": 125,
+      "candidate_count": 325,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 2,
+      "h3_failures": 286,
+      "h4_failures": 37,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "+Z": {
+      "direction_label": "+Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 352,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 352,
+      "graph_node_count": 260,
+      "graph_edge_count": 352,
+      "graph_component_count": 18,
+      "graph_branch_node_count": 184,
+      "graph_mu": 110,
+      "candidate_count": 310,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 159,
+      "h4_failures": 151,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    },
+    "-Z": {
+      "direction_label": "-Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 352,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 352,
+      "graph_node_count": 260,
+      "graph_edge_count": 352,
+      "graph_component_count": 18,
+      "graph_branch_node_count": 184,
+      "graph_mu": 110,
+      "candidate_count": 310,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 159,
+      "h4_failures": 151,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  }
+}

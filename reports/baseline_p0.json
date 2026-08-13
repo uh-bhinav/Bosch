@@ -1,0 +1,1031 @@
+{
+  "generated_by": "backend/validation/parting_line_ab.py",
+  "phase": "P0 baseline",
+  "engines": [
+    "v1"
+  ],
+  "direction_mode": "declared",
+  "caveats": [
+    "v1 is NOT stage-instrumented; only total_ms is available for it. Per-stage p50/p95 (plan \u00a712.5) arrive with v2.",
+    "v1_bbox_coverage_ratio uses BOUNDING-BOX areas. Plan \u00a78.1 replaces this with a shoelace numerator over a proper projected-outline denominator. The two are not directly comparable.",
+    "F16 (Part3) has NO ground truth. Its row is diagnostic only and must never be reported as a correctness score."
+  ],
+  "corpus": [
+    {
+      "fixture_id": "F1",
+      "name": "cube",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "planar sharp edges only; many-equal-optima; determinism",
+      "expected": "Top face g=+1, bottom g=-1, four side faces g=0 (zero-draft band). Every horizontal ring around the sides is a valid parting line \u2014 an infinite family of equal optima. Track A ground truth.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The engine must DETECT the degeneracy and break the tie deterministically, not present one ring as 'the' answer.",
+      "filename": "F1_cube.stp",
+      "stats": {
+        "volume_mm3": 64000.0,
+        "area_mm2": 9600.0,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "degenerate zero-draft band (plan \u00a74.3, \u00a75.3)",
+      "expected": "d is parallel to the cylinder axis, so R=sqrt(a^2+b^2)=0 and g == 0 over the ENTIRE lateral face. There is no unique silhouette curve; every circumferential ring is equally valid.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "This is the case from the study notes' cylinder sketch. The circumferential 'parting line' drawn there is NOT a silhouette curve \u2014 it is a free choice on a zero-draft surface. The engine must report the band and its free parameter, not invent a curve.",
+      "filename": "F2_cylinder_axis_parallel_to_pull.stp",
+      "stats": {
+        "volume_mm3": 28274.3339,
+        "area_mm2": 5183.6279,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          30.0,
+          30.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 58.3095
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: cylindrical face-interior silhouette. Track A provably fails, Track B provably passes.",
+      "expected": "n(u) = cos(u)*x + sin(u)*y is independent of v, so g(u) = R*cos(u-phi) with R=sqrt(a^2+b^2), phi=atan2(b,a). g=0 at u = phi +/- pi/2 \u2014 exactly TWO STRAIGHT RULINGS at the top and bottom of the lateral surface, at z = +/-15 (y=0 plane), joined by arcs on the two end caps.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "THE A/B fixture for the whole architecture. The two rulings are interior isoparametric curves, not B-Rep edges, so an edge-only detector cannot see them. P1 must report 'no feasible candidate', NOT a plausible-looking wrong loop.",
+      "filename": "F3_cylinder_axis_perpendicular_to_pull.stp",
+      "stats": {
+        "volume_mm3": 42411.5008,
+        "area_mm2": 7068.5835,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F4",
+      "name": "sphere",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "Track B on a face with no usable edges at all",
+      "expected": "n = (p-C)/r, so g = (p-C).d/r = 0 exactly on the GREAT CIRCLE perpendicular to d: the circle z=0, radius 20.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "A sphere has essentially no topological edges beyond the parameterisation seam, so Track A has nothing to work with. The answer is entirely a face-interior curve.",
+      "filename": "F4_sphere.stp",
+      "stats": {
+        "volume_mm3": 33510.3216,
+        "area_mm2": 5026.5482,
+        "face_count": 1,
+        "edge_count": 1,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F5",
+      "name": "cone",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "plan \u00a74.1 cone closed form, including the no-solution case",
+      "expected": "n(u) = cos(alpha)*(cos u * x + sin u * y) - sin(alpha)*axis, so g(u) = cos(alpha)*R*cos(u-phi) - sin(alpha)*c. With d parallel to the cone axis: a=b=0 so R=0, c=1, giving g = -sin(alpha) = const != 0 \u2014 NO interior silhouette. The silhouette is the base rim edge only.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Deliberately the DEGENERATE branch of the cone formula: |tan(alpha)*c/R| -> infinity > 1, so no ruling solution exists. Tests that Track B correctly finds NOTHING here rather than producing noise, and that Track A picks up the rim.",
+      "filename": "F5_cone.stp",
+      "stats": {
+        "volume_mm3": 21991.1486,
+        "area_mm2": 4690.3993,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F6",
+      "name": "filleted_box",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: fillet faces \u2014 silhouette runs ACROSS a blend",
+      "expected": "The top edges are replaced by constant-radius blends. A blend is locally cylindrical (straight runs) or toroidal (corners), so the g=0 curve lies in the blend's INTERIOR where the surface turns from up-facing to vertical \u2014 checkable against plan \u00a74.1's cylinder and torus forms.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "Semi-analytic. The most industrially representative fixture here: real automotive plastic parts are filleted everywhere, and this is the geometry where an edge-only detector loses the parting line.",
+      "filename": "F6_filleted_box.stp",
+      "stats": {
+        "volume_mm3": 31189.5278,
+        "area_mm2": 6042.4778,
+        "face_count": 10,
+        "edge_count": 20,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F7",
+      "name": "spline_lofted_lid",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: pure marching-squares path (plan \u00a74.2)",
+      "expected": "A lofted rect->ellipse side surface has NO closed form. Ground truth is a dense 1024^2 reference extraction with tight Newton tolerance, frozen once; the production adaptive-grid result must agree with it to within tau_sag.",
+      "p1_expectation": "fail_loudly",
+      "analytic": false,
+      "notes": "This is a NUMERICAL CONVERGENCE test, not an analytic one. Never describe the reference as 'the exact answer'.",
+      "filename": "F7_spline_lofted_lid.stp",
+      "stats": {
+        "volume_mm3": 14086.0574,
+        "area_mm2": 3698.9606,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          30.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 53.8516
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F8",
+      "name": "box_with_boss",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "local-feature rejection (the Bug-H failure mode)",
+      "expected": "Two closed loops exist: the box's outer rim and the boss's base rim. The outer rim is the parting line. The boss rim is a LOCAL FEATURE and must lose on T1 coverage.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "v1 selected the tidiest loop rather than the largest until Bug H was fixed on 2026-07-27 (Part1 coverage 27.6% -> 94.8%). This fixture makes that regression impossible to reintroduce silently.",
+      "filename": "F8_box_with_boss.stp",
+      "stats": {
+        "volume_mm3": 33130.9734,
+        "area_mm2": 6776.9911,
+        "face_count": 8,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F9",
+      "name": "box_with_through_hole",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "multiple GENUINE competing loops \u2014 both feasible, ranking decides",
+      "expected": "Outer rim and hole rim are BOTH feasible closed separating loops. The outer rim wins on T1 coverage. The hole rim must be retained in the scorecard as a feasible runner-up, not silently dropped.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Distinguishes 'rejected' from 'ranked lower' \u2014 a distinction v1's fused feasibility/score cannot express (audit RC-4).",
+      "filename": "F9_box_with_through_hole.stp",
+      "stats": {
+        "volume_mm3": 29738.0533,
+        "area_mm2": 6927.7876,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F10",
+      "name": "t_junction_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: branches \u2014 a real topological branch node",
+      "expected": "The rib meets the outer wall, so the silhouette graph has a genuine T-junction: a branch node that SURVIVES 2-core reduction and degree-2 contraction (plan \u00a75.4).",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Distinguishes a REAL topological branch from tolerance noise. Plan \u00a75.4 requires reporting which of four causes produced each surviving branch node; only the real-branch case is an optimization question.",
+      "filename": "F10_t_junction_rib.stp",
+      "stats": {
+        "volume_mm3": 17600.0,
+        "area_mm2": 5760.0,
+        "face_count": 10,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F11",
+      "name": "alternating_draft_pockets",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: disconnected candidates \u2014 the Part3 failure mode, small",
+      "expected": "Pockets cut from alternating sides at alternating heights fragment the silhouette into 3+ disconnected pieces.",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Part3's real failure (22 components, 18.1% coverage) reproduced at a size a human can reason about. The P1 baseline records the component count; P2 must reduce it, and if it does not, the RC-1 hypothesis is wrong and we stop and re-diagnose.",
+      "filename": "F11_alternating_draft_pockets.stp",
+      "stats": {
+        "volume_mm3": 50928.0,
+        "area_mm2": 10536.0,
+        "face_count": 26,
+        "edge_count": 60,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F12",
+      "name": "draft_free_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "zero-draft band collapse (plan \u00a75.3)",
+      "expected": "The rib's side walls are exactly vertical: g == 0 over their whole area. The band must be collapsed to a single medial curve with its span reported, NOT emitted as two parallel boundary loops.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The parting line's position WITHIN this band is a genuine free parameter. Report it as such; optimizing within it is Level 3, which is out of scope for this milestone.",
+      "filename": "F12_draft_free_rib.stp",
+      "stats": {
+        "volume_mm3": 15680.0,
+        "area_mm2": 6112.0,
+        "face_count": 11,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          32.0
+        ],
+        "bbox_diagonal_mm": 64.9923
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F13",
+      "name": "peanut_two_lobed",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: non-convex outline \u2014 bbox coverage LIES here, \u00a78.1 must not",
+      "expected": "A strongly non-convex projected outline. v1's bbox-ratio coverage scores this the same as a rectangle of equal extent. The shoelace numerator plus a proper projected-outline denominator must not.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Also quantifies the A_cauchy overestimate (plan \u00a78.1) against a shape whose true projected area is computable in closed form: two circles of r=14 at x=+/-14 unioned with a 28x12 waist.",
+      "filename": "F13_peanut_two_lobed.stp",
+      "stats": {
+        "volume_mm3": 24841.8773,
+        "area_mm2": 5614.7823,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          56.0,
+          28.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 65.7267
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F14",
+      "name": "mirror_symmetric",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "determinism under EXACT ties (plan \u00a78.3)",
+      "expected": "Two identical bosses mirrored about x=0 produce two exactly equivalent local loops. Every ranking tier ties; T7's stable_id must break it, and must break it the SAME WAY on every run.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Regression test for \u00a78.3: run twice, assert identical stable_id and identical point list. Catches set-iteration-order dependence, which is the usual source of non-determinism in graph code.",
+      "filename": "F14_mirror_symmetric.stp",
+      "stats": {
+        "volume_mm3": 33256.6371,
+        "area_mm2": 6902.6548,
+        "face_count": 10,
+        "edge_count": 18,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          28.0
+        ],
+        "bbox_diagonal_mm": 63.1189
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "filename": "Part1.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "coverage >= 0.90 (v1 achieves 94.8% at its optimal direction)",
+      "analytic": false,
+      "p1_expectation": "pass",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "filename": "Part3.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "UNKNOWN \u2014 Bosch has not disclosed an expected solution. Scored on feasibility, fragmentation and honesty, NEVER on correctness.",
+      "analytic": false,
+      "p1_expectation": "honest_result_or_honest_rejection",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    }
+  ],
+  "results": [
+    {
+      "fixture_id": "F1",
+      "name": "cube",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 5704.71,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 6,
+        "edge_count": 12,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9662,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 12,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 1,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 77.33,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "v1_readiness_status": "weak",
+        "v1_readiness_score": 0.4199,
+        "v1_refinement_confidence": 0.64,
+        "v1_bbox_coverage_ratio": 0.0,
+        "candidate_edge_count": 3,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": false,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 1,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "bounded-dfs",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 4,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 61.96,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "v1_readiness_status": "weak",
+        "v1_readiness_score": 0.4199,
+        "v1_refinement_confidence": 0.64,
+        "v1_bbox_coverage_ratio": 0.0,
+        "candidate_edge_count": 3,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": false,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 1,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "bounded-dfs",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 4,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F4",
+      "name": "sphere",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 60.18,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 1,
+        "edge_count": 3,
+        "v1_readiness_status": "weak",
+        "v1_readiness_score": 0.3836,
+        "v1_refinement_confidence": 0.64,
+        "v1_bbox_coverage_ratio": 0.0,
+        "candidate_edge_count": 3,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": false,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 1,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "bounded-dfs",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 4,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F5",
+      "name": "cone",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 5.38,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "v1_readiness_status": "failed",
+        "v1_readiness_score": 0.0,
+        "v1_refinement_confidence": 0.0,
+        "v1_bbox_coverage_ratio": 0.0,
+        "candidate_edge_count": 1,
+        "silhouette_edge_count": 1,
+        "component_count": 1,
+        "selected_is_closed": false,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 5,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F6",
+      "name": "filleted_box",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 7848.48,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 20,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 12,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F7",
+      "name": "spline_lofted_lid",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 9742.13,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 7,
+        "edge_count": 15,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9888,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 5,
+        "silhouette_edge_count": 5,
+        "component_count": 1,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_planar",
+        "parting_surface_strategy": "pca_planar",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F8",
+      "name": "box_with_boss",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 3526.85,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 8,
+        "edge_count": 15,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 15,
+        "silhouette_edge_count": 0,
+        "component_count": 2,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F9",
+      "name": "box_with_through_hole",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 3497.52,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 7,
+        "edge_count": 15,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 15,
+        "silhouette_edge_count": 0,
+        "component_count": 2,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F10",
+      "name": "t_junction_rib",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 9394.16,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 24,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 24,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F11",
+      "name": "alternating_draft_pockets",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 691.76,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 26,
+        "edge_count": 60,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.7858,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 60,
+        "silhouette_edge_count": 0,
+        "component_count": 5,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "failed",
+        "parting_surface_strategy": "none",
+        "warning_count": 1,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F12",
+      "name": "draft_free_rib",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 7078.16,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 11,
+        "edge_count": 24,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 24,
+        "silhouette_edge_count": 0,
+        "component_count": 2,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F13",
+      "name": "peanut_two_lobed",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 6204.9,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 6,
+        "edge_count": 12,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9662,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 0.0207,
+        "candidate_edge_count": 12,
+        "silhouette_edge_count": 0,
+        "component_count": 1,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 1,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F14",
+      "name": "mirror_symmetric",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 3892.12,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 18,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9812,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 1.0,
+        "candidate_edge_count": 18,
+        "silhouette_edge_count": 0,
+        "component_count": 3,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 0,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 11060.63,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 311,
+        "edge_count": 762,
+        "v1_readiness_status": "ready",
+        "v1_readiness_score": 0.9662,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 0.0413,
+        "candidate_edge_count": 398,
+        "silhouette_edge_count": 0,
+        "component_count": 7,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "applied",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_planar",
+        "parting_surface_strategy": "pca_planar",
+        "warning_count": 1,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 3650.98,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 414,
+        "edge_count": 981,
+        "v1_readiness_status": "review",
+        "v1_readiness_score": 0.7208,
+        "v1_refinement_confidence": 0.9,
+        "v1_bbox_coverage_ratio": 0.0019,
+        "candidate_edge_count": 356,
+        "silhouette_edge_count": 4,
+        "component_count": 15,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "discarded_not_an_improvement",
+        "graph_cleanup_strategy": "not-run",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 16,
+        "on_surface": null
+      },
+      "stage_timings": null
+    }
+  ]
+}

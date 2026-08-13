@@ -402,6 +402,102 @@ class TestLoadStepIntegration:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# load_step_cached — mutate-flag safety (Roadmap Stage 3 S3.8)
+#
+# The roadmap calls this test "mandatory alongside the cache": a cached
+# PartGeometry mutated by one request must never leak state into another's.
+# See backend/geometry/step_loader.py's module note above
+# `_clone_pristine_part` for the full safety argument.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@skip_no_occ
+@skip_no_part1
+class TestLoadStepCached:
+    def test_returns_a_fresh_instance_on_every_call(self):
+        from backend.geometry.step_loader import load_step_cached
+
+        first = load_step_cached(PART1_PATH)
+        second = load_step_cached(PART1_PATH)
+        assert first is not second
+        assert first.faces is not second.faces
+        assert first.faces[0] is not second.faces[0]
+
+    def test_mutating_one_clone_never_affects_another(self):
+        """
+        The mandatory regression guard: simulates what mutate=True analysis
+        actually does (draft_analyzer, direction_optimizer, undercut_detector,
+        core_cavity, parting_line all write directly onto FaceData/PartGeometry
+        fields) and asserts none of it is visible from a second clone drawn
+        from the same underlying cache entry.
+        """
+        from backend.geometry.step_loader import load_step_cached
+
+        first = load_step_cached(PART1_PATH)
+        second = load_step_cached(PART1_PATH)
+
+        first.faces[0].draft_classification = "bad"
+        first.faces[0].draft_angle_deg = 0.0
+        first.faces[0].is_undercut = True
+        first.faces[0].cavity_or_core = "cavity"
+        first.optimal_pull_direction = (1.0, 0.0, 0.0)
+        first.direction_score = 0.123
+        first.inaccessible_face_ids = [1, 2, 3]
+        first.parting_edge_ids = [4, 5, 6]
+        first.warnings.append("injected for this test — must not leak")
+
+        assert second.faces[0].draft_classification is None
+        assert second.faces[0].draft_angle_deg is None
+        assert second.faces[0].is_undercut is None
+        assert second.faces[0].cavity_or_core is None
+        assert second.optimal_pull_direction is None
+        assert second.direction_score is None
+        assert second.inaccessible_face_ids == []
+        assert second.parting_edge_ids == []
+        assert "injected for this test — must not leak" not in second.warnings
+
+    def test_cached_clone_matches_a_genuinely_fresh_load(self):
+        from backend.geometry.step_loader import load_step, load_step_cached
+
+        fresh = load_step(PART1_PATH)
+        cached = load_step_cached(PART1_PATH)
+        assert cached.face_count == fresh.face_count
+        assert cached.edge_count == fresh.edge_count
+        assert cached.vertex_count == fresh.vertex_count
+        assert cached.bounding_box.diagonal == pytest.approx(fresh.bounding_box.diagonal)
+
+    def test_occ_shape_is_shared_by_reference_across_clones(self):
+        """
+        The actual point of the cache: no OCC re-parse on a hit. Sharing the
+        live OCC handle is safe because no code path in this project mutates
+        loaded B-Rep geometry in place -- Boolean/derived operations always
+        construct new OCC objects (see the module note in step_loader.py).
+        """
+        from backend.geometry.step_loader import load_step_cached
+
+        first = load_step_cached(PART1_PATH)
+        second = load_step_cached(PART1_PATH)
+        assert first.occ_shape is second.occ_shape
+
+    def test_cache_invalidates_when_the_file_is_modified(self, tmp_path):
+        import os
+        import shutil
+        import time
+
+        from backend.geometry.step_loader import load_step_cached
+
+        copy_path = tmp_path / "cache_invalidation_test.stp"
+        shutil.copy(PART1_PATH, copy_path)
+        first = load_step_cached(copy_path)
+        # Bump mtime explicitly rather than relying on wall-clock drift
+        # between two near-instant calls -- st_mtime_ns granularity can be
+        # coarse on some filesystems.
+        new_mtime = time.time() + 5
+        os.utime(copy_path, (new_mtime, new_mtime))
+        second = load_step_cached(copy_path)
+        assert first.occ_shape is not second.occ_shape
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Edge convexity — synthetic OCC shapes (Roadmap Phase 1.1)
 #
 # Real .stp integration tests can't isolate a known-correct answer (nobody

@@ -1,0 +1,782 @@
+{
+  "Part1_+Z": {
+    "direction_label": "+Z",
+    "direction": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "dominant_component_size": 320,
+    "dominant_component_bbox": {
+      "x": [
+        -9.5,
+        9.5
+      ],
+      "y": [
+        -9.5,
+        9.5
+      ],
+      "z": [
+        -1.3524371628979306e-14,
+        15.0
+      ]
+    },
+    "articulation_point_count": 0,
+    "cut_points": [],
+    "top_cut_point_nearby_check": null
+  },
+  "Part1_+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "dominant_component_size": 254,
+    "dominant_component_bbox": {
+      "x": [
+        -9.5,
+        9.5
+      ],
+      "y": [
+        -9.5,
+        9.5
+      ],
+      "z": [
+        -1.3524371628979306e-14,
+        15.0
+      ]
+    },
+    "articulation_point_count": 0,
+    "cut_points": [],
+    "top_cut_point_nearby_check": null
+  },
+  "Part1_+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "dominant_component_size": 261,
+    "dominant_component_bbox": {
+      "x": [
+        -9.5,
+        9.5
+      ],
+      "y": [
+        -9.5,
+        9.5
+      ],
+      "z": [
+        -1.3524371628979306e-14,
+        15.0
+      ]
+    },
+    "articulation_point_count": 0,
+    "cut_points": [],
+    "top_cut_point_nearby_check": null
+  },
+  "Part3_+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "dominant_component_size": 416,
+    "dominant_component_bbox": {
+      "x": [
+        -12.3002044327486,
+        12.3002044327486
+      ],
+      "y": [
+        -13.2208925044335,
+        13.220892504433412
+      ],
+      "z": [
+        4.5,
+        40.0
+      ]
+    },
+    "articulation_point_count": 36,
+    "cut_points": [
+      {
+        "cut_node": 247,
+        "point": [
+          -5.457531754730615,
+          6.952722283113783,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          401
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            -7.2535814412467,
+            -3.725480947161738
+          ],
+          "y": [
+            6.70272228311379,
+            11.289383538027389
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 253,
+            "provenance": "edge",
+            "edge_id": 287,
+            "adjacent_face_ids": [
+              40,
+              208
+            ],
+            "t_start": 1.570936,
+            "t_end": 2.617994
+          },
+          {
+            "segment_id": 254,
+            "provenance": "edge",
+            "edge_id": 288,
+            "adjacent_face_ids": [
+              40,
+              210
+            ],
+            "t_start": -0.532453,
+            "t_end": 0.068159
+          },
+          {
+            "segment_id": 543,
+            "provenance": "face",
+            "face_id": 208,
+            "uv_start": [
+              3.665191,
+              1.570796
+            ],
+            "uv_end": [
+              4.712389,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 148,
+        "point": [
+          -6.836696879329372,
+          -3.658493649053941,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          401
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            -11.289383538027394,
+            -7.01970958122158
+          ],
+          "y": [
+            -7.25358144124669,
+            -3.4084936490539404
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 154,
+            "provenance": "edge",
+            "edge_id": 213,
+            "adjacent_face_ids": [
+              40,
+              213
+            ],
+            "t_start": 4.712529,
+            "t_end": 5.759587
+          },
+          {
+            "segment_id": 155,
+            "provenance": "edge",
+            "edge_id": 214,
+            "adjacent_face_ids": [
+              40,
+              211
+            ],
+            "t_start": -0.5,
+            "t_end": 0.0
+          },
+          {
+            "segment_id": 549,
+            "provenance": "face",
+            "face_id": 213,
+            "uv_start": [
+              0.523599,
+              1.570796
+            ],
+            "uv_end": [
+              1.570796,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 159,
+        "point": [
+          -5.457531754730493,
+          -6.952722283113864,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          401
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            -7.253581441246568,
+            -3.725480947161614
+          ],
+          "y": [
+            -11.2893835380275,
+            -6.70272228311387
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 165,
+            "provenance": "edge",
+            "edge_id": 220,
+            "adjacent_face_ids": [
+              40,
+              199
+            ],
+            "t_start": -0.600612,
+            "t_end": -0.0
+          },
+          {
+            "segment_id": 166,
+            "provenance": "edge",
+            "edge_id": 221,
+            "adjacent_face_ids": [
+              40,
+              197
+            ],
+            "t_start": 3.665191,
+            "t_end": 4.712249
+          },
+          {
+            "segment_id": 539,
+            "provenance": "face",
+            "face_id": 197,
+            "uv_start": [
+              2.617994,
+              1.570796
+            ],
+            "uv_end": [
+              1.570796,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 182,
+        "point": [
+          5.457531754730594,
+          -6.952722283113803,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          401
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            3.72548094716171,
+            7.25358144124668
+          ],
+          "y": [
+            -11.2893835380274,
+            -6.70272228311381
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 188,
+            "provenance": "edge",
+            "edge_id": 239,
+            "adjacent_face_ids": [
+              40,
+              161
+            ],
+            "t_start": 4.712529,
+            "t_end": 5.759587
+          },
+          {
+            "segment_id": 189,
+            "provenance": "edge",
+            "edge_id": 240,
+            "adjacent_face_ids": [
+              40,
+              159
+            ],
+            "t_start": -0.532453,
+            "t_end": 0.068159
+          },
+          {
+            "segment_id": 532,
+            "provenance": "face",
+            "face_id": 161,
+            "uv_start": [
+              0.523599,
+              1.570796
+            ],
+            "uv_end": [
+              1.570796,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 442,
+        "point": [
+          -4.59150635094559,
+          6.70272228311379,
+          39.75
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          13,
+          402
+        ],
+        "smallest_piece_size": 13,
+        "smallest_piece_bbox": {
+          "x": [
+            -7.2535814412467,
+            -3.725480947161738
+          ],
+          "y": [
+            6.70272228311379,
+            11.289383538027389
+          ],
+          "z": [
+            32.0,
+            32.25
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 505,
+            "provenance": "face",
+            "face_id": 97,
+            "uv_start": [
+              4.712389,
+              -7.75
+            ],
+            "uv_end": [
+              4.712389,
+              -0.25
+            ]
+          },
+          {
+            "segment_id": 543,
+            "provenance": "face",
+            "face_id": 208,
+            "uv_start": [
+              3.665191,
+              1.570796
+            ],
+            "uv_end": [
+              4.712389,
+              3.141593
+            ]
+          }
+        ]
+      }
+    ],
+    "top_cut_point_nearby_check": {
+      "nearest_other_node": 248,
+      "distance_mm": 0.6006120938533659,
+      "nearest_other_node_incident_segments": [
+        254,
+        255,
+        545
+      ]
+    }
+  },
+  "Part3_+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "dominant_component_size": 418,
+    "dominant_component_bbox": {
+      "x": [
+        -12.999999999999789,
+        12.999999999999789
+      ],
+      "y": [
+        -13.2208925044335,
+        13.220892504433412
+      ],
+      "z": [
+        4.5,
+        40.0
+      ]
+    },
+    "articulation_point_count": 34,
+    "cut_points": [
+      {
+        "cut_node": 216,
+        "point": [
+          6.952722283113803,
+          5.457531754730585,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          403
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            6.70272228311381,
+            11.289383538027407
+          ],
+          "y": [
+            3.7254809471617003,
+            7.25358144124666
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 221,
+            "provenance": "edge",
+            "edge_id": 263,
+            "adjacent_face_ids": [
+              40,
+              160
+            ],
+            "t_start": 3.141732,
+            "t_end": 4.18879
+          },
+          {
+            "segment_id": 222,
+            "provenance": "edge",
+            "edge_id": 264,
+            "adjacent_face_ids": [
+              40,
+              162
+            ],
+            "t_start": -0.532453,
+            "t_end": 0.068159
+          },
+          {
+            "segment_id": 525,
+            "provenance": "face",
+            "face_id": 160,
+            "uv_start": [
+              2.094395,
+              1.570796
+            ],
+            "uv_end": [
+              3.141593,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 227,
+        "point": [
+          3.65849364905385,
+          6.83669687932942,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          403
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            3.4084936490538498,
+            7.253581441246576
+          ],
+          "y": [
+            7.019709581221638,
+            11.2893835380275
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 232,
+            "provenance": "edge",
+            "edge_id": 270,
+            "adjacent_face_ids": [
+              40,
+              174
+            ],
+            "t_start": -0.5,
+            "t_end": 0.0
+          },
+          {
+            "segment_id": 233,
+            "provenance": "edge",
+            "edge_id": 271,
+            "adjacent_face_ids": [
+              40,
+              176
+            ],
+            "t_start": 2.094395,
+            "t_end": 3.141453
+          },
+          {
+            "segment_id": 536,
+            "provenance": "face",
+            "face_id": 176,
+            "uv_start": [
+              4.18879,
+              1.570796
+            ],
+            "uv_end": [
+              3.141593,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 148,
+        "point": [
+          -6.952722283113788,
+          -5.457531754730602,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          403
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            -11.289383538027394,
+            -6.7027222831138
+          ],
+          "y": [
+            -7.25358144124669,
+            -3.7254809471617207
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 153,
+            "provenance": "edge",
+            "edge_id": 215,
+            "adjacent_face_ids": [
+              40,
+              209
+            ],
+            "t_start": 6.283325,
+            "t_end": 7.330383
+          },
+          {
+            "segment_id": 154,
+            "provenance": "edge",
+            "edge_id": 216,
+            "adjacent_face_ids": [
+              40,
+              207
+            ],
+            "t_start": -0.532453,
+            "t_end": 0.068159
+          },
+          {
+            "segment_id": 548,
+            "provenance": "face",
+            "face_id": 209,
+            "uv_start": [
+              5.235988,
+              1.570796
+            ],
+            "uv_end": [
+              6.283185,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 193,
+        "point": [
+          6.95272228311385,
+          -5.4575317547305,
+          40.0
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          14,
+          403
+        ],
+        "smallest_piece_size": 14,
+        "smallest_piece_bbox": {
+          "x": [
+            6.70272228311386,
+            11.2893835380275
+          ],
+          "y": [
+            -7.253581441246578,
+            -3.725480947161619
+          ],
+          "z": [
+            32.0,
+            39.75
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 198,
+            "provenance": "edge",
+            "edge_id": 244,
+            "adjacent_face_ids": [
+              40,
+              151
+            ],
+            "t_start": -0.600612,
+            "t_end": 0.0
+          },
+          {
+            "segment_id": 199,
+            "provenance": "edge",
+            "edge_id": 245,
+            "adjacent_face_ids": [
+              40,
+              149
+            ],
+            "t_start": 2.094395,
+            "t_end": 3.141453
+          },
+          {
+            "segment_id": 522,
+            "provenance": "face",
+            "face_id": 149,
+            "uv_start": [
+              4.18879,
+              1.570796
+            ],
+            "uv_end": [
+              3.141593,
+              3.141593
+            ]
+          }
+        ]
+      },
+      {
+        "cut_node": 441,
+        "point": [
+          6.70272228311381,
+          4.59150635094615,
+          39.75
+        ],
+        "piece_count_if_removed": 2,
+        "piece_sizes_if_removed": [
+          13,
+          404
+        ],
+        "smallest_piece_size": 13,
+        "smallest_piece_bbox": {
+          "x": [
+            6.70272228311381,
+            11.289383538027407
+          ],
+          "y": [
+            3.7254809471617003,
+            7.25358144124666
+          ],
+          "z": [
+            32.0,
+            32.25
+          ]
+        },
+        "incident_segments": [
+          {
+            "segment_id": 504,
+            "provenance": "face",
+            "face_id": 99,
+            "uv_start": [
+              0.0,
+              -7.75
+            ],
+            "uv_end": [
+              -0.0,
+              -0.25
+            ]
+          },
+          {
+            "segment_id": 525,
+            "provenance": "face",
+            "face_id": 160,
+            "uv_start": [
+              2.094395,
+              1.570796
+            ],
+            "uv_end": [
+              3.141593,
+              3.141593
+            ]
+          }
+        ]
+      }
+    ],
+    "top_cut_point_nearby_check": {
+      "nearest_other_node": 217,
+      "distance_mm": 0.6006120938533654,
+      "nearest_other_node_incident_segments": [
+        222,
+        223,
+        527
+      ]
+    }
+  }
+}

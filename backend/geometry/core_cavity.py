@@ -21,26 +21,42 @@ import logging
 import time
 
 from backend.config import settings
-from backend.models.geometry_models import PartGeometry, Vec3, dot3
+from backend.models.geometry_models import PartGeometry, Vec3, dot3, normalize3
 
 logger = logging.getLogger(__name__)
 
 try:
     from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Splitter
     from OCC.Core.BRepBndLib import brepbndlib_Add
+    from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace
     from OCC.Core.BRepGProp import brepgprop_VolumeProperties
     from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
     from OCC.Core.Bnd import Bnd_Box
     from OCC.Core.GProp import GProp_GProps
-    from OCC.Core.Interface_Static import Interface_Static
+    from OCC.Core.Interface import Interface_Static
     from OCC.Core.IFSelect import IFSelect_RetDone
     from OCC.Core.STEPControl import STEPControl_Writer, STEPControl_AsIs
     from OCC.Core.TopExp import TopExp_Explorer
     from OCC.Core.TopAbs import TopAbs_SOLID
     from OCC.Core.TopoDS import topods
-    from OCC.Core.gp import gp_Pnt
+    from OCC.Core.TopTools import TopTools_ListOfShape
+    from OCC.Core.gp import gp_Ax3, gp_Dir, gp_Pln, gp_Pnt
     _OCC_SPLIT_AVAILABLE = True
-except (ImportError, Exception):
+except Exception as _occ_import_exc:
+    # Do NOT swallow this silently. A bare `except: _AVAILABLE = False` here
+    # previously hid a genuine import-path bug (`OCC.Core.Interface_Static`
+    # does not exist — the real module is `OCC.Core.Interface`) for the
+    # entire time solid split / STEP export were "implemented": every call
+    # silently reported the generic, environment-sounding
+    # "pythonOCC Boolean APIs not available in this environment" instead of
+    # the actual `ModuleNotFoundError`, so the failure read as a missing
+    # dependency rather than a one-line bug. Log loudly so this class of
+    # defect can never hide again.
+    logger.error(
+        "Core/cavity Boolean solid-split imports failed — solid split and "
+        "STEP export will report 'not_attempted' for every request: %s",
+        _occ_import_exc,
+    )
     _OCC_SPLIT_AVAILABLE = False
 
 
@@ -179,6 +195,12 @@ class CoreCavitySolidResult:
     - ``cavity_solid`` / ``core_solid``: raw OCC ``TopoDS_Shape`` objects for
       downstream export (Milestone 1.11). NOT serialized.
     - Volume metrics for sanity checking.
+    - ``split_tool_kind``: honesty label for what shape actually bisected the
+      tooling. As of Stage 2b this is always ``"planar_approximation"`` on
+      success — a flat plane through the parting loop's centroid, NOT the
+      reported 3-D parting surface (see ``build_planar_split_tool``). Never
+      claim the export follows the exact candidate parting line without
+      checking this field first.
     """
 
     solid_split_status: str  # "split_ok" | "blocked_by_parting_line" | "failed" | "not_attempted"
@@ -187,6 +209,7 @@ class CoreCavitySolidResult:
     core_solid_volume_mm3: float = 0.0
     blank_volume_mm3: float = 0.0
     failure_reason: str | None = None
+    split_tool_kind: str = "none"  # "none" | "planar_approximation"
     # OCC shapes — not serialized; consumed by Milestone 1.11 export.
     cavity_solid: object = None
     core_solid: object = None
@@ -199,6 +222,7 @@ class CoreCavitySolidResult:
             "core_solid_volume_mm3": round(self.core_solid_volume_mm3, 4),
             "blank_volume_mm3": round(self.blank_volume_mm3, 4),
             "failure_reason": self.failure_reason,
+            "split_tool_kind": self.split_tool_kind,
             "occ_available": _OCC_SPLIT_AVAILABLE,
         }
 
@@ -224,11 +248,134 @@ def _solid_center_of_mass(shape: object) -> tuple[float, float, float] | None:
         return None
 
 
+def _validate_split_volumes(
+    cavity_volume: float,
+    core_volume: float,
+    tooling_volume: float,
+    *,
+    min_volume_fraction: float,
+    conservation_tolerance: float,
+) -> str | None:
+    """
+    Stage 2 (2026-07-28): a split that returns 2 solids is not the same as a
+    split that returns 2 USABLE solids. `BRepAlgoAPI_Splitter` can report
+    success while the parting sheet only partially bisects the tooling — the
+    result is one near-full-blank solid plus a degenerate sliver (near-zero
+    or even negative "volume"), not a genuine cavity/core pair. Measured on
+    Part1 before this check existed: solid volumes 35950.05 and −0.164
+    against a tooling volume of 34509.89 — nominally "2 solids", actually a
+    broken split.
+
+    Pure function (plain floats in, a failure-reason string or None out) so
+    the check can be unit-tested without constructing real OCC solids.
+
+    Returns a human-readable failure reason, or `None` if the volumes are
+    plausible.
+    """
+    min_volume = tooling_volume * min_volume_fraction
+    if cavity_volume < min_volume or core_volume < min_volume:
+        return (
+            f"Split produced 2 solids but one is degenerate: cavity="
+            f"{cavity_volume:.3f} mm³, core={core_volume:.3f} mm³ against a "
+            f"tooling volume of {tooling_volume:.3f} mm³ (each solid must be "
+            f">= {min_volume_fraction * 100:.1f}% of tooling volume). "
+            "The parting sheet likely does not fully bisect the mold blank — "
+            "see roadmap Stage 2 §2.3."
+        )
+
+    volume_error = (
+        abs((cavity_volume + core_volume) - tooling_volume) / tooling_volume
+        if tooling_volume > 0
+        else 1.0
+    )
+    if volume_error > conservation_tolerance:
+        return (
+            f"Split volumes don't conserve: cavity ({cavity_volume:.3f}) + core "
+            f"({core_volume:.3f}) = {cavity_volume + core_volume:.3f} mm³ vs. "
+            f"tooling volume {tooling_volume:.3f} mm³ "
+            f"({volume_error * 100:.2f}% error, tolerance "
+            f"{conservation_tolerance * 100:.1f}%)."
+        )
+
+    return None
+
+
+def _shape_list(shapes: list[object]) -> object:
+    """
+    Wrap a Python list of OCC shapes into a `TopTools_ListOfShape`.
+
+    `BRepAlgoAPI_BuilderAlgo.SetArguments`/`SetTools` in this pythonOCC
+    binding do NOT accept a plain Python list — they raise
+    `TypeError: ... argument 2 of type 'TopTools_ListOfShape const &'`. This
+    was silently masked for the entire time solid split was "implemented":
+    the surrounding `except Exception` in the retry loop caught it and
+    reported the generic "failed after all fuzzy-tolerance retries" instead
+    of the real `TypeError`.
+    """
+    shape_list = TopTools_ListOfShape()
+    for shape in shapes:
+        shape_list.Append(shape)
+    return shape_list
+
+
+def build_planar_split_tool(
+    centroid: Vec3,
+    pull_direction: Vec3,
+    half_size_mm: float,
+) -> object:
+    """
+    Build a single, always-topologically-valid planar face — perpendicular
+    to the pull direction, centred on ``centroid``, extending ``half_size_mm``
+    in every in-plane direction — for use as the Boolean splitter tool
+    (Milestone 1.10).
+
+    Why this exists, not the real parting surface (Stage 2, S2.3)
+    ----------------------------------------------------------------
+    The reported/displayed 3-D parting surface (`parting_line.
+    _build_parting_surface`'s `BRepFill_Filling` patch) is confirmed
+    topologically invalid via `BRepCheck_Analyzer` on both real demo parts —
+    independent of any attempt to extend it to the blank's bounds.
+    `ShapeFix_Shape`, `ShapeFix_Face`, and `BRepBuilderAPI_Sewing` were all
+    tried directly against it and none produced a valid shape (see
+    CHANGELOG.md 2026-07-28 "Stage 2b"). `BRepAlgoAPI_Splitter` cannot
+    reliably consume an invalid tool shape. A flat plane sidesteps the
+    problem entirely — it is trivially valid at any size — at the cost of
+    being a genuine geometric approximation for non-planar parting lines
+    (measured pull-axis span: Part1 16.16 mm / 30.78 mm part, Part3
+    7.14 mm / 68.12 mm — a real but bounded simplification, not negligible).
+    Verified end-to-end on real OCC: produces `split_ok` with 2 solids on
+    both Part1 and Part3, where the real filling patch (extended or not)
+    could not.
+
+    This is purely the Boolean-split tool. It is NOT the reported parting
+    line — `PartingSurfaceResult.occ_shape` is unaffected and stays the real
+    3-D candidate curve/surface for display and reporting.
+    """
+    normal = normalize3(pull_direction)
+    reference = (1.0, 0.0, 0.0) if abs(dot3((1.0, 0.0, 0.0), normal)) <= 0.9 else (0.0, 1.0, 0.0)
+    proj = dot3(reference, normal)
+    x_axis_raw = (
+        reference[0] - proj * normal[0],
+        reference[1] - proj * normal[1],
+        reference[2] - proj * normal[2],
+    )
+    x_axis = normalize3(x_axis_raw)
+
+    origin = gp_Pnt(*[float(v) for v in centroid])
+    normal_dir = gp_Dir(*[float(v) for v in normal])
+    x_dir = gp_Dir(*[float(v) for v in x_axis])
+    plane = gp_Pln(gp_Ax3(origin, normal_dir, x_dir))
+    return BRepBuilderAPI_MakeFace(
+        plane, -half_size_mm, half_size_mm, -half_size_mm, half_size_mm
+    ).Face()
+
+
 def split_core_cavity_solids(
     part: PartGeometry,
     parting_sheet: object,
     pull_direction: Optional[Vec3] = None,
     *,
+    loop_points: Optional[list[Vec3]] = None,
     blank_margin_factor: Optional[float] = None,
     split_fuzzy_factor: Optional[float] = None,
 ) -> CoreCavitySolidResult:
@@ -238,12 +385,23 @@ def split_core_cavity_solids(
     Algorithm:
       1. Build an oversized mold blank with `BRepPrimAPI_MakeBox`.
       2. `BRepAlgoAPI_Cut(blank, part.occ_shape)` → tooling volume.
-      3. `BRepAlgoAPI_Splitter(tooling, parting_sheet)` → split into halves.
+      3. Build a planar split tool (`build_planar_split_tool`) through the
+         parting loop's centroid, perpendicular to the pull direction, then
+         `BRepAlgoAPI_Splitter(tooling, split_tool)` → split into halves.
       4. Classify each resulting solid as cavity or core by the sign of
-         dot(centre_of_mass − parting_centroid, pull_direction).
+         dot(centre_of_mass − loop_centroid, pull_direction).
+
+    ``parting_sheet`` is kept as a required argument purely as the "was a
+    parting surface generated at all" precondition (``None`` → blocked) — it
+    is NOT used as the Boolean tool itself. Stage 2 (S2.3) found the real
+    3-D parting surface topologically invalid on both real demo parts (see
+    `build_planar_split_tool`'s docstring), so the actual splitting tool is
+    always a flat plane built from ``loop_points``. Pass the parting-line
+    result's ``wire_points`` here.
 
     Failure modes (all return structured results, never raise):
-      - Parting sheet unavailable: `solid_split_status="blocked_by_parting_line"`.
+      - Parting sheet unavailable, or no loop points to build a splitting
+        tool from: `solid_split_status="blocked_by_parting_line"`.
       - BRepAlgoAPI_Cut failure: retry with fuzzy tolerance; on exhaustion return
         `status="failed"` with `failure_reason`.
       - Split yields ≠ 2 solids: report actual count in `split_solid_count`,
@@ -263,12 +421,27 @@ def split_core_cavity_solids(
             failure_reason="Parting surface was not generated; cannot split mold blank.",
         )
 
+    if not loop_points or len(loop_points) < 3:
+        return CoreCavitySolidResult(
+            solid_split_status="blocked_by_parting_line",
+            failure_reason=(
+                "Parting-line loop points were not provided; cannot build the "
+                "planar Boolean splitting tool (see build_planar_split_tool)."
+            ),
+        )
+
     if pull_direction is None:
         pull_direction = part.optimal_pull_direction or (0.0, 0.0, 1.0)
 
     cfg = settings.dfm.core_cavity
     margin = blank_margin_factor if blank_margin_factor is not None else cfg.blank_margin_factor
     fuzzy = split_fuzzy_factor if split_fuzzy_factor is not None else cfg.split_fuzzy_factor
+
+    loop_centroid = (
+        sum(p[0] for p in loop_points) / len(loop_points),
+        sum(p[1] for p in loop_points) / len(loop_points),
+        sum(p[2] for p in loop_points) / len(loop_points),
+    )
 
     # 1. Build oversized mold blank.
     try:
@@ -294,8 +467,8 @@ def split_core_cavity_solids(
     for attempt_factor in [1.0, 5.0, 25.0]:
         try:
             cut = BRepAlgoAPI_Cut()
-            cut.SetArguments([blank])
-            cut.SetTools([part.occ_shape])
+            cut.SetArguments(_shape_list([blank]))
+            cut.SetTools(_shape_list([part.occ_shape]))
             cut.SetFuzzyValue(fuzzy * attempt_factor)
             cut.Build()
             if cut.IsDone() and not cut.HasErrors():
@@ -314,12 +487,18 @@ def split_core_cavity_solids(
             blank_volume_mm3=blank_volume,
             failure_reason="BRepAlgoAPI_Cut (blank − part) failed after all fuzzy-tolerance retries.",
         )
+    tooling_volume = _solid_volume(tooling)
 
-    # 3. BRepAlgoAPI_Splitter(tooling, parting_sheet) → two mold halves.
+    # 3. Build the planar split tool and run BRepAlgoAPI_Splitter(tooling,
+    #    split_tool) → two mold halves. See build_planar_split_tool's
+    #    docstring for why a flat plane is used instead of parting_sheet.
     try:
+        split_tool = build_planar_split_tool(
+            loop_centroid, pull_direction, diag * cfg.split_plane_half_size_factor
+        )
         splitter = BRepAlgoAPI_Splitter()
-        splitter.SetArguments([tooling])
-        splitter.SetTools([parting_sheet])
+        splitter.SetArguments(_shape_list([tooling]))
+        splitter.SetTools(_shape_list([split_tool]))
         splitter.SetFuzzyValue(fuzzy)
         splitter.Build()
         if splitter.HasErrors():
@@ -357,30 +536,20 @@ def split_core_cavity_solids(
             ),
         )
 
-    # 5. Classify each solid as cavity or core.
-    # Compute parting centroid from the parting-surface boundary.
-    try:
-        ps_props = GProp_GProps()
-        brepgprop_VolumeProperties(parting_sheet, ps_props)
-        ps_cg = ps_props.CentreOfMass()
-        parting_centroid = (float(ps_cg.X()), float(ps_cg.Y()), float(ps_cg.Z()))
-    except Exception:
-        # Fallback: use the midpoint of the blank
-        parting_centroid = (
-            (x1 + x2) / 2.0,
-            (y1 + y2) / 2.0,
-            (z1 + z2) / 2.0,
-        )
-
+    # 5. Classify each solid as cavity or core, using the SAME loop centroid
+    # the split tool was built from (previously this recomputed a centroid
+    # from parting_sheet's VolumeProperties — a face/shell has no volume, so
+    # that call was silently degenerate and fell back to the blank midpoint,
+    # a semantically wrong "parting centroid" for a 2-D surface).
     classified: dict[str, object] = {}
     for solid in solids:
         cg = _solid_center_of_mass(solid)
         if cg is None:
             continue
         rel = (
-            cg[0] - parting_centroid[0],
-            cg[1] - parting_centroid[1],
-            cg[2] - parting_centroid[2],
+            cg[0] - loop_centroid[0],
+            cg[1] - loop_centroid[1],
+            cg[2] - loop_centroid[2],
         )
         sdot = dot3(rel, pull_direction)
         label = "cavity" if sdot > 0 else "core"
@@ -399,12 +568,33 @@ def split_core_cavity_solids(
 
     cavity = classified["cavity"]
     core = classified["core"]
+    cavity_volume = _solid_volume(cavity)
+    core_volume = _solid_volume(core)
+
+    volume_failure = _validate_split_volumes(
+        cavity_volume,
+        core_volume,
+        tooling_volume,
+        min_volume_fraction=cfg.min_solid_volume_fraction,
+        conservation_tolerance=cfg.volume_conservation_tolerance,
+    )
+    if volume_failure is not None:
+        return CoreCavitySolidResult(
+            solid_split_status="failed",
+            split_solid_count=2,
+            cavity_solid_volume_mm3=cavity_volume,
+            core_solid_volume_mm3=core_volume,
+            blank_volume_mm3=blank_volume,
+            failure_reason=volume_failure,
+        )
+
     return CoreCavitySolidResult(
         solid_split_status="split_ok",
         split_solid_count=2,
-        cavity_solid_volume_mm3=_solid_volume(cavity),
-        core_solid_volume_mm3=_solid_volume(core),
+        cavity_solid_volume_mm3=cavity_volume,
+        core_solid_volume_mm3=core_volume,
         blank_volume_mm3=blank_volume,
+        split_tool_kind="planar_approximation",
         cavity_solid=cavity,
         core_solid=core,
     )
@@ -418,6 +608,9 @@ def export_mold_halves(
     solid_result: CoreCavitySolidResult,
     output_dir: str | None = None,
     filename_prefix: str = "mold_halves",
+    *,
+    solid_overrides: dict[str, object] | None = None,
+    extra_solids: list[tuple[object, str]] | None = None,
 ) -> dict:
     """
     Export cavity and core mold-half solids as a multi-body AP214 STEP file (Milestone 1.11).
@@ -425,6 +618,19 @@ def export_mold_halves(
     Writes to ``output_dir`` (default: ``settings.dfm.core_cavity.export_dir``).
     The output directory is created if it does not exist.
     Writes NEVER go to ``data/parts/`` (CLAUDE.md invariant #2).
+
+    ``solid_overrides`` / ``extra_solids`` (Stage 4, 2026-07-28): this
+    function stays the single AP214 writer for every mold-half export,
+    including when a Stage 4 side core has been generated — rather than
+    core_cavity.py importing the Stage 4 result type (which would create a
+    circular import, since side_core.py already imports from here), the
+    caller passes plain OCC shapes:
+      - ``solid_overrides``: e.g. ``{"cavity": reduced_cavity_shape}`` —
+        write this shape under the ``"cavity"``/``"core"`` label instead of
+        ``solid_result``'s own, because Stage 4 replaces whichever half
+        contained the side core with its post-Cut reduced volume.
+      - ``extra_solids``: additional ``(shape, label)`` bodies appended to
+        the same STEP file — e.g. ``[(side_core_solid, "side_core_0")]``.
 
     Returns a JSON-safe dict with ``status``, ``output_path``, and ``failure_reason``.
     """
@@ -470,13 +676,17 @@ def export_mold_halves(
         export_path.mkdir(parents=True, exist_ok=True)
         output_file = export_path / f"{filename_prefix}.stp"
 
+        overrides = solid_overrides or {}
+        bodies: list[tuple[object, str]] = [
+            (overrides.get("cavity", solid_result.cavity_solid), "cavity"),
+            (overrides.get("core", solid_result.core_solid), "core"),
+        ]
+        bodies.extend(extra_solids or [])
+
         writer = STEPControl_Writer()
         Interface_Static.SetCVal("write.step.schema", "AP214")
 
-        for solid, label in [
-            (solid_result.cavity_solid, "cavity"),
-            (solid_result.core_solid, "core"),
-        ]:
+        for solid, label in bodies:
             status = writer.Transfer(solid, STEPControl_AsIs)
             if status != IFSelect_RetDone:
                 logger.warning("STEP Transfer for %s solid returned status %s.", label, status)
@@ -495,7 +705,7 @@ def export_mold_halves(
             "output_path": str(output_file),
             "file_size_bytes": file_size,
             "schema": "AP214",
-            "solid_count": 2,
+            "solid_count": len(bodies),
         }
 
     except Exception as exc:

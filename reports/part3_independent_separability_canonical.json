@@ -1,0 +1,792 @@
+{
+  "+X": {
+    "sep": {
+      "direction": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 25.34,
+      "component_count": 45,
+      "component_areas_mm2": [
+        1592.455,
+        1490.324,
+        851.497,
+        753.982,
+        602.461,
+        494.793,
+        413.01,
+        185.159,
+        87.93,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.4077,
+      "largest_area_fraction": 0.2106,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 45 components with no dominant pair (largest two only 40.8% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 45 raw components (40.8% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "+X",
+      "direction_raw": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 332,
+      "track_b_segment_count": 175,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 29
+      },
+      "stitched_segment_count": 626,
+      "graph_node_count": 440,
+      "graph_edge_count": 566,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 191,
+      "graph_mu": 129,
+      "candidate_count": 329,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 282,
+      "h4_failures": 47,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "-X": {
+    "sep": {
+      "direction": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 25.34,
+      "component_count": 45,
+      "component_areas_mm2": [
+        1592.455,
+        1490.324,
+        851.497,
+        753.982,
+        602.461,
+        494.793,
+        413.01,
+        185.159,
+        87.93,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.4077,
+      "largest_area_fraction": 0.2106,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 45 components with no dominant pair (largest two only 40.8% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 45 raw components (40.8% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "-X",
+      "direction_raw": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_normalized": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 332,
+      "track_b_segment_count": 174,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 28
+      },
+      "stitched_segment_count": 624,
+      "graph_node_count": 439,
+      "graph_edge_count": 564,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 190,
+      "graph_mu": 128,
+      "candidate_count": 328,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 281,
+      "h4_failures": 47,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "+Y": {
+    "sep": {
+      "direction": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 53.73,
+      "component_count": 47,
+      "component_areas_mm2": [
+        3482.955,
+        1583.066,
+        842.108,
+        602.461,
+        63.096,
+        63.096,
+        63.096,
+        63.096,
+        63.096,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.6699,
+      "largest_area_fraction": 0.4606,
+      "classification": "weak",
+      "notes": [
+        "maximal cut yields 47 raw components (67.0% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "+Y",
+      "direction_raw": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 336,
+      "track_b_segment_count": 169,
+      "track_b_segment_kinds": {
+        "silhouette": 144,
+        "tangential": 25
+      },
+      "stitched_segment_count": 620,
+      "graph_node_count": 438,
+      "graph_edge_count": 559,
+      "graph_component_count": 4,
+      "graph_branch_node_count": 185,
+      "graph_mu": 125,
+      "candidate_count": 325,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 287,
+      "h4_failures": 38,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "-Y": {
+    "sep": {
+      "direction": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 53.73,
+      "component_count": 47,
+      "component_areas_mm2": [
+        3482.955,
+        1583.066,
+        842.108,
+        602.461,
+        63.096,
+        63.096,
+        63.096,
+        63.096,
+        63.096,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.6699,
+      "largest_area_fraction": 0.4606,
+      "classification": "weak",
+      "notes": [
+        "maximal cut yields 47 raw components (67.0% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "-Y",
+      "direction_raw": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 336,
+      "track_b_segment_count": 171,
+      "track_b_segment_kinds": {
+        "silhouette": 146,
+        "tangential": 25
+      },
+      "stitched_segment_count": 622,
+      "graph_node_count": 440,
+      "graph_edge_count": 562,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 187,
+      "graph_mu": 125,
+      "candidate_count": 325,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 2,
+      "h3_failures": 286,
+      "h4_failures": 37,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "+Z": {
+    "sep": {
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 56.15,
+      "component_count": 29,
+      "component_areas_mm2": [
+        1432.566,
+        1184.373,
+        967.241,
+        816.292,
+        740.958,
+        572.705,
+        339.292,
+        118.284,
+        118.284,
+        118.284
+      ],
+      "largest_two_area_fraction": 0.3461,
+      "largest_area_fraction": 0.1894,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 29 components with no dominant pair (largest two only 34.6% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 29 raw components (34.6% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "+Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 352,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 352,
+      "graph_node_count": 260,
+      "graph_edge_count": 352,
+      "graph_component_count": 18,
+      "graph_branch_node_count": 184,
+      "graph_mu": 110,
+      "candidate_count": 310,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 159,
+      "h4_failures": 151,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "-Z": {
+    "sep": {
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 56.15,
+      "component_count": 29,
+      "component_areas_mm2": [
+        1432.566,
+        1184.373,
+        967.241,
+        816.292,
+        740.958,
+        572.705,
+        339.292,
+        118.284,
+        118.284,
+        118.284
+      ],
+      "largest_two_area_fraction": 0.3461,
+      "largest_area_fraction": 0.1894,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 29 components with no dominant pair (largest two only 34.6% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 29 raw components (34.6% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "-Z",
+      "direction_raw": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 352,
+      "track_b_segment_count": 0,
+      "track_b_segment_kinds": {},
+      "stitched_segment_count": 352,
+      "graph_node_count": 260,
+      "graph_edge_count": 352,
+      "graph_component_count": 18,
+      "graph_branch_node_count": 184,
+      "graph_mu": 110,
+      "candidate_count": 310,
+      "h0_failures": 0,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 159,
+      "h4_failures": 151,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(1,1,0)": {
+    "sep": {
+      "direction": [
+        0.7071067811865475,
+        0.7071067811865475,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 25.05,
+      "component_count": 46,
+      "component_areas_mm2": [
+        1592.455,
+        1490.324,
+        851.497,
+        753.982,
+        610.231,
+        494.793,
+        413.01,
+        163.239,
+        87.93,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.4077,
+      "largest_area_fraction": 0.2106,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 46 components with no dominant pair (largest two only 40.8% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 46 raw components (40.8% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(1,1,0)",
+      "direction_raw": [
+        1.0,
+        1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.707107,
+        0.707107,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 323,
+      "track_b_segment_count": 142,
+      "track_b_segment_kinds": {
+        "silhouette": 110,
+        "tangential": 32
+      },
+      "stitched_segment_count": 591,
+      "graph_node_count": 394,
+      "graph_edge_count": 473,
+      "graph_component_count": 12,
+      "graph_branch_node_count": 129,
+      "graph_mu": 91,
+      "candidate_count": 291,
+      "h0_failures": 2,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 273,
+      "h4_failures": 16,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(1,-1,0)": {
+    "sep": {
+      "direction": [
+        0.7071067811865475,
+        -0.7071067811865475,
+        0.0
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 25.05,
+      "component_count": 58,
+      "component_areas_mm2": [
+        1521.399,
+        1490.324,
+        780.441,
+        753.982,
+        610.231,
+        494.793,
+        413.01,
+        163.239,
+        87.93,
+        63.096
+      ],
+      "largest_two_area_fraction": 0.3983,
+      "largest_area_fraction": 0.2012,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 58 components with no dominant pair (largest two only 39.8% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 58 raw components (39.8% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(1,-1,0)",
+      "direction_raw": [
+        1.0,
+        -1.0,
+        0.0
+      ],
+      "direction_normalized": [
+        0.707107,
+        -0.707107,
+        0.0
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 287,
+      "track_b_segment_count": 202,
+      "track_b_segment_kinds": {
+        "silhouette": 168,
+        "tangential": 34
+      },
+      "stitched_segment_count": 646,
+      "graph_node_count": 427,
+      "graph_edge_count": 548,
+      "graph_component_count": 3,
+      "graph_branch_node_count": 181,
+      "graph_mu": 124,
+      "candidate_count": 324,
+      "h0_failures": 3,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 313,
+      "h4_failures": 8,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(1,0,1)": {
+    "sep": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        0.7071067811865475
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 4.32,
+      "component_count": 39,
+      "component_areas_mm2": [
+        2244.306,
+        2070.046,
+        946.95,
+        831.478,
+        339.292,
+        155.501,
+        117.107,
+        117.107,
+        117.107,
+        117.107
+      ],
+      "largest_two_area_fraction": 0.5705,
+      "largest_area_fraction": 0.2968,
+      "classification": "weak",
+      "notes": [
+        "maximal cut yields 39 raw components (57.1% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(1,0,1)",
+      "direction_raw": [
+        1.0,
+        0.0,
+        1.0
+      ],
+      "direction_normalized": [
+        0.707107,
+        0.0,
+        0.707107
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 71,
+      "track_b_segment_count": 204,
+      "track_b_segment_kinds": {
+        "silhouette": 204
+      },
+      "stitched_segment_count": 300,
+      "graph_node_count": 42,
+      "graph_edge_count": 44,
+      "graph_component_count": 7,
+      "graph_branch_node_count": 4,
+      "graph_mu": 9,
+      "candidate_count": 9,
+      "h0_failures": 1,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 2,
+      "h4_failures": 6,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(1,0,-1)": {
+    "sep": {
+      "direction": [
+        0.7071067811865475,
+        0.0,
+        -0.7071067811865475
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 2.63,
+      "component_count": 30,
+      "component_areas_mm2": [
+        1689.543,
+        1432.566,
+        1417.018,
+        1248.775,
+        634.176,
+        505.997,
+        117.107,
+        117.107,
+        117.107,
+        57.757
+      ],
+      "largest_two_area_fraction": 0.4129,
+      "largest_area_fraction": 0.2234,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 30 components with no dominant pair (largest two only 41.3% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 30 raw components (41.3% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(1,0,-1)",
+      "direction_raw": [
+        1.0,
+        0.0,
+        -1.0
+      ],
+      "direction_normalized": [
+        0.707107,
+        0.0,
+        -0.707107
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 70,
+      "track_b_segment_count": 205,
+      "track_b_segment_kinds": {
+        "silhouette": 205
+      },
+      "stitched_segment_count": 300,
+      "graph_node_count": 44,
+      "graph_edge_count": 46,
+      "graph_component_count": 7,
+      "graph_branch_node_count": 4,
+      "graph_mu": 9,
+      "candidate_count": 11,
+      "h0_failures": 1,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 5,
+      "h4_failures": 5,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(0,1,1)": {
+    "sep": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        0.7071067811865475
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 24.61,
+      "component_count": 36,
+      "component_areas_mm2": [
+        1681.575,
+        1531.249,
+        1432.566,
+        967.241,
+        957.226,
+        339.292,
+        119.982,
+        119.982,
+        43.823,
+        43.823
+      ],
+      "largest_two_area_fraction": 0.4249,
+      "largest_area_fraction": 0.2224,
+      "classification": "local-only",
+      "notes": [
+        "maximal cut yields 36 components with no dominant pair (largest two only 42.5% of area) -- area is scattered across many similarly-sized fragments, consistent with local-feature dominance",
+        "maximal cut yields 36 raw components (42.5% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(0,1,1)",
+      "direction_raw": [
+        0.0,
+        1.0,
+        1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.707107,
+        0.707107
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 71,
+      "track_b_segment_count": 205,
+      "track_b_segment_kinds": {
+        "silhouette": 205
+      },
+      "stitched_segment_count": 298,
+      "graph_node_count": 43,
+      "graph_edge_count": 46,
+      "graph_component_count": 8,
+      "graph_branch_node_count": 5,
+      "graph_mu": 11,
+      "candidate_count": 29,
+      "h0_failures": 1,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 23,
+      "h4_failures": 5,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  },
+  "(0,1,-1)": {
+    "sep": {
+      "direction": [
+        0.0,
+        0.7071067811865475,
+        -0.7071067811865475
+      ],
+      "total_area_mm2": 7562.055,
+      "near_zero_area_pct": 24.61,
+      "component_count": 36,
+      "component_areas_mm2": [
+        3229.433,
+        1432.566,
+        967.241,
+        822.089,
+        339.292,
+        119.982,
+        119.982,
+        118.527,
+        43.823,
+        43.823
+      ],
+      "largest_two_area_fraction": 0.6165,
+      "largest_area_fraction": 0.4271,
+      "classification": "weak",
+      "notes": [
+        "maximal cut yields 36 raw components (61.6% in the largest two)"
+      ]
+    },
+    "pl": {
+      "direction_label": "(0,1,-1)",
+      "direction_raw": [
+        0.0,
+        1.0,
+        -1.0
+      ],
+      "direction_normalized": [
+        0.0,
+        0.707107,
+        -0.707107
+      ],
+      "direction_source": "manual",
+      "track_a_segment_count": 71,
+      "track_b_segment_count": 203,
+      "track_b_segment_kinds": {
+        "silhouette": 203
+      },
+      "stitched_segment_count": 297,
+      "graph_node_count": 42,
+      "graph_edge_count": 44,
+      "graph_component_count": 7,
+      "graph_branch_node_count": 4,
+      "graph_mu": 9,
+      "candidate_count": 9,
+      "h0_failures": 1,
+      "h1_failures": 0,
+      "h2_failures": 0,
+      "h3_failures": 1,
+      "h4_failures": 7,
+      "h5_h7_failures": 0,
+      "fully_valid_candidate_count": 0,
+      "best_valid_candidate": null,
+      "outcome": "no_feasible_candidate"
+    }
+  }
+}

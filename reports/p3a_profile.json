@@ -1,0 +1,920 @@
+{
+  "phase": "P3a",
+  "note": "measurement only \u2014 no enumeration strategy was built",
+  "records": [
+    {
+      "id": "F1",
+      "name": "cube",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 6,
+      "outcome": "feasible",
+      "mu": 5,
+      "branch_nodes": 8,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 5,
+      "track_a_segments": 12,
+      "track_b_segments": 0,
+      "degenerate_faces": 4,
+      "rejections": {
+        "H4": 3
+      },
+      "stage_ms": {
+        "track_a": 1.548,
+        "track_b": 0.679,
+        "weld": 0.088,
+        "reduce": 0.023,
+        "enumerate": 0.069,
+        "filter": 23.57,
+        "rank": 0.022
+      },
+      "a_cauchy": 1600.0,
+      "coverages": [
+        1.0,
+        1.0
+      ],
+      "selected_coverage": 1.0,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.0,
+      "total_ms": 222.0
+    },
+    {
+      "id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 3,
+      "outcome": "feasible",
+      "mu": 2,
+      "branch_nodes": 0,
+      "components": 2,
+      "strategy": "single_cycle",
+      "candidates": 2,
+      "track_a_segments": 2,
+      "track_b_segments": 0,
+      "degenerate_faces": 1,
+      "rejections": {},
+      "stage_ms": {
+        "track_a": 3.181,
+        "track_b": 0.385,
+        "weld": 0.039,
+        "reduce": 0.027,
+        "enumerate": 0.008,
+        "filter": 9.626,
+        "rank": 0.049
+      },
+      "a_cauchy": 706.8583,
+      "coverages": [
+        0.993587,
+        0.993587
+      ],
+      "selected_coverage": 0.993587,
+      "a_exact": 705.0854,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.251,
+      "total_ms": 190.8
+    },
+    {
+      "id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 3,
+      "outcome": "feasible",
+      "mu": 3,
+      "branch_nodes": 4,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 3,
+      "track_a_segments": 10,
+      "track_b_segments": 2,
+      "degenerate_faces": 2,
+      "rejections": {
+        "H6": 1
+      },
+      "stage_ms": {
+        "track_a": 2.062,
+        "track_b": 5.507,
+        "weld": 0.402,
+        "reduce": 0.02,
+        "enumerate": 0.088,
+        "filter": 13.42,
+        "rank": 0.021
+      },
+      "a_cauchy": 1787.7483,
+      "coverages": [
+        1.006853,
+        1.006853
+      ],
+      "selected_coverage": 1.006853,
+      "a_exact": 1797.8076,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": -0.56,
+      "total_ms": 62.1
+    },
+    {
+      "id": "F4",
+      "name": "sphere",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 1,
+      "outcome": "feasible",
+      "mu": 1,
+      "branch_nodes": 0,
+      "components": 1,
+      "strategy": "single_cycle",
+      "candidates": 1,
+      "track_a_segments": 0,
+      "track_b_segments": 1,
+      "degenerate_faces": 0,
+      "rejections": {},
+      "stage_ms": {
+        "track_a": 0.006,
+        "track_b": 3.545,
+        "weld": 0.017,
+        "reduce": 0.012,
+        "enumerate": 0.005,
+        "filter": 1.363,
+        "rank": 0.01
+      },
+      "a_cauchy": 1243.8463,
+      "coverages": [
+        1.00338
+      ],
+      "selected_coverage": 1.00338,
+      "a_exact": 1251.6744,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": -0.625,
+      "total_ms": 111.3
+    },
+    {
+      "id": "F5",
+      "name": "cone",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 3,
+      "outcome": "feasible",
+      "mu": 1,
+      "branch_nodes": 0,
+      "components": 1,
+      "strategy": "single_cycle",
+      "candidates": 1,
+      "track_a_segments": 1,
+      "track_b_segments": 0,
+      "degenerate_faces": 0,
+      "rejections": {},
+      "stage_ms": {
+        "track_a": 1.245,
+        "track_b": 0.363,
+        "weld": 0.023,
+        "reduce": 0.019,
+        "enumerate": 0.004,
+        "filter": 2.715,
+        "rank": 0.013
+      },
+      "a_cauchy": 1256.6371,
+      "coverages": [
+        0.993587
+      ],
+      "selected_coverage": 0.993587,
+      "a_exact": 1253.8261,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.224,
+      "total_ms": 81.4
+    },
+    {
+      "id": "F6",
+      "name": "filleted_box",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 10,
+      "outcome": "feasible",
+      "mu": 5,
+      "branch_nodes": 8,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 5,
+      "track_a_segments": 12,
+      "track_b_segments": 0,
+      "degenerate_faces": 4,
+      "rejections": {
+        "H4": 3
+      },
+      "stage_ms": {
+        "track_a": 2.269,
+        "track_b": 1.12,
+        "weld": 0.088,
+        "reduce": 0.021,
+        "enumerate": 0.053,
+        "filter": 39.999,
+        "rank": 0.027
+      },
+      "a_cauchy": 1613.9711,
+      "coverages": [
+        0.991344,
+        0.991344
+      ],
+      "selected_coverage": 0.991344,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.873,
+      "total_ms": 138.8
+    },
+    {
+      "id": "F7",
+      "name": "spline_lofted_lid",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 7,
+      "outcome": "feasible",
+      "mu": 1,
+      "branch_nodes": 0,
+      "components": 1,
+      "strategy": "single_cycle",
+      "candidates": 1,
+      "track_a_segments": 5,
+      "track_b_segments": 0,
+      "degenerate_faces": 0,
+      "rejections": {},
+      "stage_ms": {
+        "track_a": 2.238,
+        "track_b": 0.815,
+        "weld": 0.045,
+        "reduce": 0.02,
+        "enumerate": 0.021,
+        "filter": 5.571,
+        "rank": 0.013
+      },
+      "a_cauchy": 1199.679,
+      "coverages": [
+        1.000268
+      ],
+      "selected_coverage": 1.000268,
+      "a_exact": 1200.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": -0.027,
+      "total_ms": 238.9
+    },
+    {
+      "id": "F8",
+      "name": "box_with_boss",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 8,
+      "outcome": "feasible",
+      "mu": 7,
+      "branch_nodes": 8,
+      "components": 3,
+      "strategy": "cycle_basis",
+      "candidates": 7,
+      "track_a_segments": 14,
+      "track_b_segments": 0,
+      "degenerate_faces": 5,
+      "rejections": {
+        "H4": 5
+      },
+      "stage_ms": {
+        "track_a": 2.647,
+        "track_b": 0.915,
+        "weld": 0.097,
+        "reduce": 0.025,
+        "enumerate": 0.062,
+        "filter": 41.927,
+        "rank": 0.022
+      },
+      "a_cauchy": 1600.0,
+      "coverages": [
+        1.0,
+        1.0
+      ],
+      "selected_coverage": 1.0,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.0,
+      "total_ms": 214.4
+    },
+    {
+      "id": "F9",
+      "name": "box_with_through_hole",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 7,
+      "outcome": "feasible",
+      "mu": 7,
+      "branch_nodes": 8,
+      "components": 3,
+      "strategy": "cycle_basis",
+      "candidates": 7,
+      "track_a_segments": 14,
+      "track_b_segments": 0,
+      "degenerate_faces": 5,
+      "rejections": {
+        "H4": 5,
+        "H3": 4
+      },
+      "stage_ms": {
+        "track_a": 3.517,
+        "track_b": 1.934,
+        "weld": 0.107,
+        "reduce": 0.021,
+        "enumerate": 0.081,
+        "filter": 61.154,
+        "rank": 0.035
+      },
+      "a_cauchy": 1486.9027,
+      "coverages": [
+        1.076062,
+        1.076062,
+        1.076062,
+        1.076062
+      ],
+      "selected_coverage": 1.076062,
+      "a_exact": 1487.5717,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": -0.045,
+      "total_ms": 289.2
+    },
+    {
+      "id": "F10",
+      "name": "t_junction_rib",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 10,
+      "outcome": "feasible",
+      "mu": 9,
+      "branch_nodes": 16,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 9,
+      "track_a_segments": 24,
+      "track_b_segments": 0,
+      "degenerate_faces": 7,
+      "rejections": {
+        "H4": 5
+      },
+      "stage_ms": {
+        "track_a": 2.923,
+        "track_b": 1.135,
+        "weld": 0.145,
+        "reduce": 0.022,
+        "enumerate": 0.097,
+        "filter": 66.033,
+        "rank": 0.023
+      },
+      "a_cauchy": 1600.0,
+      "coverages": [
+        0.95,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "selected_coverage": 1.0,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.0,
+      "total_ms": 168.0
+    },
+    {
+      "id": "F11",
+      "name": "alternating_draft_pockets",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 26,
+      "outcome": "no_feasible_candidate",
+      "mu": 25,
+      "branch_nodes": 40,
+      "components": 5,
+      "strategy": "cycle_basis",
+      "candidates": 25,
+      "track_a_segments": 60,
+      "track_b_segments": 0,
+      "degenerate_faces": 16,
+      "rejections": {
+        "H4": 25
+      },
+      "stage_ms": {
+        "track_a": 7.447,
+        "track_b": 2.972,
+        "weld": 0.364,
+        "reduce": 0.035,
+        "enumerate": 0.214,
+        "filter": 441.295,
+        "rank": 0.005
+      },
+      "a_cauchy": 2184.0,
+      "coverages": [],
+      "a_exact": 1800.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 21.333,
+      "total_ms": 786.1
+    },
+    {
+      "id": "F12",
+      "name": "draft_free_rib",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 11,
+      "outcome": "feasible",
+      "mu": 10,
+      "branch_nodes": 16,
+      "components": 2,
+      "strategy": "cycle_basis",
+      "candidates": 10,
+      "track_a_segments": 24,
+      "track_b_segments": 0,
+      "degenerate_faces": 8,
+      "rejections": {
+        "H4": 8
+      },
+      "stage_ms": {
+        "track_a": 3.295,
+        "track_b": 1.33,
+        "weld": 0.187,
+        "reduce": 0.054,
+        "enumerate": 0.1,
+        "filter": 81.879,
+        "rank": 0.067
+      },
+      "a_cauchy": 1600.0,
+      "coverages": [
+        1.0,
+        1.0
+      ],
+      "selected_coverage": 1.0,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.0,
+      "total_ms": 209.9
+    },
+    {
+      "id": "F13",
+      "name": "peanut_two_lobed",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 6,
+      "outcome": "feasible",
+      "mu": 5,
+      "branch_nodes": 8,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 5,
+      "track_a_segments": 12,
+      "track_b_segments": 0,
+      "degenerate_faces": 4,
+      "rejections": {
+        "H4": 3
+      },
+      "stage_ms": {
+        "track_a": 3.673,
+        "track_b": 0.718,
+        "weld": 0.083,
+        "reduce": 0.018,
+        "enumerate": 0.064,
+        "filter": 27.599,
+        "rank": 0.019
+      },
+      "a_cauchy": 1242.0939,
+      "coverages": [
+        0.994735,
+        0.994735
+      ],
+      "selected_coverage": 0.994735,
+      "a_exact": 1238.9907,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.25,
+      "total_ms": 165.9
+    },
+    {
+      "id": "F14",
+      "name": "mirror_symmetric",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 10,
+      "outcome": "feasible",
+      "mu": 9,
+      "branch_nodes": 8,
+      "components": 5,
+      "strategy": "cycle_basis",
+      "candidates": 9,
+      "track_a_segments": 16,
+      "track_b_segments": 0,
+      "degenerate_faces": 6,
+      "rejections": {
+        "H4": 7
+      },
+      "stage_ms": {
+        "track_a": 9.734,
+        "track_b": 1.201,
+        "weld": 0.118,
+        "reduce": 0.024,
+        "enumerate": 0.064,
+        "filter": 66.332,
+        "rank": 0.026
+      },
+      "a_cauchy": 1600.0,
+      "coverages": [
+        1.0,
+        1.0
+      ],
+      "selected_coverage": 1.0,
+      "a_exact": 1600.0,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 0.0,
+      "total_ms": 193.6
+    },
+    {
+      "id": "F17",
+      "name": "barrel_bulged_loft",
+      "kind": "synthetic",
+      "status": "ok",
+      "direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "face_count": 3,
+      "outcome": "feasible",
+      "mu": 1,
+      "branch_nodes": 0,
+      "components": 1,
+      "strategy": "single_cycle",
+      "candidates": 1,
+      "track_a_segments": 0,
+      "track_b_segments": 1,
+      "degenerate_faces": 0,
+      "rejections": {},
+      "stage_ms": {
+        "track_a": 0.665,
+        "track_b": 3.107,
+        "weld": 0.015,
+        "reduce": 0.01,
+        "enumerate": 0.003,
+        "filter": 9.686,
+        "rank": 0.013
+      },
+      "a_cauchy": 800.6284,
+      "coverages": [
+        0.99668
+      ],
+      "selected_coverage": 0.99668,
+      "a_exact": 802.2274,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": -0.199,
+      "total_ms": 173.6
+    },
+    {
+      "id": "F15",
+      "name": "Part1",
+      "kind": "real",
+      "status": "ok",
+      "direction": [
+        0.23213,
+        0.356947,
+        0.904823
+      ],
+      "face_count": 311,
+      "outcome": "no_feasible_candidate",
+      "mu": 5,
+      "branch_nodes": 0,
+      "components": 5,
+      "strategy": "single_cycle",
+      "candidates": 5,
+      "track_a_segments": 136,
+      "track_b_segments": 84,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H4": 5
+      },
+      "stage_ms": {
+        "track_a": 86.569,
+        "track_b": 127.572,
+        "weld": 84.276,
+        "reduce": 0.196,
+        "enumerate": 0.087,
+        "filter": 1083.726,
+        "rank": 0.012
+      },
+      "a_cauchy": 612.5292,
+      "coverages": [],
+      "a_exact": 453.1558,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 35.17,
+      "total_ms": 14941.0
+    },
+    {
+      "id": "F16",
+      "name": "Part3",
+      "kind": "real",
+      "status": "ok",
+      "direction": [
+        -0.103742,
+        0.555543,
+        0.82499
+      ],
+      "face_count": 414,
+      "outcome": "no_feasible_candidate",
+      "mu": 3,
+      "branch_nodes": 0,
+      "components": 3,
+      "strategy": "single_cycle",
+      "candidates": 3,
+      "track_a_segments": 38,
+      "track_b_segments": 202,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H3": 6
+      },
+      "stage_ms": {
+        "track_a": 109.448,
+        "track_b": 341.989,
+        "weld": 70.097,
+        "reduce": 0.216,
+        "enumerate": 0.039,
+        "filter": 33.587,
+        "rank": 0.008
+      },
+      "a_cauchy": 1889.3995,
+      "coverages": [],
+      "a_exact": 1190.1835,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 58.749,
+      "total_ms": 4119.8
+    },
+    {
+      "id": "X1",
+      "name": "Dhukkan",
+      "kind": "external",
+      "status": "ok",
+      "direction": [
+        0.173648,
+        0.0,
+        0.984808
+      ],
+      "face_count": 10,
+      "outcome": "no_feasible_candidate",
+      "mu": 2,
+      "branch_nodes": 0,
+      "components": 2,
+      "strategy": "single_cycle",
+      "candidates": 2,
+      "track_a_segments": 13,
+      "track_b_segments": 8,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H4": 1,
+        "H2": 1
+      },
+      "stage_ms": {
+        "track_a": 7.904,
+        "track_b": 10.031,
+        "weld": 1.487,
+        "reduce": 0.038,
+        "enumerate": 0.03,
+        "filter": 8.597,
+        "rank": 0.004
+      },
+      "a_cauchy": 365.6265,
+      "coverages": [],
+      "a_exact": 321.3751,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 13.769,
+      "total_ms": 225.0
+    },
+    {
+      "id": "X2",
+      "name": "G_281-01",
+      "kind": "external",
+      "status": "ok",
+      "direction": [
+        0.029982,
+        0.326137,
+        0.944847
+      ],
+      "face_count": 70,
+      "outcome": "no_feasible_candidate",
+      "mu": 3,
+      "branch_nodes": 2,
+      "components": 1,
+      "strategy": "cycle_basis",
+      "candidates": 3,
+      "track_a_segments": 88,
+      "track_b_segments": 2,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H3": 6
+      },
+      "stage_ms": {
+        "track_a": 32.129,
+        "track_b": 9.146,
+        "weld": 2.508,
+        "reduce": 0.11,
+        "enumerate": 0.17,
+        "filter": 13.968,
+        "rank": 0.007
+      },
+      "a_cauchy": 21845.5246,
+      "coverages": [],
+      "a_exact": 21342.5601,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 2.357,
+      "total_ms": 2541.9
+    },
+    {
+      "id": "X3",
+      "name": "New Designe Dhukkan",
+      "kind": "external",
+      "status": "ok",
+      "direction": [
+        0.165943,
+        0.053119,
+        0.984704
+      ],
+      "face_count": 25,
+      "outcome": "no_feasible_candidate",
+      "mu": 3,
+      "branch_nodes": 0,
+      "components": 3,
+      "strategy": "single_cycle",
+      "candidates": 3,
+      "track_a_segments": 11,
+      "track_b_segments": 8,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H4": 3
+      },
+      "stage_ms": {
+        "track_a": 16.765,
+        "track_b": 11.821,
+        "weld": 1.268,
+        "reduce": 0.032,
+        "enumerate": 0.039,
+        "filter": 62.345,
+        "rank": 0.005
+      },
+      "a_cauchy": 2323.0862,
+      "coverages": [],
+      "a_exact": 2110.2448,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 10.086,
+      "total_ms": 394.1
+    },
+    {
+      "id": "X4",
+      "name": "Plastic Cover",
+      "kind": "external",
+      "status": "ok",
+      "direction": [
+        0.224144,
+        0.12941,
+        0.965926
+      ],
+      "face_count": 60,
+      "outcome": "no_feasible_candidate",
+      "mu": 7,
+      "branch_nodes": 0,
+      "components": 7,
+      "strategy": "single_cycle",
+      "candidates": 7,
+      "track_a_segments": 89,
+      "track_b_segments": 22,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H3": 6,
+        "H4": 4
+      },
+      "stage_ms": {
+        "track_a": 29.609,
+        "track_b": 23.954,
+        "weld": 16.519,
+        "reduce": 0.106,
+        "enumerate": 0.105,
+        "filter": 166.464,
+        "rank": 0.005
+      },
+      "a_cauchy": 7095.7667,
+      "coverages": [],
+      "a_exact": 6748.691,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 5.143,
+      "total_ms": 2502.5
+    },
+    {
+      "id": "X5",
+      "name": "cupshot_in_bus_v2",
+      "kind": "external",
+      "status": "ok",
+      "direction": [
+        0.5,
+        0.0,
+        0.866025
+      ],
+      "face_count": 56,
+      "outcome": "no_feasible_candidate",
+      "mu": 3,
+      "branch_nodes": 0,
+      "components": 3,
+      "strategy": "single_cycle",
+      "candidates": 3,
+      "track_a_segments": 6,
+      "track_b_segments": 34,
+      "degenerate_faces": 0,
+      "rejections": {
+        "H3": 3,
+        "H4": 1
+      },
+      "stage_ms": {
+        "track_a": 18.172,
+        "track_b": 99.143,
+        "weld": 2.923,
+        "reduce": 0.053,
+        "enumerate": 0.031,
+        "filter": 51.249,
+        "rank": 0.006
+      },
+      "a_cauchy": 8512.4933,
+      "coverages": [],
+      "a_exact": 8139.6409,
+      "a_exact_note": "rasterised 1024x1024",
+      "cauchy_overestimate_pct": 4.581,
+      "total_ms": 1633.6
+    }
+  ],
+  "mu_buckets": {
+    "mu == 0": 0,
+    "mu == 1": 4,
+    "2 <= mu <= 12": 17,
+    "mu > 12": 1
+  }
+}

@@ -21,10 +21,21 @@ stpyvista==0.0.11           # Streamlit + PyVista integration widget
 plotly==5.21.0
 
 # ── AI Agent ──────────────────────────────────────────────────────────────
+# Stage 5 (2026-07-28): provider-agnostic agent layer in backend/agent/ calls
+# each provider's native SDK directly (backend/agent/providers.py) -- not via
+# langchain, which stays pinned below but unused, same as reportlab elsewhere
+# in this file (see docs/IMPLEMENTATION_STATUS.md's honesty notes).
 langchain==0.1.20
 langchain-openai==0.1.7
 langchain-community==0.0.38
-openai==1.25.0               # Also used for Grok API (compatible endpoint)
+# Stage 5 (2026-07-28): bumped 1.25.0 -> 1.109.1. anthropic/google-genai pull
+# in a modern httpx (0.28.1+) that removed the `Client(proxies=...)` kwarg
+# openai==1.25.0 still passed internally -- TypeError: unexpected keyword
+# argument 'proxies' at client construction, confirmed live in Docker.
+# 1.109.1 is verified compatible with httpx 0.28.1 in the same environment.
+openai==1.109.1               # Also used for Grok API (compatible endpoint)
+google-genai==2.14.0          # Gemini -- the modern unified SDK (NOT the legacy google-generativeai)
+anthropic==0.120.1
 
 # ── Data / API ─────────────────────────────────────────────────────────────
 pydantic==2.7.1

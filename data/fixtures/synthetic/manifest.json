@@ -1,0 +1,413 @@
+{
+  "generated_by": "scripts/generate_fixtures.py",
+  "purpose": "Synthetic fixture corpus for the v2 parting-line engine. Each fixture targets a specific algorithmic failure mode and has a checkable answer. See docs/PARTING_LINE_ALGORITHM_PLAN.md \u00a712 P0.",
+  "real_parts_note": "F15 (Part1.stp) and F16 (Part3.stp) live in data/parts/ and are NOT generated here. Part3 has NO ground truth \u2014 Bosch has not disclosed an expected solution \u2014 so it is scored on feasibility, fragmentation, and honesty, never on correctness.",
+  "fixture_count": 15,
+  "fixtures": [
+    {
+      "fixture_id": "F1",
+      "name": "cube",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "planar sharp edges only; many-equal-optima; determinism",
+      "expected": "Top face g=+1, bottom g=-1, four side faces g=0 (zero-draft band). Every horizontal ring around the sides is a valid parting line \u2014 an infinite family of equal optima. Track A ground truth.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The engine must DETECT the degeneracy and break the tie deterministically, not present one ring as 'the' answer.",
+      "filename": "F1_cube.stp",
+      "stats": {
+        "volume_mm3": 64000.0,
+        "area_mm2": 9600.0,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      }
+    },
+    {
+      "fixture_id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "degenerate zero-draft band (plan \u00a74.3, \u00a75.3)",
+      "expected": "d is parallel to the cylinder axis, so R=sqrt(a^2+b^2)=0 and g == 0 over the ENTIRE lateral face. There is no unique silhouette curve; every circumferential ring is equally valid.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "This is the case from the study notes' cylinder sketch. The circumferential 'parting line' drawn there is NOT a silhouette curve \u2014 it is a free choice on a zero-draft surface. The engine must report the band and its free parameter, not invent a curve.",
+      "filename": "F2_cylinder_axis_parallel_to_pull.stp",
+      "stats": {
+        "volume_mm3": 28274.3339,
+        "area_mm2": 5183.6279,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          30.0,
+          30.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 58.3095
+      }
+    },
+    {
+      "fixture_id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: cylindrical face-interior silhouette. Track A provably fails, Track B provably passes.",
+      "expected": "n(u) = cos(u)*x + sin(u)*y is independent of v, so g(u) = R*cos(u-phi) with R=sqrt(a^2+b^2), phi=atan2(b,a). g=0 at u = phi +/- pi/2 \u2014 exactly TWO STRAIGHT RULINGS on the SIDES of the lateral surface, at y = +/-15, z = 0, running the full length in x. (Corrected 2026-08-09: an earlier draft said z = +/-15, which is exactly wrong -- there the normal is (0,0,+/-1) so g = +/-1, the EXTREME. The zero is where the normal is (0,+/-1,0), i.e. the sides.) Both flat end caps have normal (+/-1,0,0) so g == 0 over their whole area: they are zero-draft bands, not curves.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "THE A/B fixture for the whole architecture. The two rulings are interior isoparametric curves, not B-Rep edges, so an edge-only detector cannot see them. P1 must report 'no feasible candidate', NOT a plausible-looking wrong loop.",
+      "filename": "F3_cylinder_axis_perpendicular_to_pull.stp",
+      "stats": {
+        "volume_mm3": 42411.5008,
+        "area_mm2": 7068.5835,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      }
+    },
+    {
+      "fixture_id": "F4",
+      "name": "sphere",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "Track B on a face with no usable edges at all",
+      "expected": "n = (p-C)/r, so g = (p-C).d/r = 0 exactly on the GREAT CIRCLE perpendicular to d: the circle z=0, radius 20.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "A sphere has essentially no topological edges beyond the parameterisation seam, so Track A has nothing to work with. The answer is entirely a face-interior curve.",
+      "filename": "F4_sphere.stp",
+      "stats": {
+        "volume_mm3": 33510.3216,
+        "area_mm2": 5026.5482,
+        "face_count": 1,
+        "edge_count": 1,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      }
+    },
+    {
+      "fixture_id": "F5",
+      "name": "cone",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "plan \u00a74.1 cone closed form, including the no-solution case",
+      "expected": "n(u) = cos(alpha)*(cos u * x + sin u * y) - sin(alpha)*axis, so g(u) = cos(alpha)*R*cos(u-phi) - sin(alpha)*c. With d parallel to the cone axis: a=b=0 so R=0, c=1, giving g = -sin(alpha) = const != 0 \u2014 NO interior silhouette. The silhouette is the base rim edge only.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "MEASURED at P1: passes, coverage 99.4%, selected loop = the base rim. Deliberately the DEGENERATE branch of the cone formula: |tan(alpha)*c/R| -> infinity > 1, so no ruling solution exists. Tests that Track B correctly finds NOTHING here rather than producing noise, and that Track A picks up the rim.",
+      "filename": "F5_cone.stp",
+      "stats": {
+        "volume_mm3": 21991.1486,
+        "area_mm2": 4690.3993,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      }
+    },
+    {
+      "fixture_id": "F6",
+      "name": "filleted_box",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: fillet faces \u2014 silhouette runs ACROSS a blend",
+      "expected": "The top edges are replaced by constant-radius blends. A blend is locally cylindrical (straight runs) or toroidal (corners), so the g=0 curve lies in the blend's INTERIOR where the surface turns from up-facing to vertical \u2014 checkable against plan \u00a74.1's cylinder and torus forms.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "EXPECTATION CORRECTED 2026-08-09 after P1 measured it. This was predicted to need Track B; it does NOT. The top fillets span g in [0, 1] -- from the vertical side wall to the horizontal top -- so g only TOUCHES zero at the fillet/side-wall edge and never crosses inside the face. Track A finds that edge, and the bottom rim is a genuinely valid parting line because the side walls are vertical. Measured: feasible, coverage 99.1%. The a-priori error was assuming 'has curved faces' implies 'needs Track B'; the real criterion is whether g CHANGES SIGN inside a face. See F17, added to cover the case this one does not.",
+      "filename": "F6_filleted_box.stp",
+      "stats": {
+        "volume_mm3": 31189.5278,
+        "area_mm2": 6042.4778,
+        "face_count": 10,
+        "edge_count": 20,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      }
+    },
+    {
+      "fixture_id": "F7",
+      "name": "spline_lofted_lid",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: pure marching-squares path (plan \u00a74.2)",
+      "expected": "A lofted rect->ellipse side surface has NO closed form. Ground truth is a dense 1024^2 reference extraction with tight Newton tolerance, frozen once; the production adaptive-grid result must agree with it to within tau_sag.",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "EXPECTATION CORRECTED 2026-08-09 after P1 measured it. All five lofted side faces have g_centroid in [0.33, 0.44] -- strictly positive, a monotone inward slope -- so g never changes sign and the silhouette is exactly the bottom rim, which Track A finds. Measured: feasible, coverage 100.0%. It therefore does NOT exercise the marching-squares path it was built for; F17 does. Kept as a free-form-geometry robustness case.",
+      "filename": "F7_spline_lofted_lid.stp",
+      "stats": {
+        "volume_mm3": 14086.0574,
+        "area_mm2": 3698.9606,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          30.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 53.8516
+      }
+    },
+    {
+      "fixture_id": "F8",
+      "name": "box_with_boss",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "local-feature rejection (the Bug-H failure mode)",
+      "expected": "Two closed loops exist: the box's outer rim and the boss's base rim. The outer rim is the parting line. The boss rim is a LOCAL FEATURE and must lose on T1 coverage.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "v1 selected the tidiest loop rather than the largest until Bug H was fixed on 2026-07-27 (Part1 coverage 27.6% -> 94.8%). This fixture makes that regression impossible to reintroduce silently.",
+      "filename": "F8_box_with_boss.stp",
+      "stats": {
+        "volume_mm3": 33130.9734,
+        "area_mm2": 6776.9911,
+        "face_count": 8,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      }
+    },
+    {
+      "fixture_id": "F9",
+      "name": "box_with_through_hole",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "multiple GENUINE competing loops \u2014 both feasible, ranking decides",
+      "expected": "Outer rim and hole rim are BOTH feasible closed separating loops. The outer rim wins on T1 coverage. The hole rim must be retained in the scorecard as a feasible runner-up, not silently dropped.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Distinguishes 'rejected' from 'ranked lower' \u2014 a distinction v1's fused feasibility/score cannot express (audit RC-4).",
+      "filename": "F9_box_with_through_hole.stp",
+      "stats": {
+        "volume_mm3": 29738.0533,
+        "area_mm2": 6927.7876,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      }
+    },
+    {
+      "fixture_id": "F10",
+      "name": "t_junction_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: branches \u2014 a real topological branch node",
+      "expected": "The rib meets the outer wall, so the silhouette graph has a genuine T-junction: a branch node that SURVIVES 2-core reduction and degree-2 contraction (plan \u00a75.4).",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Distinguishes a REAL topological branch from tolerance noise. Plan \u00a75.4 requires reporting which of four causes produced each surviving branch node; only the real-branch case is an optimization question.",
+      "filename": "F10_t_junction_rib.stp",
+      "stats": {
+        "volume_mm3": 17600.0,
+        "area_mm2": 5760.0,
+        "face_count": 10,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      }
+    },
+    {
+      "fixture_id": "F11",
+      "name": "alternating_draft_pockets",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: disconnected candidates \u2014 the Part3 failure mode, small",
+      "expected": "Pockets cut from alternating sides at alternating heights fragment the silhouette into 3+ disconnected pieces.",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Part3's real failure (22 components, 18.1% coverage) reproduced at a size a human can reason about. The P1 baseline records the component count; P2 must reduce it, and if it does not, the RC-1 hypothesis is wrong and we stop and re-diagnose.",
+      "filename": "F11_alternating_draft_pockets.stp",
+      "stats": {
+        "volume_mm3": 50928.0,
+        "area_mm2": 10536.0,
+        "face_count": 26,
+        "edge_count": 60,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      }
+    },
+    {
+      "fixture_id": "F12",
+      "name": "draft_free_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "zero-draft band collapse (plan \u00a75.3)",
+      "expected": "The rib's side walls are exactly vertical: g == 0 over their whole area. The band must be collapsed to a single medial curve with its span reported, NOT emitted as two parallel boundary loops.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The parting line's position WITHIN this band is a genuine free parameter. Report it as such; optimizing within it is Level 3, which is out of scope for this milestone.",
+      "filename": "F12_draft_free_rib.stp",
+      "stats": {
+        "volume_mm3": 15680.0,
+        "area_mm2": 6112.0,
+        "face_count": 11,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          32.0
+        ],
+        "bbox_diagonal_mm": 64.9923
+      }
+    },
+    {
+      "fixture_id": "F13",
+      "name": "peanut_two_lobed",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: non-convex outline \u2014 bbox coverage LIES here, \u00a78.1 must not",
+      "expected": "A strongly non-convex projected outline. v1's bbox-ratio coverage scores this the same as a rectangle of equal extent. The shoelace numerator plus a proper projected-outline denominator must not.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Also quantifies the A_cauchy overestimate (plan \u00a78.1) against a shape whose true projected area is computable in closed form: two circles of r=14 at x=+/-14 unioned with a 28x12 waist.",
+      "filename": "F13_peanut_two_lobed.stp",
+      "stats": {
+        "volume_mm3": 24841.8773,
+        "area_mm2": 5614.7823,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          56.0,
+          28.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 65.7267
+      }
+    },
+    {
+      "fixture_id": "F14",
+      "name": "mirror_symmetric",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "determinism under EXACT ties (plan \u00a78.3)",
+      "expected": "Two identical bosses mirrored about x=0 produce two exactly equivalent local loops. Every ranking tier ties; T7's stable_id must break it, and must break it the SAME WAY on every run.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Regression test for \u00a78.3: run twice, assert identical stable_id and identical point list. Catches set-iteration-order dependence, which is the usual source of non-determinism in graph code.",
+      "filename": "F14_mirror_symmetric.stp",
+      "stats": {
+        "volume_mm3": 33256.6371,
+        "area_mm2": 6902.6548,
+        "face_count": 10,
+        "edge_count": 18,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          28.0
+        ],
+        "bbox_diagonal_mm": 63.1189
+      }
+    },
+    {
+      "fixture_id": "F17",
+      "name": "barrel_bulged_loft",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: free-form face whose g CROSSES zero in its INTERIOR",
+      "expected": "A single BSpline side face lofted r=10 -> 16 -> 10. Its radius is maximal at mid-height, where the outward normal is exactly horizontal and g = 0: a silhouette CIRCLE strictly inside the face. Below it g < 0, above it g > 0 \u2014 a genuine SIGN CHANGE across the face, not a touch at its boundary. By the loft's symmetry the crossing lies at z = 20, radius ~16.",
+      "p1_expectation": "fail_loudly",
+      "analytic": false,
+      "notes": "Added 2026-08-09 to fix a real gap found by P1 measurement: NO other fixture actually exercised Track B. F6's fillets span g in [0,1] and F7's loft faces are all g>0, so both only TOUCH zero at a face BOUNDARY, where Track A already finds an edge \u2014 the a-priori error was assuming 'has curved faces' implies 'needs Track B', when the real criterion is whether g CHANGES SIGN inside a face. This one cannot be answered by any edge test at all: no B-Rep edge lies anywhere near the correct curve. Ground truth is the symmetry argument plus a dense-grid reference, so it is a numerical convergence test, not an analytic one.",
+      "filename": "F17_barrel_bulged_loft.stp",
+      "stats": {
+        "volume_mm3": 25032.2103,
+        "area_mm2": 4325.368,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          32.0,
+          32.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 60.3987
+      }
+    }
+  ]
+}

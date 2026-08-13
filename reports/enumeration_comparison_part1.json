@@ -1,0 +1,110 @@
+{
+  "+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "mu": 113,
+    "branch_node_count": 184,
+    "node_count": 358,
+    "edge_count": 459,
+    "strategies": {
+      "basis": {
+        "cycles_examined": 113,
+        "max_cycle_size": 55,
+        "h3_pass_count": 100,
+        "h4_or_later_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_h3_passing_candidate": {
+          "candidate_id": 9,
+          "segment_count": 32,
+          "failed_gate": "H4",
+          "h4_violation_fraction": 0.19715699880100074,
+          "reason": "19.7% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible."
+        },
+        "requested_strategy": "basis",
+        "actual_strategy": "cycle_basis",
+        "cap_or_budget_hit": false,
+        "runtime_ms": 5.7,
+        "mu": 113,
+        "branch_node_count": 184
+      },
+      "johnson": {
+        "cycles_examined": 5000,
+        "max_cycle_size": 129,
+        "h3_pass_count": 368,
+        "h4_or_later_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_h3_passing_candidate": {
+          "candidate_id": 4961,
+          "segment_count": 4,
+          "failed_gate": "H4",
+          "h4_violation_fraction": 0.28266747398647707,
+          "reason": "28.3% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible."
+        },
+        "requested_strategy": "johnson",
+        "actual_strategy": "johnson",
+        "cap_or_budget_hit": true,
+        "runtime_ms": 10904.5,
+        "mu": 113,
+        "branch_node_count": 184
+      }
+    }
+  },
+  "+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "mu": 115,
+    "branch_node_count": 194,
+    "node_count": 389,
+    "edge_count": 492,
+    "strategies": {
+      "basis": {
+        "cycles_examined": 115,
+        "max_cycle_size": 59,
+        "h3_pass_count": 103,
+        "h4_or_later_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_h3_passing_candidate": {
+          "candidate_id": 9,
+          "segment_count": 34,
+          "failed_gate": "H4",
+          "h4_violation_fraction": 0.1940031796089989,
+          "reason": "19.4% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible."
+        },
+        "requested_strategy": "basis",
+        "actual_strategy": "cycle_basis",
+        "cap_or_budget_hit": false,
+        "runtime_ms": 6.4,
+        "mu": 115,
+        "branch_node_count": 194
+      },
+      "johnson": {
+        "cycles_examined": 5000,
+        "max_cycle_size": 122,
+        "h3_pass_count": 2922,
+        "h4_or_later_pass_count": 0,
+        "fully_passed_count": 0,
+        "best_h3_passing_candidate": {
+          "candidate_id": 3785,
+          "segment_count": 72,
+          "failed_gate": "H4",
+          "h4_violation_fraction": 0.20799372714473685,
+          "reason": "20.8% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible."
+        },
+        "requested_strategy": "johnson",
+        "actual_strategy": "johnson",
+        "cap_or_budget_hit": true,
+        "runtime_ms": 6759.8,
+        "mu": 115,
+        "branch_node_count": 194
+      }
+    }
+  }
+}

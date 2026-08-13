@@ -69,6 +69,8 @@ References
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import logging
 import math
 import time
@@ -1082,6 +1084,94 @@ def load_step(filepath: "str | Path") -> PartGeometry:
         surface_type_counts=surface_type_counts,
         edge_type_counts=edge_type_counts,
     )
+
+
+# =============================================================================
+# Cached loading (roadmap Stage 3 §3.8)
+# =============================================================================
+#
+# The API is stateless by design (CLAUDE.md): every endpoint re-parses the
+# STEP file from scratch. That is also the single biggest latency source
+# (`/direction` takes 30-60s largely because of this). This cache removes
+# the redundant re-parse while preserving the statelessness contract that
+# matters -- no analysis-result mutation from one request is ever visible
+# to another.
+#
+# Safety model: `FaceData`/`EdgeData`/`VertexData`/`PartGeometry` are plain,
+# non-frozen dataclasses. Downstream modules mutate them in place when
+# called with `mutate=True` (`draft_angle_deg`, `is_undercut`,
+# `cavity_or_core`, ... on faces; `optimal_pull_direction`,
+# `parting_edge_ids`, ... on the part itself). Caching the object `load_step`
+# returns and handing the SAME instance to every caller would let one
+# request's mutations leak into another's -- silently and nondeterministically,
+# since FastAPI can interleave requests. So the cache never hands out the
+# object it stores: `load_step_cached()` always returns a fresh clone built
+# by `_clone_pristine_part()`, and only the pristine (never-mutated) template
+# is ever cached. OCC handles (`occ_shape`, `occ_face`, `occ_edge`,
+# `occ_vertex`) are shared by reference across clones -- safe, because no
+# code path in this project mutates loaded B-Rep geometry in place; Boolean
+# and derived operations always construct new OCC objects.
+_STEP_CACHE_MAXSIZE = 8
+
+
+def _clone_pristine_part(source: PartGeometry) -> PartGeometry:
+    """
+    Build an independently-mutable `PartGeometry` from a cached pristine
+    template (see module note above). Every Python-level wrapper object and
+    mutable container is freshly copied; OCC handles are shared by
+    reference. `dataclasses.replace()` on a plain dataclass always
+    constructs a new instance via `__init__`, so even a no-argument
+    `replace(f)` decouples the clone from the source.
+    """
+    return dataclasses.replace(
+        source,
+        faces=[dataclasses.replace(f) for f in source.faces],
+        edges=[
+            dataclasses.replace(e, adjacent_face_ids=list(e.adjacent_face_ids))
+            for e in source.edges
+        ],
+        vertices=[dataclasses.replace(v) for v in source.vertices],
+        face_adjacency={k: list(v) for k, v in source.face_adjacency.items()},
+        face_to_edges={k: list(v) for k, v in source.face_to_edges.items()},
+        edge_to_faces={k: list(v) for k, v in source.edge_to_faces.items()},
+        warnings=list(source.warnings),
+        surface_type_counts=dict(source.surface_type_counts),
+        edge_type_counts=dict(source.edge_type_counts),
+        inaccessible_face_ids=list(source.inaccessible_face_ids),
+        parting_edge_ids=list(source.parting_edge_ids),
+        parting_wire_points=list(source.parting_wire_points),
+    )
+
+
+@functools.lru_cache(maxsize=_STEP_CACHE_MAXSIZE)
+def _load_step_pristine_cached(path_str: str, mtime_ns: int) -> PartGeometry:
+    """
+    The actual cached entry. Keyed on `(path, mtime_ns)` so editing a STEP
+    file on disk invalidates its cache entry automatically -- never served
+    stale geometry. This function's return value is the ONE object every
+    cache hit clones from; nothing outside this module may hold a direct
+    reference to it, and it must never be mutated.
+    """
+    return load_step(path_str)
+
+
+def load_step_cached(filepath: "str | Path") -> PartGeometry:
+    """
+    Cached equivalent of `load_step()` (Stage 3 S3.8). Returns a fresh,
+    independently-mutable `PartGeometry` on every call -- safe to pass
+    straight into `mutate=True` analysis exactly like `load_step()`'s
+    result, with no risk of one request's mutations leaking into another's.
+    Falls back to a genuinely fresh `load_step()` (bypassing the cache) if
+    `stat()` fails for any reason, so a transient filesystem hiccup can
+    never raise from inside cache bookkeeping.
+    """
+    path = Path(filepath)
+    try:
+        mtime_ns = path.stat().st_mtime_ns
+    except OSError:
+        return load_step(path)
+    cached = _load_step_pristine_cached(str(path), mtime_ns)
+    return _clone_pristine_part(cached)
 
 
 def load_step_with_fallback(

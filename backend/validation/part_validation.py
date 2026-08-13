@@ -5,8 +5,8 @@ Reusable validation harness for Bosch STEP demo files.
 
 This module is intentionally conservative: it validates every available STEP
 file in ``data/parts`` and reports missing expected files separately.  That
-lets us be honest about Part2 readiness without pretending to test a file that
-is not present in the workspace.
+lets us be honest about readiness without pretending to test a file that is
+not present in the workspace.
 """
 
 from __future__ import annotations
@@ -18,10 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from backend.config import settings
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PARTS_DIR = PROJECT_ROOT / "data" / "parts"
-DEFAULT_EXPECTED_FILES = ("Part1.stp", "Part2.stp")
+DEFAULT_EXPECTED_FILES = ("Part1.stp", "Part3.stp")
 
 
 @dataclass(frozen=True)
@@ -199,6 +200,8 @@ def _parting_line_metrics(result: Any) -> dict[str, Any]:
     quality = getattr(result, "selection_quality", None)
     conflict = getattr(result, "undercut_conflict", None)
     refinement = getattr(result, "refinement", None)
+    graph_cleanup = getattr(refinement, "graph_cleanup", None)
+    parting_surface = getattr(result, "parting_surface", None)
 
     candidate_edge_ids = list(getattr(result, "candidate_edge_ids", []) or [])
     silhouette_edge_ids = list(getattr(result, "silhouette_edge_ids", []) or [])
@@ -249,6 +252,18 @@ def _parting_line_metrics(result: Any) -> dict[str, Any]:
         "refinement_status": getattr(refinement, "status", "unknown"),
         "refinement_quality": getattr(refinement, "quality", "unknown"),
         "warning_count": len(warnings),
+        # Real-geometry assertion inputs (Cross-cutting X.1). These are the
+        # measured values a --assert-* flag checks — never the self-reported
+        # readiness/gate status alone. See docs/ARCHITECTURE_ROADMAP.md §0.4.
+        "closure_error_mm": round(float(getattr(result, "closure_error_mm", 0.0) or 0.0), 6),
+        "closure_guaranteed": bool(getattr(result, "closure_guaranteed", False)),
+        "graph_cleanup_status": getattr(graph_cleanup, "status", "unknown"),
+        "graph_cleanup_strategy": getattr(graph_cleanup, "strategy", "unknown"),
+        "silhouette_coverage_ratio": round(
+            float(getattr(result, "silhouette_coverage_ratio", 0.0) or 0.0), 4
+        ),
+        "parting_surface_status": getattr(parting_surface, "status", "unknown"),
+        "parting_surface_strategy": getattr(parting_surface, "strategy", "unknown"),
     }
 
 
@@ -289,6 +304,7 @@ def validate_part(
     run_direction: bool = False,
     boolean_refine: bool = False,
     run_parting_line: bool = True,
+    run_core_cavity: bool = False,
 ) -> PartValidationResult:
     """
     Validate one STEP file through the current Level 1 pipeline.
@@ -296,12 +312,21 @@ def validate_part(
     ``boolean_refine`` defaults to false so the harness can run as a fast smoke
     check on new files.  Deeper Boolean validation can be enabled explicitly in
     Docker/conda where OCC is available and stable.
+
+    ``run_core_cavity`` requires ``run_parting_line`` (it consumes the parting
+    surface the parting-line step generates) and is off by default because it
+    is a real OCC Boolean split — expensive, and currently known to fail on
+    both demo parts pending the Stage 2b shoulder-extension fix (see
+    docs/ARCHITECTURE_ROADMAP.md Stage 2). It exists so ``--assert-core-cavity-
+    solids`` has real geometry to check rather than a self-reported flag.
     """
     steps: list[ValidationStepResult] = []
     warnings: list[str] = []
     loaded_part: Any | None = None
     undercut_result: Any | None = None
     direction_result: Any | None = None
+    parting_line_result: Any | None = None
+    pull_direction_used: Any | None = None
 
     def load_step_file() -> dict[str, Any]:
         nonlocal loaded_part
@@ -378,6 +403,7 @@ def validate_part(
 
     if run_parting_line:
         def run_parting_line_step() -> dict[str, Any]:
+            nonlocal parting_line_result, pull_direction_used
             from backend.geometry.parting_line import detect_parting_line_candidates
 
             if direction_result is not None:
@@ -395,6 +421,8 @@ def validate_part(
                 undercut_context=context,
                 mutate=False,
             )
+            parting_line_result = result
+            pull_direction_used = pull_direction
             metrics = _parting_line_metrics(result)
             metrics.update(_undercut_context_metrics(context))
             metrics["context_source"] = context_source
@@ -406,6 +434,41 @@ def validate_part(
             return metrics
 
         steps.append(_run_step("parting_line", run_parting_line_step))
+
+        if run_core_cavity:
+            def run_core_cavity_step() -> dict[str, Any]:
+                from backend.geometry.core_cavity import split_core_cavity_solids
+
+                parting_surface = getattr(parting_line_result, "parting_surface", None)
+                parting_sheet = getattr(parting_surface, "occ_shape", None)
+                if parting_sheet is None:
+                    raise ValueError(
+                        "Core/cavity split skipped: parting_surface.status="
+                        f"{getattr(parting_surface, 'status', 'unknown')!r} produced no "
+                        "usable surface shape."
+                    )
+
+                result = split_core_cavity_solids(
+                    loaded_part,
+                    parting_sheet,
+                    pull_direction_used,
+                    loop_points=getattr(parting_line_result, "wire_points", None),
+                )
+                if result.solid_split_status != "split_ok":
+                    raise ValueError(
+                        f"Core/cavity solid split status is {result.solid_split_status!r}: "
+                        f"{result.failure_reason or 'no failure_reason given'}"
+                    )
+                return {
+                    "solid_split_status": result.solid_split_status,
+                    "split_solid_count": result.split_solid_count,
+                    "cavity_solid_volume_mm3": round(result.cavity_solid_volume_mm3, 4),
+                    "core_solid_volume_mm3": round(result.core_solid_volume_mm3, 4),
+                    "blank_volume_mm3": round(result.blank_volume_mm3, 4),
+                    "split_tool_kind": result.split_tool_kind,
+                }
+
+            steps.append(_run_step("core_cavity_split", run_core_cavity_step))
 
     status = "failed" if any(step.status == "failed" for step in steps) else "passed"
     return PartValidationResult(
@@ -424,6 +487,7 @@ def validate_available_parts(
     run_direction: bool = False,
     boolean_refine: bool = False,
     run_parting_line: bool = True,
+    run_core_cavity: bool = False,
 ) -> ValidationSuiteResult:
     """Validate every available STEP file and report missing expected inputs."""
     discovered = discover_step_files(parts_dir)
@@ -433,6 +497,7 @@ def validate_available_parts(
             run_direction=run_direction,
             boolean_refine=boolean_refine,
             run_parting_line=run_parting_line,
+            run_core_cavity=run_core_cavity,
         )
         for path in discovered
     ]
@@ -443,6 +508,153 @@ def validate_available_parts(
         missing_expected_files=missing_expected_files(parts_dir, expected_files),
         part_results=results,
     )
+
+
+@dataclass(frozen=True)
+class AssertionFailure:
+    """One real-geometry assertion that failed against measured output."""
+
+    flag: str
+    filename: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"[{self.flag}] {self.filename}: {self.message}"
+
+
+def _find_step(part_result: dict[str, Any], step_name: str) -> dict[str, Any] | None:
+    for step in part_result.get("steps", []):
+        if step.get("name") == step_name:
+            return step
+    return None
+
+
+def check_assertions(
+    suite_payload: dict[str, Any],
+    *,
+    assert_parting_line_closed: float | None = None,
+    assert_core_cavity_solids: int | None = None,
+    assert_exact_optimiser: bool = False,
+    assert_parting_surface_generated: bool = False,
+    assert_silhouette_coverage: float | None = None,
+) -> list[AssertionFailure]:
+    """
+    Check MEASURED geometry against real-geometry assertions (Cross-cutting X.1).
+
+    Every check reads a measured numeric/status field the geometry pipeline
+    produced (``closure_error_mm``, ``graph_cleanup_strategy``,
+    ``split_solid_count``, ...) rather than trusting a single self-reported
+    boolean alone — the harness-level defense against the exact failure mode
+    in docs/ENGINE_AUDIT_2026-07-27.md: a module reporting success while the
+    underlying geometry was wrong (Bug A), or an algorithm silently degrading
+    to a fallback while everything downstream stayed green (Bug B). A missing
+    or absent step counts as a failure, not a skip — an assertion must never
+    pass by having nothing to check.
+
+    Operates on the plain JSON-safe suite payload (``ValidationSuiteResult.
+    to_dict()``) so it needs no OCC and is fully unit-testable on hand-built
+    payloads representing deliberately bad geometry.
+    """
+    failures: list[AssertionFailure] = []
+    for part_result in suite_payload.get("part_results", []):
+        filename = part_result.get("filename", "<unknown>")
+        parting_line_step = _find_step(part_result, "parting_line")
+        parting_line_metrics = (parting_line_step or {}).get("metrics", {})
+
+        if assert_parting_line_closed is not None:
+            if parting_line_step is None:
+                failures.append(AssertionFailure(
+                    "--assert-parting-line-closed", filename,
+                    "no parting_line step was run — drop --no-parting-line.",
+                ))
+            else:
+                gap = parting_line_metrics.get("closure_error_mm")
+                guaranteed = parting_line_metrics.get("closure_guaranteed")
+                if gap is None or guaranteed is None:
+                    failures.append(AssertionFailure(
+                        "--assert-parting-line-closed", filename,
+                        "parting_line step ran but reported no closure metrics "
+                        f"({parting_line_step.get('message') or 'step failed'}).",
+                    ))
+                elif not guaranteed:
+                    failures.append(AssertionFailure(
+                        "--assert-parting-line-closed", filename,
+                        f"closure_guaranteed=False (measured first->last gap {gap} mm).",
+                    ))
+                elif gap > assert_parting_line_closed:
+                    failures.append(AssertionFailure(
+                        "--assert-parting-line-closed", filename,
+                        f"measured first->last gap {gap} mm exceeds tolerance "
+                        f"{assert_parting_line_closed} mm, despite closure_guaranteed=True "
+                        "being reported (Bug A: never trust the reported flag alone).",
+                    ))
+
+        if assert_exact_optimiser:
+            if parting_line_step is None:
+                failures.append(AssertionFailure(
+                    "--assert-exact-optimiser", filename,
+                    "no parting_line step was run — drop --no-parting-line.",
+                ))
+            else:
+                strategy = parting_line_metrics.get("graph_cleanup_strategy")
+                if strategy is None or strategy == "unknown":
+                    failures.append(AssertionFailure(
+                        "--assert-exact-optimiser", filename,
+                        "parting_line step ran but reported no graph_cleanup_strategy "
+                        f"({parting_line_step.get('message') or 'step failed'}).",
+                    ))
+                elif strategy == "greedy-fallback":
+                    failures.append(AssertionFailure(
+                        "--assert-exact-optimiser", filename,
+                        "graph_cleanup.strategy=='greedy-fallback' — the exact/contracted "
+                        "path search was not used for the selected wire (see Bug B).",
+                    ))
+
+        if assert_parting_surface_generated:
+            status = parting_line_metrics.get("parting_surface_status")
+            if status not in ("generated_planar", "generated_filling"):
+                failures.append(AssertionFailure(
+                    "--assert-parting-surface-generated", filename,
+                    f"parting_surface.status={status!r}, not a generated status "
+                    "(see Bug E).",
+                ))
+
+        if assert_silhouette_coverage is not None:
+            ratio = parting_line_metrics.get("silhouette_coverage_ratio")
+            if ratio is None:
+                failures.append(AssertionFailure(
+                    "--assert-silhouette-coverage", filename,
+                    "no parting_line step was run, or it reported no "
+                    "silhouette_coverage_ratio.",
+                ))
+            elif ratio < assert_silhouette_coverage:
+                failures.append(AssertionFailure(
+                    "--assert-silhouette-coverage", filename,
+                    f"silhouette_coverage_ratio={ratio} is below threshold "
+                    f"{assert_silhouette_coverage} — the selected loop likely wraps a "
+                    "local feature, not the main silhouette (see Bug H).",
+                ))
+
+        if assert_core_cavity_solids is not None:
+            step = _find_step(part_result, "core_cavity_split")
+            if step is None:
+                failures.append(AssertionFailure(
+                    "--assert-core-cavity-solids", filename,
+                    "no core_cavity_split step was run — pass --core-cavity to enable it.",
+                ))
+            else:
+                metrics = step.get("metrics", {})
+                status = metrics.get("solid_split_status")
+                count = metrics.get("split_solid_count")
+                if status != "split_ok" or count != assert_core_cavity_solids:
+                    failures.append(AssertionFailure(
+                        "--assert-core-cavity-solids", filename,
+                        f"solid_split_status={status!r}, split_solid_count={count!r}, "
+                        f"expected split_ok with {assert_core_cavity_solids} solids "
+                        f"({step.get('message') or 'no step message'}).",
+                    ))
+
+    return failures
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -475,14 +687,82 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip parting-line readiness validation.",
     )
     parser.add_argument(
+        "--core-cavity",
+        action="store_true",
+        help=(
+            "Also run the real OCC core/cavity Boolean solid split "
+            "(requires parting-line; expensive; currently fails on both demo "
+            "parts pending Stage 2b — see docs/ARCHITECTURE_ROADMAP.md)."
+        ),
+    )
+    parser.add_argument(
         "--fail-on-missing-expected",
         action="store_true",
-        help="Exit non-zero if an expected file such as Part2.stp is missing.",
+        help="Exit non-zero if an expected file such as Part3.stp is missing.",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         help="Print JSON instead of a compact text summary.",
+    )
+
+    assertions = parser.add_argument_group(
+        "real-geometry assertions",
+        "Each flag checks a MEASURED geometry value, never a self-reported flag "
+        "alone (Cross-cutting X.1, docs/ARCHITECTURE_ROADMAP.md §0.4). Any "
+        "violation is a hard failure (exit 3), independent of --fail-on-missing-expected.",
+    )
+    assertions.add_argument(
+        "--assert-parting-line-closed",
+        type=float,
+        nargs="?",
+        const=settings.dfm.parting_line.max_closure_error_mm,
+        default=None,
+        metavar="TOLERANCE_MM",
+        help=(
+            "Fail unless the measured first->last wire gap is within tolerance "
+            f"(default {settings.dfm.parting_line.max_closure_error_mm} mm, from "
+            "config.yaml). Catches Bug A-class defects (reported closure without "
+            "measured closure)."
+        ),
+    )
+    assertions.add_argument(
+        "--assert-exact-optimiser",
+        action="store_true",
+        help=(
+            "Fail if graph_cleanup.strategy=='greedy-fallback' for the selected "
+            "wire. Catches Bug B-class defects (silent fallback to a "
+            "non-backtracking search)."
+        ),
+    )
+    assertions.add_argument(
+        "--assert-parting-surface-generated",
+        action="store_true",
+        help="Fail unless parting_surface.status is a real generated status, not 'failed'.",
+    )
+    assertions.add_argument(
+        "--assert-silhouette-coverage",
+        type=float,
+        nargs="?",
+        const=settings.dfm.parting_line.min_silhouette_coverage_ratio,
+        default=None,
+        metavar="MIN_RATIO",
+        help=(
+            "Fail unless silhouette_coverage_ratio is at least MIN_RATIO (default "
+            f"{settings.dfm.parting_line.min_silhouette_coverage_ratio}, from "
+            "config.yaml). Catches Bug H-class defects (selecting a local-feature "
+            "loop instead of the main silhouette)."
+        ),
+    )
+    assertions.add_argument(
+        "--assert-core-cavity-solids",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Fail unless the core/cavity Boolean split produced exactly N solids "
+            "with solid_split_status=='split_ok'. Implies --core-cavity."
+        ),
     )
     return parser
 
@@ -491,15 +771,30 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     expected = tuple(args.expect) if args.expect else DEFAULT_EXPECTED_FILES
+    run_core_cavity = args.core_cavity or args.assert_core_cavity_solids is not None
     result = validate_available_parts(
         parts_dir=args.parts_dir,
         expected_files=expected,
         run_direction=args.direction,
         boolean_refine=args.boolean_refine,
         run_parting_line=not args.no_parting_line,
+        run_core_cavity=run_core_cavity,
     )
 
     payload = result.to_dict()
+    assertion_failures = check_assertions(
+        payload,
+        assert_parting_line_closed=args.assert_parting_line_closed,
+        assert_core_cavity_solids=args.assert_core_cavity_solids,
+        assert_exact_optimiser=args.assert_exact_optimiser,
+        assert_parting_surface_generated=args.assert_parting_surface_generated,
+        assert_silhouette_coverage=args.assert_silhouette_coverage,
+    )
+    payload["assertion_failures"] = [
+        {"flag": f.flag, "filename": f.filename, "message": f.message}
+        for f in assertion_failures
+    ]
+
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
@@ -514,7 +809,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - {step.name}: {step.status} ({step.elapsed_s:.2f}s)")
                 if step.message:
                     print(f"    {step.message}")
+        if assertion_failures:
+            print(f"Assertion failures: {len(assertion_failures)}")
+            for failure in assertion_failures:
+                print(f"  - {failure}")
 
+    if assertion_failures:
+        return 3
     if result.status == "failed":
         return 1
     if result.missing_expected_files and args.fail_on_missing_expected:

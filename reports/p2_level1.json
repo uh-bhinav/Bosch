@@ -1,0 +1,2057 @@
+{
+  "generated_by": "backend/validation/parting_line_ab.py",
+  "phase": "P0 baseline",
+  "engines": [
+    "v2"
+  ],
+  "direction_mode": "declared",
+  "caveats": [
+    "v1 is NOT stage-instrumented; only total_ms is available for it. Per-stage p50/p95 (plan \u00a712.5) arrive with v2.",
+    "v1_bbox_coverage_ratio uses BOUNDING-BOX areas. Plan \u00a78.1 replaces this with a shoelace numerator over a proper projected-outline denominator. The two are not directly comparable.",
+    "F16 (Part3) has NO ground truth. Its row is diagnostic only and must never be reported as a correctness score."
+  ],
+  "corpus": [
+    {
+      "fixture_id": "F1",
+      "name": "cube",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "planar sharp edges only; many-equal-optima; determinism",
+      "expected": "Top face g=+1, bottom g=-1, four side faces g=0 (zero-draft band). Every horizontal ring around the sides is a valid parting line \u2014 an infinite family of equal optima. Track A ground truth.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The engine must DETECT the degeneracy and break the tie deterministically, not present one ring as 'the' answer.",
+      "filename": "F1_cube.stp",
+      "stats": {
+        "volume_mm3": 64000.0,
+        "area_mm2": 9600.0,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "degenerate zero-draft band (plan \u00a74.3, \u00a75.3)",
+      "expected": "d is parallel to the cylinder axis, so R=sqrt(a^2+b^2)=0 and g == 0 over the ENTIRE lateral face. There is no unique silhouette curve; every circumferential ring is equally valid.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "This is the case from the study notes' cylinder sketch. The circumferential 'parting line' drawn there is NOT a silhouette curve \u2014 it is a free choice on a zero-draft surface. The engine must report the band and its free parameter, not invent a curve.",
+      "filename": "F2_cylinder_axis_parallel_to_pull.stp",
+      "stats": {
+        "volume_mm3": 28274.3339,
+        "area_mm2": 5183.6279,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          30.0,
+          30.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 58.3095
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: cylindrical face-interior silhouette. Track A provably fails, Track B provably passes.",
+      "expected": "n(u) = cos(u)*x + sin(u)*y is independent of v, so g(u) = R*cos(u-phi) with R=sqrt(a^2+b^2), phi=atan2(b,a). g=0 at u = phi +/- pi/2 \u2014 exactly TWO STRAIGHT RULINGS on the SIDES of the lateral surface, at y = +/-15, z = 0, running the full length in x. (Corrected 2026-08-09: an earlier draft said z = +/-15, which is exactly wrong -- there the normal is (0,0,+/-1) so g = +/-1, the EXTREME. The zero is where the normal is (0,+/-1,0), i.e. the sides.) Both flat end caps have normal (+/-1,0,0) so g == 0 over their whole area: they are zero-draft bands, not curves.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "THE A/B fixture for the whole architecture. The two rulings are interior isoparametric curves, not B-Rep edges, so an edge-only detector cannot see them. P1 must report 'no feasible candidate', NOT a plausible-looking wrong loop.",
+      "filename": "F3_cylinder_axis_perpendicular_to_pull.stp",
+      "stats": {
+        "volume_mm3": 42411.5008,
+        "area_mm2": 7068.5835,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F4",
+      "name": "sphere",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "Track B on a face with no usable edges at all",
+      "expected": "n = (p-C)/r, so g = (p-C).d/r = 0 exactly on the GREAT CIRCLE perpendicular to d: the circle z=0, radius 20.",
+      "p1_expectation": "fail_loudly",
+      "analytic": true,
+      "notes": "A sphere has essentially no topological edges beyond the parameterisation seam, so Track A has nothing to work with. The answer is entirely a face-interior curve.",
+      "filename": "F4_sphere.stp",
+      "stats": {
+        "volume_mm3": 33510.3216,
+        "area_mm2": 5026.5482,
+        "face_count": 1,
+        "edge_count": 1,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F5",
+      "name": "cone",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "plan \u00a74.1 cone closed form, including the no-solution case",
+      "expected": "n(u) = cos(alpha)*(cos u * x + sin u * y) - sin(alpha)*axis, so g(u) = cos(alpha)*R*cos(u-phi) - sin(alpha)*c. With d parallel to the cone axis: a=b=0 so R=0, c=1, giving g = -sin(alpha) = const != 0 \u2014 NO interior silhouette. The silhouette is the base rim edge only.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "MEASURED at P1: passes, coverage 99.4%, selected loop = the base rim. Deliberately the DEGENERATE branch of the cone formula: |tan(alpha)*c/R| -> infinity > 1, so no ruling solution exists. Tests that Track B correctly finds NOTHING here rather than producing noise, and that Track A picks up the rim.",
+      "filename": "F5_cone.stp",
+      "stats": {
+        "volume_mm3": 21991.1486,
+        "area_mm2": 4690.3993,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 69.282
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F6",
+      "name": "filleted_box",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: fillet faces \u2014 silhouette runs ACROSS a blend",
+      "expected": "The top edges are replaced by constant-radius blends. A blend is locally cylindrical (straight runs) or toroidal (corners), so the g=0 curve lies in the blend's INTERIOR where the surface turns from up-facing to vertical \u2014 checkable against plan \u00a74.1's cylinder and torus forms.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "EXPECTATION CORRECTED 2026-08-09 after P1 measured it. This was predicted to need Track B; it does NOT. The top fillets span g in [0, 1] -- from the vertical side wall to the horizontal top -- so g only TOUCHES zero at the fillet/side-wall edge and never crosses inside the face. Track A finds that edge, and the bottom rim is a genuinely valid parting line because the side walls are vertical. Measured: feasible, coverage 99.1%. The a-priori error was assuming 'has curved faces' implies 'needs Track B'; the real criterion is whether g CHANGES SIGN inside a face. See F17, added to cover the case this one does not.",
+      "filename": "F6_filleted_box.stp",
+      "stats": {
+        "volume_mm3": 31189.5278,
+        "area_mm2": 6042.4778,
+        "face_count": 10,
+        "edge_count": 20,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F7",
+      "name": "spline_lofted_lid",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: pure marching-squares path (plan \u00a74.2)",
+      "expected": "A lofted rect->ellipse side surface has NO closed form. Ground truth is a dense 1024^2 reference extraction with tight Newton tolerance, frozen once; the production adaptive-grid result must agree with it to within tau_sag.",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "EXPECTATION CORRECTED 2026-08-09 after P1 measured it. All five lofted side faces have g_centroid in [0.33, 0.44] -- strictly positive, a monotone inward slope -- so g never changes sign and the silhouette is exactly the bottom rim, which Track A finds. Measured: feasible, coverage 100.0%. It therefore does NOT exercise the marching-squares path it was built for; F17 does. Kept as a free-form-geometry robustness case.",
+      "filename": "F7_spline_lofted_lid.stp",
+      "stats": {
+        "volume_mm3": 14086.0574,
+        "area_mm2": 3698.9606,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          30.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 53.8516
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F8",
+      "name": "box_with_boss",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "local-feature rejection (the Bug-H failure mode)",
+      "expected": "Two closed loops exist: the box's outer rim and the boss's base rim. The outer rim is the parting line. The boss rim is a LOCAL FEATURE and must lose on T1 coverage.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "v1 selected the tidiest loop rather than the largest until Bug H was fixed on 2026-07-27 (Part1 coverage 27.6% -> 94.8%). This fixture makes that regression impossible to reintroduce silently.",
+      "filename": "F8_box_with_boss.stp",
+      "stats": {
+        "volume_mm3": 33130.9734,
+        "area_mm2": 6776.9911,
+        "face_count": 8,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F9",
+      "name": "box_with_through_hole",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "multiple GENUINE competing loops \u2014 both feasible, ranking decides",
+      "expected": "Outer rim and hole rim are BOTH feasible closed separating loops. The outer rim wins on T1 coverage. The hole rim must be retained in the scorecard as a feasible runner-up, not silently dropped.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Distinguishes 'rejected' from 'ranked lower' \u2014 a distinction v1's fused feasibility/score cannot express (audit RC-4).",
+      "filename": "F9_box_with_through_hole.stp",
+      "stats": {
+        "volume_mm3": 29738.0533,
+        "area_mm2": 6927.7876,
+        "face_count": 7,
+        "edge_count": 15,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 60.0
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F10",
+      "name": "t_junction_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: branches \u2014 a real topological branch node",
+      "expected": "The rib meets the outer wall, so the silhouette graph has a genuine T-junction: a branch node that SURVIVES 2-core reduction and degree-2 contraction (plan \u00a75.4).",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Distinguishes a REAL topological branch from tolerance noise. Plan \u00a75.4 requires reporting which of four causes produced each surviving branch node; only the real-branch case is an optimization question.",
+      "filename": "F10_t_junction_rib.stp",
+      "stats": {
+        "volume_mm3": 17600.0,
+        "area_mm2": 5760.0,
+        "face_count": 10,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 64.0312
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F11",
+      "name": "alternating_draft_pockets",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: disconnected candidates \u2014 the Part3 failure mode, small",
+      "expected": "Pockets cut from alternating sides at alternating heights fragment the silhouette into 3+ disconnected pieces.",
+      "p1_expectation": "pass",
+      "analytic": false,
+      "notes": "Part3's real failure (22 components, 18.1% coverage) reproduced at a size a human can reason about. The P1 baseline records the component count; P2 must reduce it, and if it does not, the RC-1 hypothesis is wrong and we stop and re-diagnose.",
+      "filename": "F11_alternating_draft_pockets.stp",
+      "stats": {
+        "volume_mm3": 50928.0,
+        "area_mm2": 10536.0,
+        "face_count": 26,
+        "edge_count": 60,
+        "bbox_mm": [
+          60.0,
+          30.0,
+          30.0
+        ],
+        "bbox_diagonal_mm": 73.4847
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F12",
+      "name": "draft_free_rib",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "zero-draft band collapse (plan \u00a75.3)",
+      "expected": "The rib's side walls are exactly vertical: g == 0 over their whole area. The band must be collapsed to a single medial curve with its span reported, NOT emitted as two parallel boundary loops.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "The parting line's position WITHIN this band is a genuine free parameter. Report it as such; optimizing within it is Level 3, which is out of scope for this milestone.",
+      "filename": "F12_draft_free_rib.stp",
+      "stats": {
+        "volume_mm3": 15680.0,
+        "area_mm2": 6112.0,
+        "face_count": 11,
+        "edge_count": 24,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          32.0
+        ],
+        "bbox_diagonal_mm": 64.9923
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F13",
+      "name": "peanut_two_lobed",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: non-convex outline \u2014 bbox coverage LIES here, \u00a78.1 must not",
+      "expected": "A strongly non-convex projected outline. v1's bbox-ratio coverage scores this the same as a rectangle of equal extent. The shoelace numerator plus a proper projected-outline denominator must not.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Also quantifies the A_cauchy overestimate (plan \u00a78.1) against a shape whose true projected area is computable in closed form: two circles of r=14 at x=+/-14 unioned with a 28x12 waist.",
+      "filename": "F13_peanut_two_lobed.stp",
+      "stats": {
+        "volume_mm3": 24841.8773,
+        "area_mm2": 5614.7823,
+        "face_count": 6,
+        "edge_count": 12,
+        "bbox_mm": [
+          56.0,
+          28.0,
+          20.0
+        ],
+        "bbox_diagonal_mm": 65.7267
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F14",
+      "name": "mirror_symmetric",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "determinism under EXACT ties (plan \u00a78.3)",
+      "expected": "Two identical bosses mirrored about x=0 produce two exactly equivalent local loops. Every ranking tier ties; T7's stable_id must break it, and must break it the SAME WAY on every run.",
+      "p1_expectation": "pass",
+      "analytic": true,
+      "notes": "Regression test for \u00a78.3: run twice, assert identical stable_id and identical point list. Catches set-iteration-order dependence, which is the usual source of non-determinism in graph code.",
+      "filename": "F14_mirror_symmetric.stp",
+      "stats": {
+        "volume_mm3": 33256.6371,
+        "area_mm2": 6902.6548,
+        "face_count": 10,
+        "edge_count": 18,
+        "bbox_mm": [
+          40.0,
+          40.0,
+          28.0
+        ],
+        "bbox_diagonal_mm": 63.1189
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F17",
+      "name": "barrel_bulged_loft",
+      "pull_direction": [
+        0,
+        0,
+        1
+      ],
+      "targets": "STAR: free-form face whose g CROSSES zero in its INTERIOR",
+      "expected": "A single BSpline side face lofted r=10 -> 16 -> 10. Its radius is maximal at mid-height, where the outward normal is exactly horizontal and g = 0: a silhouette CIRCLE strictly inside the face. Below it g < 0, above it g > 0 \u2014 a genuine SIGN CHANGE across the face, not a touch at its boundary. By the loft's symmetry the crossing lies at z = 20, radius ~16.",
+      "p1_expectation": "fail_loudly",
+      "analytic": false,
+      "notes": "Added 2026-08-09 to fix a real gap found by P1 measurement: NO other fixture actually exercised Track B. F6's fillets span g in [0,1] and F7's loft faces are all g>0, so both only TOUCH zero at a face BOUNDARY, where Track A already finds an edge \u2014 the a-priori error was assuming 'has curved faces' implies 'needs Track B', when the real criterion is whether g CHANGES SIGN inside a face. This one cannot be answered by any edge test at all: no B-Rep edge lies anywhere near the correct curve. Ground truth is the symmetry argument plus a dense-grid reference, so it is a numerical convergence test, not an analytic one.",
+      "filename": "F17_barrel_bulged_loft.stp",
+      "stats": {
+        "volume_mm3": 25032.2103,
+        "area_mm2": 4325.368,
+        "face_count": 3,
+        "edge_count": 3,
+        "bbox_mm": [
+          32.0,
+          32.0,
+          40.0
+        ],
+        "bbox_diagonal_mm": 60.3987
+      },
+      "kind": "synthetic"
+    },
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "filename": "Part1.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "coverage >= 0.90 (v1 achieves 94.8% at its optimal direction)",
+      "analytic": false,
+      "p1_expectation": "pass",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "filename": "Part3.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "UNKNOWN \u2014 Bosch has not disclosed an expected solution. Scored on feasibility, fragmentation and honesty, NEVER on correctness.",
+      "analytic": false,
+      "p1_expectation": "honest_result_or_honest_rejection",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    }
+  ],
+  "results": [
+    {
+      "fixture_id": "F1",
+      "name": "cube",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 45.33,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 6,
+        "edge_count": 12,
+        "outcome": "feasible",
+        "track_a_segments": 12,
+        "track_a_kinds": {
+          "tangential": 4,
+          "silhouette": 8
+        },
+        "cyclomatic_number": 5,
+        "branch_node_count": 8,
+        "node_count": 8,
+        "component_count": 1,
+        "strategy": "cycle_basis",
+        "candidates_found": 5,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 3
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.0,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "47a2c398a984",
+        "won_at_tier": "T7",
+        "cavity_face_count": 1,
+        "core_face_count": 5,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 1.62,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.724,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.091,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.022,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.067,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 21.354,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.023,
+            "calls": 1
+          }
+        ],
+        "total_ms": 23.902,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F2",
+      "name": "cylinder_axis_parallel_to_pull",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 16.83,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "outcome": "feasible",
+        "track_a_segments": 2,
+        "track_a_kinds": {
+          "silhouette": 2
+        },
+        "cyclomatic_number": 2,
+        "branch_node_count": 0,
+        "node_count": 2,
+        "component_count": 2,
+        "strategy": "single_cycle",
+        "candidates_found": 2,
+        "k_max_hit": false,
+        "rejection_summary": {},
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 3.67394039744206e-15,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 0.993587,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 94.0965,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "d4735e3a265e",
+        "won_at_tier": "T7",
+        "cavity_face_count": 1,
+        "core_face_count": 2,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 1.535,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.344,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.027,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.015,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.006,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 5.188,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.021,
+            "calls": 1
+          }
+        ],
+        "total_ms": 7.137,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F3",
+      "name": "cylinder_axis_perpendicular_to_pull",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 27.14,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "outcome": "feasible",
+        "track_a_segments": 10,
+        "track_a_kinds": {
+          "tangential": 6,
+          "silhouette": 4
+        },
+        "cyclomatic_number": 3,
+        "branch_node_count": 4,
+        "node_count": 12,
+        "component_count": 1,
+        "strategy": "cycle_basis",
+        "candidates_found": 3,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H6": 1
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 5.617333549722722e-15,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.006853,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 15.0,
+        "excess_turning": 0.96875,
+        "length_3d_mm": 214.0826,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "121598cdd239",
+        "won_at_tier": "T3",
+        "cavity_face_count": 3,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 1.51,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 4.488,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.376,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.016,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.06,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 11.431,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.014,
+            "calls": 1
+          }
+        ],
+        "total_ms": 17.896,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F4",
+      "name": "sphere",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 9.13,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 1,
+        "edge_count": 3,
+        "outcome": "feasible",
+        "track_a_segments": 0,
+        "track_a_kinds": {},
+        "cyclomatic_number": 1,
+        "branch_node_count": 0,
+        "node_count": 1,
+        "component_count": 1,
+        "strategy": "single_cycle",
+        "candidates_found": 1,
+        "k_max_hit": false,
+        "rejection_summary": {},
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 1.7501296010992683e-14
+        },
+        "coverage": 1.00338,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 125.4487,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "910225eb83f8",
+        "won_at_tier": "sole_feasible",
+        "cavity_face_count": 1,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 0.004,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 3.61,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.015,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.009,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.005,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 1.323,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.01,
+            "calls": 1
+          }
+        ],
+        "total_ms": 4.976,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F5",
+      "name": "cone",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 13.24,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "outcome": "feasible",
+        "track_a_segments": 1,
+        "track_a_kinds": {
+          "silhouette": 1
+        },
+        "cyclomatic_number": 1,
+        "branch_node_count": 0,
+        "node_count": 1,
+        "component_count": 1,
+        "strategy": "single_cycle",
+        "candidates_found": 1,
+        "k_max_hit": false,
+        "rejection_summary": {},
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 4.898587196589413e-15,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 0.993587,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 125.4619,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "d4735e3a265e",
+        "won_at_tier": "sole_feasible",
+        "cavity_face_count": 2,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 1.186,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.351,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.019,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.014,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.003,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 2.54,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.011,
+            "calls": 1
+          }
+        ],
+        "total_ms": 4.125,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F6",
+      "name": "filleted_box",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 68.94,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 20,
+        "outcome": "feasible",
+        "track_a_segments": 12,
+        "track_a_kinds": {
+          "tangential": 8,
+          "silhouette": 4
+        },
+        "cyclomatic_number": 5,
+        "branch_node_count": 8,
+        "node_count": 8,
+        "component_count": 1,
+        "strategy": "cycle_basis",
+        "candidates_found": 5,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 3
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 0.991344,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "92938af9e810",
+        "won_at_tier": "T7",
+        "cavity_face_count": 5,
+        "core_face_count": 5,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 2.29,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 1.148,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.091,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.025,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.061,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 34.706,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.05,
+            "calls": 1
+          }
+        ],
+        "total_ms": 38.371,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F7",
+      "name": "spline_lofted_lid",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 35.37,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 7,
+        "edge_count": 15,
+        "outcome": "feasible",
+        "track_a_segments": 5,
+        "track_a_kinds": {
+          "silhouette": 5
+        },
+        "cyclomatic_number": 1,
+        "branch_node_count": 0,
+        "node_count": 5,
+        "component_count": 1,
+        "strategy": "single_cycle",
+        "candidates_found": 1,
+        "k_max_hit": false,
+        "rejection_summary": {},
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.000268,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 140.0,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "d9c97b9dd341",
+        "won_at_tier": "sole_feasible",
+        "cavity_face_count": 6,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 2.342,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.817,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.044,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.017,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.019,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 5.052,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.013,
+            "calls": 1
+          }
+        ],
+        "total_ms": 8.304,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F8",
+      "name": "box_with_boss",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 67.11,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 8,
+        "edge_count": 15,
+        "outcome": "feasible",
+        "track_a_segments": 14,
+        "track_a_kinds": {
+          "tangential": 4,
+          "silhouette": 10
+        },
+        "cyclomatic_number": 7,
+        "branch_node_count": 8,
+        "node_count": 10,
+        "component_count": 3,
+        "strategy": "cycle_basis",
+        "candidates_found": 7,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 5
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.0,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.055628,
+        "stable_id": "9996f0d61a13",
+        "won_at_tier": "T7",
+        "cavity_face_count": 7,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 2.58,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.932,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.105,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.026,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.061,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 39.618,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.022,
+            "calls": 1
+          }
+        ],
+        "total_ms": 43.344,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F9",
+      "name": "box_with_through_hole",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 77.8,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 7,
+        "edge_count": 15,
+        "outcome": "feasible",
+        "track_a_segments": 14,
+        "track_a_kinds": {
+          "tangential": 4,
+          "silhouette": 10
+        },
+        "cyclomatic_number": 7,
+        "branch_node_count": 8,
+        "node_count": 10,
+        "component_count": 3,
+        "strategy": "cycle_basis",
+        "candidates_found": 7,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 5,
+          "H3": 4
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 1.4695761589768238e-15,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.076062,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 197.582,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "9a5dc6decafd",
+        "won_at_tier": "T7",
+        "cavity_face_count": 6,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 2.657,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.873,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.106,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.021,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.075,
+            "calls": 2
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 49.518,
+            "calls": 2
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.03,
+            "calls": 1
+          }
+        ],
+        "total_ms": 53.281,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F10",
+      "name": "t_junction_rib",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 107.89,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 24,
+        "outcome": "feasible",
+        "track_a_segments": 24,
+        "track_a_kinds": {
+          "tangential": 8,
+          "silhouette": 16
+        },
+        "cyclomatic_number": 9,
+        "branch_node_count": 16,
+        "node_count": 16,
+        "component_count": 1,
+        "strategy": "cycle_basis",
+        "candidates_found": 9,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 5
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.0,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.152778,
+        "stable_id": "3bcbdba28339",
+        "won_at_tier": "T3",
+        "cavity_face_count": 9,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 2.909,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 1.17,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.161,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.023,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.105,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 72.043,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.026,
+            "calls": 1
+          }
+        ],
+        "total_ms": 76.437,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F11",
+      "name": "alternating_draft_pockets",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 629.48,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 26,
+        "edge_count": 60,
+        "outcome": "no_feasible_candidate",
+        "track_a_segments": 60,
+        "track_a_kinds": {
+          "tangential": 20,
+          "silhouette": 40
+        },
+        "cyclomatic_number": 25,
+        "branch_node_count": 40,
+        "node_count": 40,
+        "component_count": 5,
+        "strategy": "cycle_basis",
+        "candidates_found": 25,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 25
+        },
+        "referral_count": 0,
+        "on_surface": null,
+        "coverage": null,
+        "coverage_is_exact": null,
+        "pull_axis_span_mm": null,
+        "excess_turning": null,
+        "length_3d_mm": null,
+        "ambiguous_area_fraction": null,
+        "stable_id": null,
+        "won_at_tier": null,
+        "cavity_face_count": 0,
+        "core_face_count": 0,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 23.968,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 5.114,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.638,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.042,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.233,
+            "calls": 2
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 477.699,
+            "calls": 2
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.01,
+            "calls": 1
+          }
+        ],
+        "total_ms": 507.704,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F12",
+      "name": "draft_free_rib",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 130.61,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 11,
+        "edge_count": 24,
+        "outcome": "feasible",
+        "track_a_segments": 24,
+        "track_a_kinds": {
+          "tangential": 8,
+          "silhouette": 16
+        },
+        "cyclomatic_number": 10,
+        "branch_node_count": 16,
+        "node_count": 16,
+        "component_count": 2,
+        "strategy": "cycle_basis",
+        "candidates_found": 10,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 8
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.0,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.267016,
+        "stable_id": "85730b2b1cc0",
+        "won_at_tier": "T7",
+        "cavity_face_count": 6,
+        "core_face_count": 5,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 3.987,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 1.867,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.17,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.029,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.103,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 77.364,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.024,
+            "calls": 1
+          }
+        ],
+        "total_ms": 83.544,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F13",
+      "name": "peanut_two_lobed",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 63.55,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 6,
+        "edge_count": 12,
+        "outcome": "feasible",
+        "track_a_segments": 12,
+        "track_a_kinds": {
+          "silhouette": 8,
+          "tangential": 4
+        },
+        "cyclomatic_number": 5,
+        "branch_node_count": 8,
+        "node_count": 8,
+        "component_count": 1,
+        "strategy": "cycle_basis",
+        "candidates_found": 5,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 3
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 1.2809491335957507e-14,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 0.994735,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 1.313351,
+        "length_3d_mm": 156.2959,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "84deff01f199",
+        "won_at_tier": "T3",
+        "cavity_face_count": 5,
+        "core_face_count": 1,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 3.898,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 0.723,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.093,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.022,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.065,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 35.328,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.02,
+            "calls": 1
+          }
+        ],
+        "total_ms": 40.149,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F14",
+      "name": "mirror_symmetric",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 94.15,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 10,
+        "edge_count": 18,
+        "outcome": "feasible",
+        "track_a_segments": 16,
+        "track_a_kinds": {
+          "tangential": 4,
+          "silhouette": 12
+        },
+        "cyclomatic_number": 9,
+        "branch_node_count": 8,
+        "node_count": 12,
+        "component_count": 5,
+        "strategy": "cycle_basis",
+        "candidates_found": 9,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 7
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 1.0,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 160.0,
+        "ambiguous_area_fraction": 0.072821,
+        "stable_id": "85730b2b1cc0",
+        "won_at_tier": "T7",
+        "cavity_face_count": 5,
+        "core_face_count": 5,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 3.212,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 1.067,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.103,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.017,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.057,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 61.271,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.021,
+            "calls": 1
+          }
+        ],
+        "total_ms": 65.748,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F17",
+      "name": "barrel_bulged_loft",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 30.11,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 3,
+        "edge_count": 3,
+        "outcome": "feasible",
+        "track_a_segments": 0,
+        "track_a_kinds": {},
+        "cyclomatic_number": 1,
+        "branch_node_count": 0,
+        "node_count": 1,
+        "component_count": 1,
+        "strategy": "single_cycle",
+        "candidates_found": 1,
+        "k_max_hit": false,
+        "rejection_summary": {},
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 0.0,
+          "max_surface_deviation_mm": 7.944109290391274e-14
+        },
+        "coverage": 0.99668,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 100.3344,
+        "ambiguous_area_fraction": 0.0,
+        "stable_id": "910225eb83f8",
+        "won_at_tier": "sole_feasible",
+        "cavity_face_count": 2,
+        "core_face_count": 2,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 0.722,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 3.499,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 0.016,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.011,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 0.003,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 10.372,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.012,
+            "calls": 1
+          }
+        ],
+        "total_ms": 14.636,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 24550.68,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 311,
+        "edge_count": 762,
+        "outcome": "feasible",
+        "track_a_segments": 460,
+        "track_a_kinds": {
+          "silhouette": 148,
+          "tangential": 312
+        },
+        "cyclomatic_number": 113,
+        "branch_node_count": 200,
+        "node_count": 356,
+        "component_count": 9,
+        "strategy": "cycle_basis",
+        "candidates_found": 113,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H4": 109
+        },
+        "referral_count": 0,
+        "on_surface": {
+          "passed": true,
+          "max_edge_deviation_mm": 2.5121479338940403e-15,
+          "max_surface_deviation_mm": 0.0
+        },
+        "coverage": 0.998906,
+        "coverage_is_exact": false,
+        "pull_axis_span_mm": 0.0,
+        "excess_turning": 0.0,
+        "length_3d_mm": 69.426,
+        "ambiguous_area_fraction": 0.455749,
+        "stable_id": "959c80a8d86e",
+        "won_at_tier": "T3",
+        "cavity_face_count": 42,
+        "core_face_count": 269,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 85.488,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 37.367,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 3.056,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.2,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 3.46,
+            "calls": 1
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 23451.555,
+            "calls": 1
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.094,
+            "calls": 1
+          }
+        ],
+        "total_ms": 23581.22,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "engine": "v2",
+      "status": "ok",
+      "total_ms": 44397.34,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "face_count": 414,
+        "edge_count": 981,
+        "outcome": "no_feasible_candidate",
+        "track_a_segments": 352,
+        "track_a_kinds": {
+          "tangential": 328,
+          "silhouette": 24
+        },
+        "cyclomatic_number": 110,
+        "branch_node_count": 184,
+        "node_count": 260,
+        "component_count": 18,
+        "strategy": "cycle_basis",
+        "candidates_found": 110,
+        "k_max_hit": false,
+        "rejection_summary": {
+          "H3": 14,
+          "H4": 151
+        },
+        "referral_count": 0,
+        "on_surface": null,
+        "coverage": null,
+        "coverage_is_exact": null,
+        "pull_axis_span_mm": null,
+        "excess_turning": null,
+        "length_3d_mm": null,
+        "ambiguous_area_fraction": null,
+        "stable_id": null,
+        "won_at_tier": null,
+        "cavity_face_count": 0,
+        "core_face_count": 0,
+        "inconsistent_face_count": 0
+      },
+      "stage_timings": {
+        "stages": [
+          {
+            "stage": "track_a",
+            "elapsed_ms": 106.131,
+            "calls": 1
+          },
+          {
+            "stage": "track_b",
+            "elapsed_ms": 50.395,
+            "calls": 1
+          },
+          {
+            "stage": "weld",
+            "elapsed_ms": 2.757,
+            "calls": 2
+          },
+          {
+            "stage": "reduce",
+            "elapsed_ms": 0.52,
+            "calls": 1
+          },
+          {
+            "stage": "enumerate",
+            "elapsed_ms": 2.684,
+            "calls": 2
+          },
+          {
+            "stage": "filter",
+            "elapsed_ms": 42962.044,
+            "calls": 2
+          },
+          {
+            "stage": "rank",
+            "elapsed_ms": 0.042,
+            "calls": 1
+          }
+        ],
+        "total_ms": 43124.574,
+        "stages_not_run": [
+          "load",
+          "core_cavity",
+          "surface"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,1797 @@
+{
+  "Part1_+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "total_candidates": 313,
+    "outcome": "no_feasible_candidate",
+    "h3_failure_count": 213,
+    "h4_failure_count": 100,
+    "other_failure_count": 0,
+    "other_failure_gates": [],
+    "passed_count": 0,
+    "h3_histogram": {
+      "1 (under-separates)": 213
+    },
+    "h4_violation_fraction_histogram": {
+      "30-60%": 19,
+      "10-30%": 81
+    },
+    "examples": {
+      "h3_min_region_count": {
+        "candidate_id": 0,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 55,
+        "provenance_mix": {
+          "edge": 41,
+          "face": 14
+        },
+        "kind_mix": {
+          "tangential": 30,
+          "silhouette": 25
+        },
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            6.630462714732272
+          ],
+          "y": [
+            -9.5,
+            9.5
+          ],
+          "z": [
+            0.24009804864063233,
+            15.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 3.2023728339893768e-15,
+            "h0_max_surface_deviation_mm": 9.81025129326275e-15,
+            "h1_closure_error_mm": 7.588599744428075e-15,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 33152.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 14.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 9.81025129326275e-15,
+            "max_edge_deviation_mm": 3.2023728339893768e-15,
+            "max_silhouette_error": 1.5233574247564696e-12,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 32,
+              "point": [
+                -7.840616,
+                -8.839707,
+                15.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          311
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          311
+        ]
+      },
+      "h3_max_region_count": {
+        "candidate_id": 511,
+        "discovered_by": "loop_union",
+        "is_closed": true,
+        "loop_count": 3,
+        "segment_count": 5,
+        "provenance_mix": {
+          "edge": 3,
+          "face": 2
+        },
+        "kind_mix": {
+          "tangential": 4,
+          "silhouette": 1
+        },
+        "bbox_mm": {
+          "x": [
+            -0.5303300858899154,
+            2.0215695991535563e-11
+          ],
+          "y": [
+            -0.7424621202459507,
+            3.88306449362669
+          ],
+          "z": [
+            10.0,
+            14.15
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 0.0,
+            "h0_max_surface_deviation_mm": 6.280369834735101e-16,
+            "h1_closure_error_mm": 5.431945184730413e-14,
+            "h1_loop_count": 3.0,
+            "h2_checked_pairs": 105.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 2.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 6.280369834735101e-16,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 4.329780281177493e-17,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 438,
+              "point": [
+                -0.53033,
+                0.742462,
+                10.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          311
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          311
+        ]
+      },
+      "h4_min_violation": {
+        "candidate_id": 9,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 32,
+        "provenance_mix": {
+          "edge": 32,
+          "face": 0
+        },
+        "kind_mix": {
+          "silhouette": 24,
+          "tangential": 8
+        },
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            -5.7
+          ],
+          "y": [
+            -9.5,
+            9.5
+          ],
+          "z": [
+            0.0,
+            15.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "19.7% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 3.2023728339893768e-15,
+            "h0_max_surface_deviation_mm": 0.0,
+            "h1_closure_error_mm": 0.0,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 8645.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 0.0,
+            "h4_orientation_violation_fraction": 0.19715699880100074
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 0.0,
+            "max_edge_deviation_mm": 3.2023728339893768e-15,
+            "max_silhouette_error": 0.0,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 32,
+              "point": [
+                -7.840616,
+                -8.839707,
+                15.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": [
+              "No face-backed points at Level 0 (Track B lands in P2), so max_silhouette_error is reported as 0. The sharp-edge silhouette condition is the straddle 0 in [g_a, g_b], checked in Track A."
+            ]
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          294,
+          17
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 294,
+        "core_face_count": 17,
+        "cavity_area_mm2": 2509.722,
+        "core_area_mm2": 367.904,
+        "smaller_side_area_fraction": 0.1278,
+        "cavity_wrong_sign_faces": [
+          [
+            2,
+            -0.4505,
+            3.23
+          ],
+          [
+            3,
+            -0.7071,
+            7.46
+          ],
+          [
+            4,
+            -0.4505,
+            3.23
+          ],
+          [
+            21,
+            -0.2377,
+            0.73
+          ],
+          [
+            23,
+            -0.373,
+            2.26
+          ],
+          [
+            25,
+            -0.2377,
+            0.73
+          ],
+          [
+            27,
+            -0.0,
+            5.54
+          ],
+          [
+            30,
+            -1.0,
+            0.94
+          ],
+          [
+            31,
+            -1.0,
+            0.38
+          ],
+          [
+            34,
+            -0.8997,
+            1.04
+          ]
+        ],
+        "core_wrong_sign_faces": []
+      },
+      "h4_max_violation": {
+        "candidate_id": 48,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 5,
+          "face": 3
+        },
+        "kind_mix": {
+          "tangential": 5,
+          "silhouette": 3
+        },
+        "bbox_mm": {
+          "x": [
+            -4.720830681897343,
+            -3.6000000000000196
+          ],
+          "y": [
+            -6.11568542494925,
+            -4.920799782246502
+          ],
+          "z": [
+            13.15,
+            14.000000000000002
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "56.5% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 0.0,
+            "h0_max_surface_deviation_mm": 1.390219125818473e-14,
+            "h1_closure_error_mm": 1.4299672557172016e-12,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 1080.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 3.0,
+            "h4_orientation_violation_fraction": 0.5654095412913304
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.390219125818473e-14,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 1.536449945807248e-12,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 462,
+              "point": [
+                -4.252921,
+                -5.068826,
+                13.230245
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          308,
+          6
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 6,
+        "core_face_count": 308,
+        "cavity_area_mm2": 2.026,
+        "core_area_mm2": 2876.481,
+        "smaller_side_area_fraction": 0.0007,
+        "cavity_wrong_sign_faces": [
+          [
+            69,
+            -0.0648,
+            0.12
+          ],
+          [
+            138,
+            -0.1604,
+            0.69
+          ],
+          [
+            193,
+            -0.0846,
+            0.34
+          ]
+        ],
+        "core_wrong_sign_faces": [
+          [
+            6,
+            0.4505,
+            3.23
+          ],
+          [
+            7,
+            0.7071,
+            7.46
+          ],
+          [
+            8,
+            0.4505,
+            3.23
+          ],
+          [
+            12,
+            1.0,
+            116.28
+          ],
+          [
+            16,
+            0.6372,
+            71.63
+          ],
+          [
+            17,
+            0.6372,
+            71.63
+          ],
+          [
+            18,
+            0.2377,
+            0.73
+          ],
+          [
+            20,
+            0.373,
+            2.26
+          ],
+          [
+            22,
+            0.2377,
+            0.73
+          ],
+          [
+            26,
+            0.0,
+            6.1
+          ]
+        ]
+      }
+    }
+  },
+  "Part1_+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "total_candidates": 315,
+    "outcome": "no_feasible_candidate",
+    "h3_failure_count": 212,
+    "h4_failure_count": 103,
+    "other_failure_count": 0,
+    "other_failure_gates": [],
+    "passed_count": 0,
+    "h3_histogram": {
+      "1 (under-separates)": 212
+    },
+    "h4_violation_fraction_histogram": {
+      "30-60%": 23,
+      "10-30%": 80
+    },
+    "examples": {
+      "h3_min_region_count": {
+        "candidate_id": 0,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 59,
+        "provenance_mix": {
+          "edge": 45,
+          "face": 14
+        },
+        "kind_mix": {
+          "tangential": 34,
+          "silhouette": 25
+        },
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            9.5
+          ],
+          "y": [
+            -5.668792725729492,
+            9.5
+          ],
+          "z": [
+            0.24009804864069995,
+            15.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 1.9860273225978185e-15,
+            "h0_max_surface_deviation_mm": 1.8223897527643367e-14,
+            "h1_closure_error_mm": 6.936895214610187e-15,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 32384.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 14.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.8223897527643367e-14,
+            "max_edge_deviation_mm": 1.9860273225978185e-15,
+            "max_silhouette_error": 1.532731711605703e-12,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 486,
+              "point": [
+                -5.068826,
+                4.252921,
+                13.230245
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          311
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          311
+        ]
+      },
+      "h3_max_region_count": {
+        "candidate_id": 513,
+        "discovered_by": "loop_union",
+        "is_closed": true,
+        "loop_count": 3,
+        "segment_count": 4,
+        "provenance_mix": {
+          "edge": 3,
+          "face": 1
+        },
+        "kind_mix": {
+          "silhouette": 1,
+          "tangential": 3
+        },
+        "bbox_mm": {
+          "x": [
+            -0.7424621202459285,
+            2.6310338813311
+          ],
+          "y": [
+            -0.5303300858899315,
+            -4.995863751918324e-15
+          ],
+          "z": [
+            10.0,
+            13.9
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 6.661338147750939e-16,
+            "h0_max_surface_deviation_mm": 1.5700924586837752e-16,
+            "h1_closure_error_mm": 2.3368275148981425e-15,
+            "h1_loop_count": 3.0,
+            "h2_checked_pairs": 46.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 1.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.5700924586837752e-16,
+            "max_edge_deviation_mm": 6.661338147750939e-16,
+            "max_silhouette_error": 4.329780281177458e-17,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 207,
+              "point": [
+                0.522792,
+                -0.0,
+                10.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          311
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          311
+        ]
+      },
+      "h4_min_violation": {
+        "candidate_id": 9,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 34,
+        "provenance_mix": {
+          "edge": 34,
+          "face": 0
+        },
+        "kind_mix": {
+          "silhouette": 28,
+          "tangential": 6
+        },
+        "bbox_mm": {
+          "x": [
+            -9.5,
+            9.5
+          ],
+          "y": [
+            -9.5,
+            -5.7
+          ],
+          "z": [
+            0.0,
+            15.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "19.4% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 3.2023728339893768e-15,
+            "h0_max_surface_deviation_mm": 0.0,
+            "h1_closure_error_mm": 4.440892098500626e-16,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 9729.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 0.0,
+            "h4_orientation_violation_fraction": 0.1940031796089989
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 0.0,
+            "max_edge_deviation_mm": 3.2023728339893768e-15,
+            "max_silhouette_error": 0.0,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 310,
+              "point": [
+                -7.995159,
+                -8.602111,
+                0.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": [
+              "No face-backed points at Level 0 (Track B lands in P2), so max_silhouette_error is reported as 0. The sharp-edge silhouette condition is the straddle 0 in [g_a, g_b], checked in Track A."
+            ]
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          298,
+          13
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 298,
+        "core_face_count": 13,
+        "cavity_area_mm2": 2533.806,
+        "core_area_mm2": 343.821,
+        "smaller_side_area_fraction": 0.1195,
+        "cavity_wrong_sign_faces": [
+          [
+            4,
+            -0.4505,
+            3.23
+          ],
+          [
+            5,
+            -0.7071,
+            7.46
+          ],
+          [
+            6,
+            -0.4505,
+            3.23
+          ],
+          [
+            22,
+            -0.2377,
+            0.73
+          ],
+          [
+            24,
+            -0.373,
+            2.26
+          ],
+          [
+            25,
+            -0.2377,
+            0.73
+          ],
+          [
+            30,
+            -0.0,
+            0.94
+          ],
+          [
+            38,
+            -0.0,
+            1.58
+          ],
+          [
+            39,
+            -0.0,
+            0.39
+          ],
+          [
+            40,
+            -1.0,
+            0.73
+          ]
+        ],
+        "core_wrong_sign_faces": [
+          [
+            277,
+            0.0,
+            1.3
+          ],
+          [
+            309,
+            0.0,
+            9.98
+          ]
+        ]
+      },
+      "h4_max_violation": {
+        "candidate_id": 45,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 5,
+          "face": 3
+        },
+        "kind_mix": {
+          "tangential": 5,
+          "silhouette": 3
+        },
+        "bbox_mm": {
+          "x": [
+            4.920799782246476,
+            6.11568542494922
+          ],
+          "y": [
+            -4.720830681897357,
+            -3.6
+          ],
+          "z": [
+            13.15,
+            14.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "56.5% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 8.881784197001252e-16,
+            "h0_max_surface_deviation_mm": 1.66162967242209e-14,
+            "h1_closure_error_mm": 0.0,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 1080.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 3.0,
+            "h4_orientation_violation_fraction": 0.5654095412912225
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.66162967242209e-14,
+            "max_edge_deviation_mm": 8.881784197001252e-16,
+            "max_silhouette_error": 1.5620752436140342e-12,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 490,
+              "point": [
+                5.068826,
+                -4.252921,
+                13.230245
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          308,
+          6
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 6,
+        "core_face_count": 308,
+        "cavity_area_mm2": 2.026,
+        "core_area_mm2": 2876.481,
+        "smaller_side_area_fraction": 0.0007,
+        "cavity_wrong_sign_faces": [
+          [
+            62,
+            -0.0648,
+            0.12
+          ],
+          [
+            82,
+            -0.1604,
+            0.69
+          ],
+          [
+            158,
+            -0.0846,
+            0.34
+          ]
+        ],
+        "core_wrong_sign_faces": [
+          [
+            1,
+            0.7071,
+            7.46
+          ],
+          [
+            2,
+            0.4505,
+            3.23
+          ],
+          [
+            8,
+            0.4505,
+            3.23
+          ],
+          [
+            13,
+            1.0,
+            116.28
+          ],
+          [
+            15,
+            0.6372,
+            71.63
+          ],
+          [
+            16,
+            0.6372,
+            71.63
+          ],
+          [
+            18,
+            0.2377,
+            0.73
+          ],
+          [
+            19,
+            0.373,
+            2.26
+          ],
+          [
+            21,
+            0.2377,
+            0.73
+          ],
+          [
+            26,
+            0.0,
+            6.1
+          ]
+        ]
+      }
+    }
+  },
+  "Part3_+X": {
+    "direction_label": "+X",
+    "direction": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "total_candidates": 329,
+    "outcome": "no_feasible_candidate",
+    "h3_failure_count": 282,
+    "h4_failure_count": 47,
+    "other_failure_count": 0,
+    "other_failure_gates": [],
+    "passed_count": 0,
+    "h3_histogram": {
+      "1 (under-separates)": 264,
+      "4 (over-partitions, small)": 12,
+      "3 (over-partitions, small)": 6
+    },
+    "h4_violation_fraction_histogram": {
+      "10-30%": 47
+    },
+    "examples": {
+      "h3_min_region_count": {
+        "candidate_id": 0,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 124,
+        "provenance_mix": {
+          "edge": 87,
+          "face": 37
+        },
+        "kind_mix": {
+          "tangential": 90,
+          "silhouette": 34
+        },
+        "bbox_mm": {
+          "x": [
+            -12.997604462160918,
+            6.503886275737066
+          ],
+          "y": [
+            -12.993192161254496,
+            13.220892504433412
+          ],
+          "z": [
+            4.5,
+            40.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 8.881784197001252e-15,
+            "h0_max_surface_deviation_mm": 1.3584478589710503e-05,
+            "h1_closure_error_mm": 0.0,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 245349.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 34.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.3584478589710503e-05,
+            "max_edge_deviation_mm": 8.881784197001252e-15,
+            "max_silhouette_error": 4.0131804740770903e-10,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 541,
+              "point": [
+                -5.990861,
+                -7.687951,
+                40.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          414
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          414
+        ]
+      },
+      "h3_max_region_count": {
+        "candidate_id": 58,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 6,
+        "provenance_mix": {
+          "edge": 0,
+          "face": 6
+        },
+        "kind_mix": {
+          "silhouette": 6
+        },
+        "bbox_mm": {
+          "x": [
+            -7.15136002236777,
+            1.2854086412410913e-11
+          ],
+          "y": [
+            10.0846153182508,
+            12.5
+          ],
+          "z": [
+            15.5,
+            18.5
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop over-partitions the part (4 regions); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 0.0,
+            "h0_max_surface_deviation_mm": 3.908994210040608e-14,
+            "h1_closure_error_mm": 2.932121223552279e-07,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 2627.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 4.0,
+            "h3_split_face_count": 6.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 3.908994210040608e-14,
+            "max_edge_deviation_mm": 0.0,
+            "max_silhouette_error": 7.317368982940227e-10,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 617,
+              "point": [
+                -7.15136,
+                10.356245,
+                18.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          414,
+          2,
+          2,
+          2
+        ],
+        "h3_component_count": 4,
+        "component_sizes_all": [
+          414,
+          2,
+          2,
+          2
+        ]
+      },
+      "h4_min_violation": {
+        "candidate_id": 24,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 12,
+        "provenance_mix": {
+          "edge": 12,
+          "face": 0
+        },
+        "kind_mix": {
+          "tangential": 12
+        },
+        "bbox_mm": {
+          "x": [
+            -8.75,
+            -7.75
+          ],
+          "y": [
+            -1.250000000000074,
+            1.24999999999994
+          ],
+          "z": [
+            32.0,
+            40.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "16.4% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 8.881784197001252e-16,
+            "h0_max_surface_deviation_mm": 0.0,
+            "h1_closure_error_mm": 2.024635595269873e-15,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 1127.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 0.0,
+            "h4_orientation_violation_fraction": 0.16388344449448347
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 0.0,
+            "max_edge_deviation_mm": 8.881784197001252e-16,
+            "max_silhouette_error": 0.0,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 420,
+              "point": [
+                -8.75,
+                -1.01903,
+                39.845671
+              ]
+            },
+            "failed_subtests": [],
+            "notes": [
+              "No face-backed points at Level 0 (Track B lands in P2), so max_silhouette_error is reported as 0. The sharp-edge silhouette condition is the straddle 0 in [g_a, g_b], checked in Track A."
+            ]
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          405,
+          9
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 405,
+        "core_face_count": 9,
+        "cavity_area_mm2": 7538.39,
+        "core_area_mm2": 23.665,
+        "smaller_side_area_fraction": 0.0031,
+        "cavity_wrong_sign_faces": [
+          [
+            0,
+            -0.5244,
+            254.65
+          ],
+          [
+            2,
+            -0.5348,
+            53.97
+          ],
+          [
+            4,
+            -0.5244,
+            72.76
+          ],
+          [
+            6,
+            -0.5348,
+            53.97
+          ],
+          [
+            8,
+            -0.3342,
+            28.99
+          ],
+          [
+            9,
+            -0.3342,
+            28.06
+          ],
+          [
+            10,
+            -0.3407,
+            21.6
+          ],
+          [
+            11,
+            -0.3407,
+            21.6
+          ],
+          [
+            12,
+            -0.3407,
+            21.6
+          ],
+          [
+            13,
+            -0.3407,
+            21.6
+          ]
+        ],
+        "core_wrong_sign_faces": []
+      },
+      "h4_max_violation": {
+        "candidate_id": 44,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 8,
+          "face": 0
+        },
+        "kind_mix": {
+          "tangential": 8
+        },
+        "bbox_mm": {
+          "x": [
+            8.74999999999999,
+            11.38891444426162
+          ],
+          "y": [
+            -1.24999999999997,
+            -0.749999999999959
+          ],
+          "z": [
+            32.0,
+            40.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "16.7% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 1.7763568394002505e-15,
+            "h0_max_surface_deviation_mm": 0.0,
+            "h1_closure_error_mm": 1.1102230246251565e-16,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 495.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 0.0,
+            "h4_orientation_violation_fraction": 0.16679615705995943
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 0.0,
+            "max_edge_deviation_mm": 1.7763568394002505e-15,
+            "max_silhouette_error": 0.0,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 390,
+              "point": [
+                10.371067,
+                -1.0,
+                36.000354
+              ]
+            },
+            "failed_subtests": [],
+            "notes": [
+              "No face-backed points at Level 0 (Track B lands in P2), so max_silhouette_error is reported as 0. The sharp-edge silhouette condition is the straddle 0 in [g_a, g_b], checked in Track A."
+            ]
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          411,
+          3
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 3,
+        "core_face_count": 411,
+        "cavity_area_mm2": 13.427,
+        "core_area_mm2": 7548.628,
+        "smaller_side_area_fraction": 0.0018,
+        "cavity_wrong_sign_faces": [],
+        "core_wrong_sign_faces": [
+          [
+            18,
+            0.5244,
+            254.65
+          ],
+          [
+            20,
+            0.5348,
+            53.97
+          ],
+          [
+            22,
+            0.5244,
+            72.76
+          ],
+          [
+            24,
+            0.5348,
+            53.97
+          ],
+          [
+            26,
+            0.3342,
+            28.99
+          ],
+          [
+            27,
+            0.3342,
+            28.06
+          ],
+          [
+            28,
+            0.3407,
+            21.6
+          ],
+          [
+            29,
+            0.3407,
+            21.6
+          ],
+          [
+            30,
+            0.3407,
+            21.6
+          ],
+          [
+            31,
+            0.3407,
+            21.6
+          ]
+        ]
+      }
+    }
+  },
+  "Part3_+Y": {
+    "direction_label": "+Y",
+    "direction": [
+      0.0,
+      1.0,
+      0.0
+    ],
+    "total_candidates": 325,
+    "outcome": "no_feasible_candidate",
+    "h3_failure_count": 287,
+    "h4_failure_count": 38,
+    "other_failure_count": 0,
+    "other_failure_gates": [],
+    "passed_count": 0,
+    "h3_histogram": {
+      "1 (under-separates)": 286,
+      "3 (over-partitions, small)": 1
+    },
+    "h4_violation_fraction_histogram": {
+      "10-30%": 38
+    },
+    "examples": {
+      "h3_min_region_count": {
+        "candidate_id": 0,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 118,
+        "provenance_mix": {
+          "edge": 83,
+          "face": 35
+        },
+        "kind_mix": {
+          "tangential": 81,
+          "silhouette": 37
+        },
+        "bbox_mm": {
+          "x": [
+            -12.996913199967263,
+            12.5
+          ],
+          "y": [
+            -13.2208925044335,
+            11.292529675421452
+          ],
+          "z": [
+            4.499999999999998,
+            40.000000000000014
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop does not separate the part (1 region); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 1.1024240709028996e-14,
+            "h0_max_surface_deviation_mm": 8.948350294580048e-06,
+            "h1_closure_error_mm": 0.0,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 245349.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 1.0,
+            "h3_split_face_count": 32.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 8.948350294580048e-06,
+            "max_edge_deviation_mm": 1.1024240709028996e-14,
+            "max_silhouette_error": 5.831261508214793e-10,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 524,
+              "point": [
+                7.736548,
+                -6.214257,
+                40.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          414
+        ],
+        "h3_component_count": 1,
+        "component_sizes_all": [
+          414
+        ]
+      },
+      "h3_max_region_count": {
+        "candidate_id": 33,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 10,
+        "provenance_mix": {
+          "edge": 4,
+          "face": 6
+        },
+        "kind_mix": {
+          "silhouette": 7,
+          "tangential": 3
+        },
+        "bbox_mm": {
+          "x": [
+            -18.0,
+            18.0
+          ],
+          "y": [
+            -17.49953294400016,
+            17.5
+          ],
+          "z": [
+            0.0,
+            4.5
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H3",
+          "reason": "Loop over-partitions the part (3 regions); a parting line must produce exactly 2.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 5.617333549722722e-15,
+            "h0_max_surface_deviation_mm": 1.269182668897712e-09,
+            "h1_closure_error_mm": 0.0,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 41615.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 3.0,
+            "h3_split_face_count": 3.0
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.269182668897712e-09,
+            "max_edge_deviation_mm": 5.617333549722722e-15,
+            "max_silhouette_error": 3.06153528663478e-16,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 589,
+              "point": [
+                18.0,
+                -0.0,
+                1.0
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          414,
+          2,
+          1
+        ],
+        "h3_component_count": 3,
+        "component_sizes_all": [
+          414,
+          2,
+          1
+        ]
+      },
+      "h4_min_violation": {
+        "candidate_id": 3,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 24,
+        "provenance_mix": {
+          "edge": 9,
+          "face": 15
+        },
+        "kind_mix": {
+          "tangential": 5,
+          "silhouette": 19
+        },
+        "bbox_mm": {
+          "x": [
+            -12.5,
+            -7.00421774994222
+          ],
+          "y": [
+            -2.2173844322524447e-12,
+            11.292529675421452
+          ],
+          "z": [
+            4.499999999999998,
+            22.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "15.9% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 8.881784197001252e-15,
+            "h0_max_surface_deviation_mm": 1.250068793954441e-10,
+            "h1_closure_error_mm": 1.3528330643921842e-14,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 25877.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 15.0,
+            "h4_orientation_violation_fraction": 0.1588763624007305
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 1.250068793954441e-10,
+            "max_edge_deviation_mm": 8.881784197001252e-15,
+            "max_silhouette_error": 5.831261508214793e-10,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 37,
+              "point": [
+                -9.945537,
+                9.519044,
+                4.5
+              ]
+            },
+            "failed_subtests": [],
+            "notes": []
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          405,
+          24
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 405,
+        "core_face_count": 24,
+        "cavity_area_mm2": 7502.383,
+        "core_area_mm2": 213.125,
+        "smaller_side_area_fraction": 0.0276,
+        "cavity_wrong_sign_faces": [
+          [
+            0,
+            -0.4401,
+            254.65
+          ],
+          [
+            2,
+            -0.4487,
+            53.97
+          ],
+          [
+            4,
+            -0.4401,
+            72.76
+          ],
+          [
+            6,
+            -0.4487,
+            53.97
+          ],
+          [
+            8,
+            -0.2804,
+            28.99
+          ],
+          [
+            9,
+            -0.2804,
+            28.06
+          ],
+          [
+            10,
+            -0.2859,
+            21.6
+          ],
+          [
+            11,
+            -0.2859,
+            21.6
+          ],
+          [
+            12,
+            -0.2859,
+            21.6
+          ],
+          [
+            13,
+            -0.2859,
+            21.6
+          ]
+        ],
+        "core_wrong_sign_faces": [
+          [
+            370,
+            0.0269,
+            5.09
+          ],
+          [
+            374,
+            0.011,
+            1.42
+          ],
+          [
+            378,
+            0.0269,
+            1.46
+          ],
+          [
+            382,
+            0.011,
+            1.42
+          ],
+          [
+            406,
+            0.0785,
+            12.71
+          ],
+          [
+            407,
+            0.0389,
+            0.48
+          ]
+        ]
+      },
+      "h4_max_violation": {
+        "candidate_id": 41,
+        "discovered_by": "cycle_basis",
+        "is_closed": true,
+        "loop_count": 1,
+        "segment_count": 8,
+        "provenance_mix": {
+          "edge": 8,
+          "face": 0
+        },
+        "kind_mix": {
+          "tangential": 8
+        },
+        "bbox_mm": {
+          "x": [
+            -1.2499999999999545,
+            -0.7499999999999489
+          ],
+          "y": [
+            -11.388914444261623,
+            -8.74999999999999
+          ],
+          "z": [
+            32.0,
+            40.0
+          ]
+        },
+        "feasibility": {
+          "passed": false,
+          "outcome": "rejected",
+          "failed_gate": "H4",
+          "reason": "16.6% of one region's area faces the wrong way (limit 2.0%); the two sides are not separately mold-accessible.",
+          "measurements": {
+            "h0_max_edge_deviation_mm": 1.7763568394002505e-15,
+            "h0_max_surface_deviation_mm": 0.0,
+            "h1_closure_error_mm": 1.1102230246251565e-16,
+            "h1_loop_count": 1.0,
+            "h2_checked_pairs": 495.0,
+            "h2_confirmed_intersections": 0.0,
+            "h3_region_count": 2.0,
+            "h3_split_face_count": 0.0,
+            "h4_orientation_violation_fraction": 0.1655524012408678
+          },
+          "on_surface": {
+            "passed": true,
+            "max_surface_deviation_mm": 0.0,
+            "max_edge_deviation_mm": 1.7763568394002505e-15,
+            "max_silhouette_error": 0.0,
+            "off_face_point_count": 0,
+            "unbacked_segment_count": 0,
+            "worst_offender": {
+              "segment_id": 323,
+              "point": [
+                -1.0,
+                -10.371067,
+                36.000354
+              ]
+            },
+            "failed_subtests": [],
+            "notes": [
+              "No face-backed points at Level 0 (Track B lands in P2), so max_silhouette_error is reported as 0. The sharp-edge silhouette condition is the straddle 0 in [g_a, g_b], checked in Track A."
+            ]
+          },
+          "referral": null
+        },
+        "h3_component_sizes": [
+          411,
+          3
+        ],
+        "h3_component_count": 2,
+        "cavity_face_count": 3,
+        "core_face_count": 411,
+        "cavity_area_mm2": 13.427,
+        "core_area_mm2": 7548.628,
+        "smaller_side_area_fraction": 0.0018,
+        "cavity_wrong_sign_faces": [
+          [
+            59,
+            -0.0,
+            12.16
+          ],
+          [
+            183,
+            -0.0,
+            0.24
+          ],
+          [
+            241,
+            -0.0,
+            1.04
+          ]
+        ],
+        "core_wrong_sign_faces": [
+          [
+            18,
+            0.4401,
+            254.65
+          ],
+          [
+            20,
+            0.4487,
+            53.97
+          ],
+          [
+            22,
+            0.4401,
+            72.76
+          ],
+          [
+            24,
+            0.4487,
+            53.97
+          ],
+          [
+            26,
+            0.2804,
+            28.99
+          ],
+          [
+            27,
+            0.2804,
+            28.06
+          ],
+          [
+            28,
+            0.2859,
+            21.6
+          ],
+          [
+            29,
+            0.2859,
+            21.6
+          ],
+          [
+            30,
+            0.2859,
+            21.6
+          ],
+          [
+            31,
+            0.2859,
+            21.6
+          ]
+        ]
+      }
+    }
+  }
+}

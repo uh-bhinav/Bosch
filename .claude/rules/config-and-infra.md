@@ -59,6 +59,7 @@ pip deps: streamlit, pyvista, stpyvista, fastapi, uvicorn, langchain, openai, re
 ./reports:/app/reports    # Generated validation/perf reports
 ./backend:/app/backend    # Live-reload during dev
 ./frontend:/app/frontend  # Live-reload during dev
+./tests:/app/tests        # Live-reload during dev (backend only; added 2026-07-28)
 ./config.yaml:/app/config.yaml:ro  # Config without image rebuild
 ```
 

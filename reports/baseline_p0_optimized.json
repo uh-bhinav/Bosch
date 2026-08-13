@@ -1,0 +1,121 @@
+{
+  "generated_by": "backend/validation/parting_line_ab.py",
+  "phase": "P0 baseline",
+  "engines": [
+    "v1"
+  ],
+  "direction_mode": "optimizer",
+  "caveats": [
+    "v1 is NOT stage-instrumented; only total_ms is available for it. Per-stage p50/p95 (plan \u00a712.5) arrive with v2.",
+    "v1_bbox_coverage_ratio uses BOUNDING-BOX areas. Plan \u00a78.1 replaces this with a shoelace numerator over a proper projected-outline denominator. The two are not directly comparable.",
+    "F16 (Part3) has NO ground truth. Its row is diagnostic only and must never be reported as a correctness score."
+  ],
+  "corpus": [
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "filename": "Part1.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "coverage >= 0.90 (v1 achieves 94.8% at its optimal direction)",
+      "analytic": false,
+      "p1_expectation": "pass",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "filename": "Part3.stp",
+      "pull_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "expected": "UNKNOWN \u2014 Bosch has not disclosed an expected solution. Scored on feasibility, fragmentation and honesty, NEVER on correctness.",
+      "analytic": false,
+      "p1_expectation": "honest_result_or_honest_rejection",
+      "kind": "real",
+      "targets": "real Bosch geometry"
+    }
+  ],
+  "results": [
+    {
+      "fixture_id": "F15",
+      "name": "Part1",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 17899.11,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          0.23213,
+          0.356947,
+          0.904823
+        ],
+        "face_count": 311,
+        "edge_count": 762,
+        "v1_readiness_status": "review",
+        "v1_readiness_score": 0.752,
+        "v1_refinement_confidence": 0.78,
+        "v1_bbox_coverage_ratio": 0.9483,
+        "candidate_edge_count": 206,
+        "silhouette_edge_count": 206,
+        "component_count": 12,
+        "selected_is_closed": true,
+        "branch_point_count": 1,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "not_needed",
+        "graph_cleanup_strategy": "contracted-graph-search",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 2,
+        "on_surface": null
+      },
+      "stage_timings": null
+    },
+    {
+      "fixture_id": "F16",
+      "name": "Part3",
+      "engine": "v1",
+      "status": "ok",
+      "total_ms": 18818.21,
+      "error": null,
+      "measures": {
+        "pull_direction": [
+          -0.103742,
+          0.555543,
+          0.82499
+        ],
+        "face_count": 414,
+        "edge_count": 981,
+        "v1_readiness_status": "review",
+        "v1_readiness_score": 0.7661,
+        "v1_refinement_confidence": 0.82,
+        "v1_bbox_coverage_ratio": 0.1812,
+        "candidate_edge_count": 202,
+        "silhouette_edge_count": 194,
+        "component_count": 22,
+        "selected_is_closed": true,
+        "branch_point_count": 0,
+        "gap_count": 0,
+        "closure_guaranteed": true,
+        "closure_error_mm": 0.0,
+        "closure_bridge_edge_count": 0,
+        "bridging_status": "discarded_not_an_improvement",
+        "graph_cleanup_strategy": "contracted-graph-search",
+        "parting_surface_status": "generated_filling",
+        "parting_surface_strategy": "brepfill_filling",
+        "warning_count": 22,
+        "on_surface": null
+      },
+      "stage_timings": null
+    }
+  ]
+}

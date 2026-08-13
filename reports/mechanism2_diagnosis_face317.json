@@ -1,0 +1,339 @@
+{
+  "direction_label": "+X",
+  "direction": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "face_id": 317,
+  "surface_type": "4",
+  "face_uv_bounds": [
+    0.0,
+    6.283185307179586,
+    6.283185307179587,
+    7.853981633974484
+  ],
+  "coarse_pre_pass": {
+    "n": 25,
+    "min": -0.9876883405951375,
+    "max": 0.7990566526874575,
+    "max_abs": 0.9876883405951375,
+    "silhouette_epsilon": 0.02,
+    "classified_degenerate": false,
+    "sign_changes": true
+  },
+  "track_b_chains": [
+    {
+      "point_count": 61,
+      "u_range": [
+        0.0,
+        1.570796326794897
+      ],
+      "v_range": [
+        6.283185307179587,
+        7.853981633974483
+      ],
+      "v_span_fraction_of_domain": 0.9999999999999994,
+      "u_span_fraction_of_domain": 0.25000000000000006,
+      "pinned_to_v_boundary": false,
+      "g_min": 0.0,
+      "g_max": 3.061616997868383e-16,
+      "g_mean_abs": 1.7425427625359266e-16,
+      "g_all_within_epsilon": true,
+      "fraction_within_tau_silhouette": 1.0,
+      "start": {
+        "uv": [
+          0.0,
+          7.853981633974483
+        ],
+        "state": "ON",
+        "g": 3.061616997868383e-16
+      },
+      "end": {
+        "uv": [
+          1.570796326794897,
+          6.283185307179587
+        ],
+        "state": "ON",
+        "g": 0.0
+      }
+    },
+    {
+      "point_count": 110,
+      "u_range": [
+        1.5707959367992976,
+        4.712389370380289
+      ],
+      "v_range": [
+        7.853981633974483,
+        7.853981633974484
+      ],
+      "v_span_fraction_of_domain": 5.654319433712919e-16,
+      "u_span_fraction_of_domain": 0.5000001241394548,
+      "pinned_to_v_boundary": true,
+      "g_min": -3.0612901572955364e-16,
+      "g_max": -2.2698395930325552e-22,
+      "g_mean_abs": 1.9048054961017624e-16,
+      "g_all_within_epsilon": true,
+      "fraction_within_tau_silhouette": 1.0,
+      "start": {
+        "uv": [
+          4.712389370380289,
+          7.853981633974484
+        ],
+        "state": "ON",
+        "g": -2.2698395941916994e-22
+      },
+      "end": {
+        "uv": [
+          1.5707959367992976,
+          7.853981633974484
+        ],
+        "state": "ON",
+        "g": -2.2698395930325552e-22
+      }
+    },
+    {
+      "point_count": 61,
+      "u_range": [
+        4.712388980384691,
+        6.283185307179586
+      ],
+      "v_range": [
+        6.283185307179587,
+        7.853981633974483
+      ],
+      "v_span_fraction_of_domain": 0.9999999999999994,
+      "u_span_fraction_of_domain": 0.24999999999999986,
+      "pinned_to_v_boundary": false,
+      "g_min": 0.0,
+      "g_max": 3.061616997868383e-16,
+      "g_mean_abs": 1.7425427625359256e-16,
+      "g_all_within_epsilon": true,
+      "fraction_within_tau_silhouette": 1.0,
+      "start": {
+        "uv": [
+          4.712388980384691,
+          6.283185307179587
+        ],
+        "state": "ON",
+        "g": 0.0
+      },
+      "end": {
+        "uv": [
+          6.283185307179586,
+          7.853981633974483
+        ],
+        "state": "ON",
+        "g": 3.061616997868383e-16
+      }
+    }
+  ],
+  "track_a_on_shared_edge": [
+    {
+      "segment_id": 17,
+      "kind": "tangential",
+      "t_start": 0.0,
+      "t_end": 6.283185307179586,
+      "g_a_g_b_at_t_start": [
+        0.0,
+        -5.82016719913287e-16
+      ],
+      "g_a_g_b_at_t_end": [
+        0.0,
+        -5.82016719913287e-16
+      ],
+      "straddles_at_t_start": true,
+      "straddles_at_t_end": true,
+      "start_point": [
+        17.5,
+        0.0,
+        4.5
+      ],
+      "end_point": [
+        17.5,
+        -4.2862637970157365e-15,
+        4.5
+      ]
+    }
+  ],
+  "shared_edge": {
+    "edge_id": 52,
+    "adjacent_face_ids": [
+      17,
+      317
+    ],
+    "curve_type": "Circle",
+    "is_periodic": true,
+    "is_closed": true,
+    "t_first": 0.0,
+    "t_last": 6.283185307179586,
+    "length_mm": 109.95574287564276
+  },
+  "track_b_projected_onto_shared_edge": [
+    {
+      "chain_endpoint": "start",
+      "uv": [
+        0.0,
+        7.853981633974483
+      ],
+      "g": 3.061616997868383e-16,
+      "point_3d": [
+        17.5,
+        0.0,
+        4.5
+      ],
+      "projected_edge_t": 0.0,
+      "distance_to_edge_mm": 0.0
+    },
+    {
+      "chain_endpoint": "end",
+      "uv": [
+        1.570796326794897,
+        6.283185307179587
+      ],
+      "g": 0.0,
+      "point_3d": [
+        0.0,
+        18.0,
+        4.0
+      ],
+      "projected_edge_t": 1.5707963267948966,
+      "distance_to_edge_mm": 0.7071067811865476
+    },
+    {
+      "chain_endpoint": "start",
+      "uv": [
+        4.712389370380289,
+        7.853981633974484
+      ],
+      "g": -2.2698395941916994e-22,
+      "point_3d": [
+        6.824922985764539e-06,
+        -17.499999999998668,
+        4.5
+      ],
+      "projected_edge_t": 4.712389370380289,
+      "distance_to_edge_mm": 0.0
+    },
+    {
+      "chain_endpoint": "end",
+      "uv": [
+        1.5707959367992976,
+        7.853981633974484
+      ],
+      "g": -2.2698395930325552e-22,
+      "point_3d": [
+        6.824922982279241e-06,
+        17.499999999998668,
+        4.5
+      ],
+      "projected_edge_t": 1.5707959367992976,
+      "distance_to_edge_mm": 0.0
+    },
+    {
+      "chain_endpoint": "start",
+      "uv": [
+        4.712388980384691,
+        6.283185307179587
+      ],
+      "g": 0.0,
+      "point_3d": [
+        0.0,
+        -18.0,
+        4.0
+      ],
+      "projected_edge_t": 4.71238898038469,
+      "distance_to_edge_mm": 0.7071067811865476
+    },
+    {
+      "chain_endpoint": "end",
+      "uv": [
+        6.283185307179586,
+        7.853981633974483
+      ],
+      "g": 3.061616997868383e-16,
+      "point_3d": [
+        17.5,
+        0.0,
+        4.5
+      ],
+      "projected_edge_t": 0.0,
+      "distance_to_edge_mm": 0.0
+    }
+  ],
+  "track_a_vs_track_b_on_shared_edge": [
+    {
+      "track_b_chain_endpoint": "start",
+      "track_b_edge_t": 0.0,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_start",
+      "track_a_edge_t": 0.0,
+      "edge_parameter_delta": 0.0,
+      "point_3d_distance_mm": 0.0
+    },
+    {
+      "track_b_chain_endpoint": "start",
+      "track_b_edge_t": 0.0,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_end",
+      "track_a_edge_t": 6.283185307179586,
+      "edge_parameter_delta": -6.283185307179586,
+      "point_3d_distance_mm": 4.2862637970157365e-15
+    },
+    {
+      "track_b_chain_endpoint": "start",
+      "track_b_edge_t": 4.712389370380289,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_start",
+      "track_a_edge_t": 0.0,
+      "edge_parameter_delta": 4.712389370380289,
+      "point_3d_distance_mm": 24.74873251557937
+    },
+    {
+      "track_b_chain_endpoint": "start",
+      "track_b_edge_t": 4.712389370380289,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_end",
+      "track_a_edge_t": 6.283185307179586,
+      "edge_parameter_delta": -1.5707959367992972,
+      "point_3d_distance_mm": 24.748732515579366
+    },
+    {
+      "track_b_chain_endpoint": "end",
+      "track_b_edge_t": 1.5707959367992976,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_start",
+      "track_a_edge_t": 0.0,
+      "edge_parameter_delta": 1.5707959367992976,
+      "point_3d_distance_mm": 24.74873251557937
+    },
+    {
+      "track_b_chain_endpoint": "end",
+      "track_b_edge_t": 1.5707959367992976,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_end",
+      "track_a_edge_t": 6.283185307179586,
+      "edge_parameter_delta": -4.712389370380288,
+      "point_3d_distance_mm": 24.748732515579373
+    },
+    {
+      "track_b_chain_endpoint": "end",
+      "track_b_edge_t": 0.0,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_start",
+      "track_a_edge_t": 0.0,
+      "edge_parameter_delta": 0.0,
+      "point_3d_distance_mm": 0.0
+    },
+    {
+      "track_b_chain_endpoint": "end",
+      "track_b_edge_t": 0.0,
+      "track_a_segment_id": 17,
+      "track_a_edge_t_which": "t_end",
+      "track_a_edge_t": 6.283185307179586,
+      "edge_parameter_delta": -6.283185307179586,
+      "point_3d_distance_mm": 4.2862637970157365e-15
+    }
+  ]
+}

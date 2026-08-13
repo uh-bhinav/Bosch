@@ -228,3 +228,179 @@ def test_undercut_context_metrics_handle_missing_context():
 
     assert metrics["undercut_context_present"] is False
     assert metrics["undercut_context_boolean_feature_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# check_assertions — Cross-cutting X.1 real-geometry assertion flags.
+#
+# Each test below builds a hand-crafted, JSON-safe suite payload (exactly the
+# shape ValidationSuiteResult.to_dict() produces) representing deliberately
+# bad geometry, and asserts the matching flag fails FOR THE RIGHT REASON.
+# This is the gate the roadmap requires: an assertion is worthless if it only
+# ever passes.
+# ---------------------------------------------------------------------------
+
+
+def _suite_payload(parting_line_metrics=None, core_cavity_metrics=None, has_parting_line_step=True):
+    steps = []
+    if has_parting_line_step:
+        steps.append({
+            "name": "parting_line",
+            "status": "passed",
+            "elapsed_s": 0.1,
+            "message": "",
+            "metrics": parting_line_metrics or {},
+        })
+    if core_cavity_metrics is not None:
+        steps.append({
+            "name": "core_cavity_split",
+            "status": "passed",
+            "elapsed_s": 0.1,
+            "message": "",
+            "metrics": core_cavity_metrics,
+        })
+    return {
+        "part_results": [
+            {"filename": "Part1.stp", "path": "/data/parts/Part1.stp", "status": "passed", "steps": steps}
+        ]
+    }
+
+
+_GOOD_PARTING_LINE_METRICS = {
+    "closure_error_mm": 0.001,
+    "closure_guaranteed": True,
+    "graph_cleanup_strategy": "exact",
+    "parting_surface_status": "generated_planar",
+    "silhouette_coverage_ratio": 0.92,
+}
+
+
+def test_check_assertions_passes_clean_payload():
+    from backend.validation.part_validation import check_assertions
+
+    payload = _suite_payload(_GOOD_PARTING_LINE_METRICS, core_cavity_metrics={
+        "solid_split_status": "split_ok",
+        "split_solid_count": 2,
+    })
+
+    failures = check_assertions(
+        payload,
+        assert_parting_line_closed=0.05,
+        assert_core_cavity_solids=2,
+        assert_exact_optimiser=True,
+        assert_parting_surface_generated=True,
+        assert_silhouette_coverage=0.35,
+    )
+
+    assert failures == []
+
+
+def test_assert_parting_line_closed_rejects_a_lying_closure_flag():
+    """Bug A: closure_guaranteed=True must not be trusted over the measured gap."""
+    from backend.validation.part_validation import check_assertions
+
+    bad_metrics = dict(_GOOD_PARTING_LINE_METRICS, closure_error_mm=17.0, closure_guaranteed=True)
+    payload = _suite_payload(bad_metrics)
+
+    failures = check_assertions(payload, assert_parting_line_closed=0.05)
+
+    assert len(failures) == 1
+    assert failures[0].flag == "--assert-parting-line-closed"
+    assert "17.0" in failures[0].message
+
+
+def test_assert_parting_line_closed_rejects_an_honestly_unclosed_wire():
+    from backend.validation.part_validation import check_assertions
+
+    bad_metrics = dict(_GOOD_PARTING_LINE_METRICS, closure_error_mm=2.0, closure_guaranteed=False)
+    payload = _suite_payload(bad_metrics)
+
+    failures = check_assertions(payload, assert_parting_line_closed=0.05)
+
+    assert len(failures) == 1
+    assert "closure_guaranteed=False" in failures[0].message
+
+
+def test_assert_exact_optimiser_rejects_greedy_fallback():
+    """Bug B: silent fallback to the non-backtracking greedy tracer."""
+    from backend.validation.part_validation import check_assertions
+
+    bad_metrics = dict(_GOOD_PARTING_LINE_METRICS, graph_cleanup_strategy="greedy-fallback")
+    payload = _suite_payload(bad_metrics)
+
+    failures = check_assertions(payload, assert_exact_optimiser=True)
+
+    assert len(failures) == 1
+    assert failures[0].flag == "--assert-exact-optimiser"
+    assert "greedy-fallback" in failures[0].message
+
+
+def test_assert_parting_surface_generated_rejects_failed_status():
+    """Bug E: parting surface generation failing must not pass silently."""
+    from backend.validation.part_validation import check_assertions
+
+    bad_metrics = dict(_GOOD_PARTING_LINE_METRICS, parting_surface_status="failed")
+    payload = _suite_payload(bad_metrics)
+
+    failures = check_assertions(payload, assert_parting_surface_generated=True)
+
+    assert len(failures) == 1
+    assert failures[0].flag == "--assert-parting-surface-generated"
+
+
+def test_assert_silhouette_coverage_rejects_a_local_feature_loop():
+    """Bug H: a low coverage ratio means a hole rim/boss was selected, not the main silhouette."""
+    from backend.validation.part_validation import check_assertions
+
+    bad_metrics = dict(_GOOD_PARTING_LINE_METRICS, silhouette_coverage_ratio=0.06)
+    payload = _suite_payload(bad_metrics)
+
+    failures = check_assertions(payload, assert_silhouette_coverage=0.35)
+
+    assert len(failures) == 1
+    assert failures[0].flag == "--assert-silhouette-coverage"
+    assert "0.06" in failures[0].message
+
+
+def test_assert_core_cavity_solids_rejects_a_degenerate_split():
+    """Stage 2 gate: solid_split_status must be split_ok with exactly N solids."""
+    from backend.validation.part_validation import check_assertions
+
+    payload = _suite_payload(_GOOD_PARTING_LINE_METRICS, core_cavity_metrics={
+        "solid_split_status": "failed",
+        "split_solid_count": 0,
+    })
+
+    failures = check_assertions(payload, assert_core_cavity_solids=2)
+
+    assert len(failures) == 1
+    assert failures[0].flag == "--assert-core-cavity-solids"
+
+
+def test_assert_core_cavity_solids_requires_the_step_to_have_run():
+    """A missing step must fail the assertion, never pass it by omission."""
+    from backend.validation.part_validation import check_assertions
+
+    payload = _suite_payload(_GOOD_PARTING_LINE_METRICS, core_cavity_metrics=None)
+
+    failures = check_assertions(payload, assert_core_cavity_solids=2)
+
+    assert len(failures) == 1
+    assert "core_cavity_split" in failures[0].message.lower() or "--core-cavity" in failures[0].message
+
+
+def test_assertions_fail_when_parting_line_step_itself_is_missing():
+    """A skipped/absent parting_line step must fail every parting-line assertion, not skip it."""
+    from backend.validation.part_validation import check_assertions
+
+    payload = _suite_payload(has_parting_line_step=False)
+
+    failures = check_assertions(
+        payload,
+        assert_parting_line_closed=0.05,
+        assert_exact_optimiser=True,
+        assert_parting_surface_generated=True,
+        assert_silhouette_coverage=0.35,
+    )
+
+    assert len(failures) == 4

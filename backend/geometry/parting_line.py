@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Callable, Literal
 
 try:
     import networkx as nx  # type: ignore[import-untyped]
@@ -530,6 +530,25 @@ class PartingLineResult:
     # Milestone 1.8: closure guarantee
     closure_error_mm: float = 0.0
     closure_guaranteed: bool = False
+    #: Number of real B-Rep edges spliced in to close an otherwise-open loop.
+    #: 0 means the wire was already closed (or closure was not achieved).
+    #: Surfaced so an engineer can see the curve was completed through part
+    #: geometry rather than assumed closed.
+    closure_bridge_edge_count: int = 0
+    #: Selected loop's projected bounding-box area divided by the part's
+    #: projected bounding-box area, both in the pull-normal plane.
+    #: A main parting line wraps the outer silhouette, so this should be
+    #: close to 1.0.  A small value means the engine selected a local feature
+    #: loop (a hole rim, a boss) rather than the main parting line — the
+    #: failure mode that Bug H made silently invisible.
+    silhouette_coverage_ratio: float = 0.0
+    #: What component bridging (Milestone 1.7) did:
+    #:   "not_needed"                  – a closed loop was already selected
+    #:   "applied"                     – bridging improved the wire and was kept
+    #:   "discarded_not_an_improvement" – bridging ran but made things worse
+    #:   "unavailable"                 – networkx missing
+    #:   "disabled"                    – caller passed bridge_components=False
+    bridging_status: str = "not_needed"
     # Milestone 1.9: parting surface
     parting_surface: PartingSurfaceResult = field(
         default_factory=lambda: PartingSurfaceResult(status="not_attempted", strategy="none")
@@ -591,6 +610,9 @@ class PartingLineResult:
             "components": [component.to_dict() for component in self.components],
             "closure_error_mm": round(self.closure_error_mm, 6),
             "closure_guaranteed": self.closure_guaranteed,
+            "closure_bridge_edge_count": self.closure_bridge_edge_count,
+            "bridging_status": self.bridging_status,
+            "silhouette_coverage_ratio": round(self.silhouette_coverage_ratio, 4),
             "parting_surface": self.parting_surface.to_dict(),
         }
 
@@ -884,6 +906,252 @@ def _candidate_components(
     return remapped_components, remapped_points
 
 
+def _bridge_via_angular_ring(
+    components: list[PartingLineComponent],
+    component_points: dict[int, list[Vec3]],
+    edges_by_id: dict[int, EdgeData],
+    candidate_by_id: dict[int, PartingLineEdgeCandidate],
+    *,
+    G_all: object,
+    comp_endpoints: dict[int, list[tuple[int, int, int]]],
+    sssp_cache: dict[tuple[int, int, int], tuple[dict, dict]],
+    point_tolerance: float,
+    u_axis: Vec3,
+    v_axis: Vec3,
+    part_extent_area: float,
+    min_component_coverage_for_ring: float = 0.001,
+) -> tuple[list[PartingLineComponent], dict[int, list[Vec3]], list[str]] | None:
+    """
+    Bug H-2 root-cause fix: bridge components into a RING (cycle), not a
+    spanning tree.
+
+    `_bridge_disconnected_components`'s original strategy always merges via
+    union-find (`if _find(ci) == _find(cj): continue` before every merge) —
+    textbook MST construction, which by definition produces a spanning tree
+    over the components: N-1 bridges for N components, zero cycles among
+    them. A tree can never contain a closed loop, so no wire tracer, however
+    exhaustive, can ever find one through it — proven on Part3: an
+    exhaustive 177,032-state search over the tree-bridged graph found none.
+
+    This instead orders components by angle around their collective
+    centroid (in the pull-normal plane) and bridges each to its next
+    angular neighbor, wrapping around — N bridges for N components,
+    explicitly closing the cycle. The wire tracer (which now does a real
+    exact/contracted search, see Bug B) can then search for the best closed
+    sub-loop within that cycle, including skipping some of it if a better
+    closed sub-loop exists — this function only needs to make closure
+    *possible*, not find the optimal loop itself.
+
+    Components whose own individual projected extent is below
+    `min_component_coverage_for_ring` (0.1% of the part's extent by default —
+    deliberately low: real silhouette fragments are often individually small
+    without being local features, and excluding too many turns the ring into
+    disconnected arcs that still can't close, exactly the failure this
+    function exists to avoid) are excluded before ring construction: this
+    targets genuinely degenerate fragments (near-zero-area point pairs), not
+    "small relative to the largest piece." Measured on Part3's real 22
+    components: coverage ranged from 18.6% down to a heavy tail of
+    sub-1% fragments that are still real parts of a fragmented silhouette —
+    only 2 of 22 were truly degenerate (~0%). If the absolute threshold would
+    exclude everything, falls back to 1% of the single largest component's
+    extent, and if that still excludes everything, keeps every component
+    rather than ring nothing.
+
+    Returns None if there is nothing sensible to ring (fewer than 2
+    qualifying components, or every angular link is unreachable) so the
+    caller can fall back to the tree-based strategy.
+    """
+    def component_coverage(comp_id: int) -> float:
+        pts = component_points.get(comp_id, [])
+        if len(pts) < 2 or part_extent_area <= 0.0:
+            return 0.0
+        us = [dot3(p, u_axis) for p in pts]
+        vs = [dot3(p, v_axis) for p in pts]
+        area = (max(us) - min(us)) * (max(vs) - min(vs))
+        return area / part_extent_area
+
+    coverages = {c.component_id: component_coverage(c.component_id) for c in components}
+    largest_coverage = max(coverages.values(), default=0.0)
+    ring_candidates = [
+        c for c in components
+        if coverages[c.component_id] >= min_component_coverage_for_ring
+        or (largest_coverage > 0.0 and coverages[c.component_id] >= 0.01 * largest_coverage)
+    ]
+    if len(ring_candidates) < 2:
+        ring_candidates = [c for c in components if comp_endpoints.get(c.component_id)]
+    if len(ring_candidates) < 2:
+        return None
+
+    def representative_point(comp_id: int) -> Vec3:
+        pts = component_points.get(comp_id, [])
+        n = len(pts)
+        if n == 0:
+            return (0.0, 0.0, 0.0)
+        return (
+            sum(p[0] for p in pts) / n,
+            sum(p[1] for p in pts) / n,
+            sum(p[2] for p in pts) / n,
+        )
+
+    reps = {c.component_id: representative_point(c.component_id) for c in ring_candidates}
+    center_u = sum(dot3(reps[cid], u_axis) for cid in reps) / len(reps)
+    center_v = sum(dot3(reps[cid], v_axis) for cid in reps) / len(reps)
+
+    def angle_of(comp_id: int) -> float:
+        u = dot3(reps[comp_id], u_axis)
+        v = dot3(reps[comp_id], v_axis)
+        return math.atan2(v - center_v, u - center_u)
+
+    ring_order = sorted(ring_candidates, key=lambda c: angle_of(c.component_id))
+    n = len(ring_order)
+
+    candidate_edge_ids = set(candidate_by_id)
+
+    def cheapest_path(
+        comp_i_id: int, comp_j_id: int
+    ) -> tuple[float | None, list[tuple[int, int, int]] | None]:
+        best_cost: float | None = None
+        best_path: list[tuple[int, int, int]] | None = None
+        for ep_i in comp_endpoints.get(comp_i_id, []):
+            dist_from_i, paths_from_i = sssp_cache.get(ep_i, ({}, {}))
+            if not dist_from_i:
+                continue
+            for ep_j in comp_endpoints.get(comp_j_id, []):
+                if ep_i == ep_j:
+                    continue
+                cost = dist_from_i.get(ep_j)
+                if cost is None:
+                    continue
+                if best_cost is None or cost < best_cost:
+                    best_cost = cost
+                    best_path = paths_from_i[ep_j]
+        return best_cost, best_path
+
+    def add_bridge(comp_i_id: int, comp_j_id: int, cost: float, path: list, suffix: str = "") -> None:
+        bridge_eids = [
+            G_all[path[k]][path[k + 1]]["edge_id"]  # type: ignore[index]
+            for k in range(len(path) - 1)
+        ]
+        new_bridge_eids = [e for e in bridge_eids if e not in candidate_edge_ids]
+        ring_bridge_edge_ids.update(bridge_eids)
+        link_messages.append(
+            f"Ring bridge: component {comp_i_id} → {comp_j_id} via "
+            f"{len(new_bridge_eids)} bridge edge(s) (path cost {cost:.3f} mm).{suffix}"
+        )
+
+    # Adaptive ring walk: start at index 0 in angular order and try to link
+    # to the next unvisited node; if it is unreachable (e.g. blocked by an
+    # undercut-face exclusion in G_all), skip it — it joins `dropped` — and
+    # try the next one, continuing all the way around. This guarantees a
+    # fully CLOSED cycle over whatever subset of `ring_candidates` ends up
+    # mutually reachable, instead of a fixed angular-neighbor ring left
+    # permanently broken at any unreachable link (measured on Part3: a fixed
+    # ring left 2 gaps and 2 disconnected open arcs; this walk closes fully).
+    ring_bridge_edge_ids: set[int] = set()
+    link_messages: list[str] = []
+    ringed_component_ids: list[int] = [ring_order[0].component_id]
+    dropped: list[int] = []
+    visited_indices = {0}
+    anchor_idx = 0
+    current_id = ring_order[0].component_id
+
+    while len(visited_indices) < n:
+        next_idx = None
+        for offset in range(1, n + 1):
+            candidate_idx = (anchor_idx + offset) % n
+            if candidate_idx not in visited_indices:
+                next_idx = candidate_idx
+                break
+        if next_idx is None:
+            break
+        next_id = ring_order[next_idx].component_id
+        visited_indices.add(next_idx)
+        cost, path = cheapest_path(current_id, next_id)
+        if path is None:
+            dropped.append(next_id)
+            continue
+        add_bridge(current_id, next_id, cost, path)
+        ringed_component_ids.append(next_id)
+        anchor_idx = next_idx
+        current_id = next_id
+
+    successful_links = len(link_messages)
+    if successful_links == 0:
+        return None
+
+    # Close the cycle: connect the last successfully-attached component back
+    # to the first one.
+    start_id = ring_order[0].component_id
+    ring_closed = False
+    if current_id == start_id:
+        ring_closed = True  # only possible if n == 1, already excluded above
+    else:
+        cost, path = cheapest_path(current_id, start_id)
+        if path is not None:
+            add_bridge(current_id, start_id, cost, path, suffix=" (closes the ring)")
+            successful_links += 1
+            ring_closed = True
+        else:
+            link_messages.append(
+                f"Ring closing bridge {current_id} → {start_id} unreachable; ring could not fully close."
+            )
+
+    kept_candidate_edges: set[int] = set()
+    for cid in ringed_component_ids:
+        comp = next((c for c in components if c.component_id == cid), None)
+        if comp is not None:
+            kept_candidate_edges.update(comp.edge_ids)
+    all_edge_ids = sorted(kept_candidate_edges | ring_bridge_edge_ids)
+
+    total_length = sum(edges_by_id[eid].length for eid in all_edge_ids if eid in edges_by_id)
+    all_pts: dict[tuple[int, int, int], Vec3] = {}
+    for eid in all_edge_ids:
+        edge = edges_by_id.get(eid)
+        if edge is None:
+            continue
+        for pt in (edge.start_vertex, edge.end_vertex):
+            if pt is not None:
+                all_pts.setdefault(_point_key(pt, point_tolerance), pt)
+
+    kind_counts: dict[str, int] = {}
+    for eid in all_edge_ids:
+        cand = candidate_by_id.get(eid)
+        kind = cand.kind if cand is not None else "bridge"
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+    merged_component = PartingLineComponent(
+        component_id=0,
+        edge_ids=all_edge_ids,
+        total_length_mm=total_length,
+        candidate_kinds=kind_counts,
+        point_count=len(all_pts),
+        noise=_component_noise(kind_counts),
+    )
+
+    summary = (
+        f"Ring-bridged {len(ringed_component_ids)} of {len(components)} components into 1 "
+        f"via {successful_links} ring link(s) following real B-Rep geometry — "
+        f"a {'closed cycle' if ring_closed else 'broken cycle'}, not a spanning tree."
+    )
+    if dropped:
+        summary += (
+            f" {len(dropped)} component(s) dropped from the ring as unreachable from "
+            "their angular neighbor (likely blocked by undercut exclusion or a genuine "
+            "topological gap)."
+        )
+    pre_filtered_count = len(components) - len(ring_candidates)
+    if pre_filtered_count:
+        summary += (
+            f" {pre_filtered_count} component(s) excluded before ring construction as "
+            "probable local features (near-degenerate projected extent)."
+        )
+    if not ring_closed:
+        summary += " The ring did not fully close."
+
+    warnings = [summary, *link_messages]
+    return [merged_component], {0: list(all_pts.values())}, warnings
+
+
 def _bridge_disconnected_components(
     components: list[PartingLineComponent],
     component_points: dict[int, list[Vec3]],
@@ -894,6 +1162,9 @@ def _bridge_disconnected_components(
     undercut_face_ids: set[int],
     bridge_penalty_factor: float = 4.0,
     boundary_bridge_factor: float = 0.6,
+    part_extent_area: float = 0.0,
+    projection_basis: tuple[Vec3, Vec3] | None = None,
+    min_coverage_ratio: float = 0.0,
 ) -> tuple[list[PartingLineComponent], dict[int, list[Vec3]], list[str]]:
     """
     Bridge disconnected silhouette components through real B-Rep edges (Milestone 1.7).
@@ -908,6 +1179,27 @@ def _bridge_disconnected_components(
       boundary edge       → boundary_bridge_factor × length   (often where PL should run)
       non-candidate manif → bridge_penalty_factor × length
       undercut-overlapping→ +inf (never crossed)
+
+    Bug H-2 (root cause fixed): when `part_extent_area`/`projection_basis`
+    are supplied, this first tries `_bridge_via_angular_ring` — bridging
+    components into a CYCLE (ordered by angle around their collective
+    centroid) rather than the tree the strategy below always produces. A
+    spanning tree (guaranteed by this function's union-find merge, see
+    below) can never contain a closed loop; a ring can. Ring bridging also
+    excludes probable local features (small components far from the
+    silhouette) before construction. Only when ring bridging is inapplicable
+    (no projection context) or fails entirely (nothing reachable) does this
+    fall through to the strategy below.
+
+    Fallback strategy (tree-based, original Milestone 1.7): greedily add the
+    globally cheapest bridge between any two not-yet-merged components each
+    round, via union-find, until nothing more is reachable. When
+    `min_coverage_ratio` is also supplied, tracks the projected-extent
+    coverage of the tree it is growing and stops as soon as that tree
+    crosses it — leaving remaining components (probably local features)
+    unmerged — rather than merging everything indiscriminately. Without
+    projection context (`part_extent_area`/`projection_basis` both falsy),
+    merges everything reachable with no early stop.
 
     Returns (merged_components, merged_points, warning_list). If bridging is not
     possible (networkx unavailable, unreachable components, < 2 components),
@@ -955,6 +1247,48 @@ def _bridge_disconnected_components(
             if _point_key(p, point_tolerance) in G_all  # type: ignore[operator]
         ]
 
+    # Precompute one single-source Dijkstra per unique component endpoint
+    # (Bug D fix). `G_all` never changes across bridging rounds — only which
+    # components are already merged does — so the shortest-path tree from
+    # each endpoint is reusable for every round. The old code called
+    # `nx.shortest_path(source, target)` freshly for every (ep_i, ep_j) pair
+    # on every round: O(rounds x pairs x |ep_i| x |ep_j|) full Dijkstra runs.
+    # On Part3 (22 components) that measured at >373,000 Dijkstra calls and
+    # did not finish in 10+ minutes. Running Dijkstra once per source and
+    # reusing the resulting distance/path maps as O(1) lookups collapses this
+    # to O(total endpoints) Dijkstra runs plus O(rounds x pairs) dict lookups.
+    all_endpoint_keys = sorted({ep for eps in comp_endpoints.values() for ep in eps})
+    sssp_cache: dict[tuple[int, int, int], tuple[dict, dict]] = {}
+    for ep in all_endpoint_keys:
+        try:
+            dist, paths = nx.single_source_dijkstra(G_all, ep, weight="cost")  # type: ignore[union-attr]
+        except (nx.NodeNotFound, nx.exception.NetworkXError):  # type: ignore[union-attr]
+            dist, paths = {}, {}
+        sssp_cache[ep] = (dist, paths)
+
+    # Bug H-2 root-cause fix: try ring bridging (a cycle over components)
+    # before falling back to the tree-based greedy strategy below. A tree
+    # (the old strategy's guaranteed output — see its union-find guard) can
+    # never contain a closed loop; a ring can. Only engages when the caller
+    # supplied projection context; otherwise skip straight to the fallback.
+    if part_extent_area > 0.0 and projection_basis is not None:
+        ring_u_axis, ring_v_axis = projection_basis
+        ring_result = _bridge_via_angular_ring(
+            components,
+            component_points,
+            edges_by_id,
+            candidate_by_id,
+            G_all=G_all,
+            comp_endpoints=comp_endpoints,
+            sssp_cache=sssp_cache,
+            point_tolerance=point_tolerance,
+            u_axis=ring_u_axis,
+            v_axis=ring_v_axis,
+            part_extent_area=part_extent_area,
+        )
+        if ring_result is not None:
+            return ring_result
+
     # Union-find to track which components have been merged.
     parent: dict[int, int] = {comp.component_id: comp.component_id for comp in components}
 
@@ -964,10 +1298,39 @@ def _bridge_disconnected_components(
             x = parent[x]
         return x
 
+    track_coverage = part_extent_area > 0.0 and projection_basis is not None and min_coverage_ratio > 0.0
+    u_axis, v_axis = projection_basis if projection_basis is not None else ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    # Per-CURRENT-root edge-id sets, looked up via `_find()` so they are
+    # never read through a stale pre-merge id (see `comp_endpoints`'s
+    # dual-write pattern above, which this deliberately avoids).
+    tree_edge_ids: dict[int, set[int]] = {
+        comp.component_id: set(comp.edge_ids) for comp in components
+    }
+
+    def _tree_coverage(edge_ids: set[int]) -> float:
+        pts: list[Vec3] = []
+        for eid in edge_ids:
+            edge = edges_by_id.get(eid)
+            if edge is None:
+                continue
+            for p in (edge.start_vertex, edge.end_vertex):
+                if p is not None:
+                    pts.append(p)
+        if len(pts) < 3:
+            return 0.0
+        us = [dot3(p, u_axis) for p in pts]
+        vs = [dot3(p, v_axis) for p in pts]
+        return ((max(us) - min(us)) * (max(vs) - min(vs))) / part_extent_area
+
+    best_tree_edge_ids: set[int] | None = None
+    best_tree_coverage = -1.0
+
     # Greedily add cheapest bridges until all reachable components are connected.
     bridge_edge_ids: list[int] = []
     merged_edge_ids: set[int] = set(candidate_edge_ids)
     max_rounds = len(components) - 1
+    stopped_early = False
+    round_bridge_messages: list[tuple[set[int], str]] = []
 
     for _ in range(max_rounds):
         best: tuple[float, list[int], int, int] | None = None
@@ -982,25 +1345,22 @@ def _bridge_disconnected_components(
                     continue
 
                 for ep_i in eps_i:
+                    dist_from_i, paths_from_i = sssp_cache.get(ep_i, ({}, {}))
+                    if not dist_from_i:
+                        continue
                     for ep_j in eps_j:
                         if ep_i == ep_j:
                             continue
-                        try:
-                            path = nx.shortest_path(  # type: ignore[union-attr]
-                                G_all, source=ep_i, target=ep_j, weight="cost"
-                            )
-                            path_cost = sum(
-                                G_all[path[k]][path[k + 1]]["cost"]  # type: ignore[index]
-                                for k in range(len(path) - 1)
-                            )
+                        path_cost = dist_from_i.get(ep_j)
+                        if path_cost is None:
+                            continue
+                        if best is None or path_cost < best[0]:
+                            path = paths_from_i[ep_j]
                             bridge_eids = [
                                 G_all[path[k]][path[k + 1]]["edge_id"]  # type: ignore[index]
                                 for k in range(len(path) - 1)
                             ]
-                            if best is None or path_cost < best[0]:
-                                best = (path_cost, bridge_eids, ci.component_id, cj.component_id)
-                        except (nx.NetworkXNoPath, nx.NodeNotFound, nx.exception.NetworkXError):  # type: ignore[union-attr]
-                            continue
+                            best = (path_cost, bridge_eids, ci.component_id, cj.component_id)
 
         if best is None:
             break
@@ -1011,7 +1371,9 @@ def _bridge_disconnected_components(
         merged_edge_ids.update(bridge_eids)
 
         # Merge the two components' endpoint sets under one root.
-        parent[_find(ci_id)] = _find(cj_id)
+        root_before_i = _find(ci_id)
+        root_before_j = _find(cj_id)
+        parent[root_before_i] = root_before_j
         root = _find(cj_id)
         merged_eps = list(set(
             comp_endpoints.get(ci_id, []) + comp_endpoints.get(cj_id, [])
@@ -1020,16 +1382,42 @@ def _bridge_disconnected_components(
         # Also update the ci_id key so future lookups find the same set.
         comp_endpoints[ci_id] = merged_eps
 
-        warnings.append(
+        round_bridge_messages.append((
+            set(new_bridge_eids),
             f"Bridge: connected component {ci_id} → {cj_id} via "
-            f"{len(new_bridge_eids)} bridge edge(s) (path cost {best[0]:.3f} mm)."
-        )
+            f"{len(new_bridge_eids)} bridge edge(s) (path cost {best[0]:.3f} mm).",
+        ))
+
+        if track_coverage:
+            merged_tree_edges = (
+                tree_edge_ids.get(root_before_i, set())
+                | tree_edge_ids.get(root_before_j, set())
+                | set(new_bridge_eids)
+            )
+            tree_edge_ids[root] = merged_tree_edges
+            coverage = _tree_coverage(merged_tree_edges)
+            if coverage > best_tree_coverage:
+                best_tree_coverage = coverage
+                best_tree_edge_ids = set(merged_tree_edges)
+            if coverage >= min_coverage_ratio:
+                warnings.append(
+                    f"Bridging stopped early: the growing loop reached "
+                    f"{coverage * 100:.1f}% of the part's projected extent, "
+                    "which is enough to be the main parting line. Remaining "
+                    "disconnected components were left unmerged as probable "
+                    "local features rather than folded indiscriminately "
+                    "into one blob."
+                )
+                stopped_early = True
+                break
 
     if not bridge_edge_ids:
         return components, component_points, warnings
 
-    # Assemble a single merged component from all candidate + bridge edges.
-    all_edge_ids = sorted(merged_edge_ids)
+    # Assemble the merged component. If coverage tracking picked a specific
+    # (possibly partial) tree, use exactly that edge set — never the
+    # everything-merged fallback — so unrelated local features stay separate.
+    all_edge_ids = sorted(best_tree_edge_ids) if track_coverage and best_tree_edge_ids else sorted(merged_edge_ids)
     total_length = sum(
         edges_by_id[eid].length for eid in all_edge_ids if eid in edges_by_id
     )
@@ -1056,11 +1444,27 @@ def _bridge_disconnected_components(
         point_count=len(all_pts),
         noise=_component_noise(kind_counts),
     )
-    warnings.insert(
-        0,
-        f"Bridged {len(components)} disconnected components into 1 via "
-        f"{len(bridge_edge_ids)} bridge edge(s) following real B-Rep geometry.",
+    kept_edge_set = set(all_edge_ids)
+    folded_component_count = sum(
+        1 for comp in components if set(comp.edge_ids) & kept_edge_set
     )
+    final_bridge_edge_count = len(kept_edge_set - candidate_edge_ids)
+    left_unmerged = len(components) - folded_component_count
+    summary = (
+        f"Bridged {folded_component_count} disconnected components into 1 via "
+        f"{final_bridge_edge_count} bridge edge(s) following real B-Rep geometry."
+    )
+    if stopped_early and left_unmerged > 0:
+        summary += f" {left_unmerged} component(s) left unmerged (coverage target reached)."
+    # Only report the per-round bridge messages that actually contributed to
+    # the tree we kept — when coverage tracking discarded other in-progress
+    # trees, their bridge messages would otherwise be noise.
+    kept_round_messages = [
+        message for edge_ids, message in round_bridge_messages
+        if not track_coverage or (edge_ids & kept_edge_set)
+    ]
+    warnings.extend(kept_round_messages)
+    warnings.insert(0, summary)
     return [merged_component], {0: list(all_pts.values())}, warnings
 
 
@@ -1096,7 +1500,17 @@ def _sample_closed_edge_points(edge: EdgeData, *, sample_count: int = 32) -> lis
 
     try:
         from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+        from OCC.Core.TopoDS import TopoDS_Edge
     except ImportError:
+        return []
+
+    if not isinstance(edge.occ_edge, TopoDS_Edge):
+        # BUG G: a mock/invalid object as `occ_edge` (unit tests without
+        # real OCC data) must never reach the SWIG-wrapped C++ call below.
+        # `BRepAdaptor_Curve(mock)` can hang indefinitely at the native
+        # layer — no Python try/except can catch or interrupt a hang inside
+        # the C++ side of a SWIG binding. This isinstance check is a normal,
+        # fast Python-level check that fails cleanly before ever reaching it.
         return []
 
     try:
@@ -1127,15 +1541,52 @@ def _wire_quality(
     branch_point_count: int,
     gap_count: int,
 ) -> str:
+    """
+    Bug H-3: `skipped_edge_ids` describes data-quality issues in the SOURCE
+    component (edges whose endpoints could not be parsed at all) — it is
+    not evidence that THIS wire has a problem. On a large bridged
+    super-component (e.g. Part3's 269-edge ring-bridged result), a handful
+    of unrelated unparseable edges elsewhere in the component used to force
+    "partial" even when the actual selected wire was a verified, genuinely
+    closed loop — capping its score at 0.25 regardless of how good the find
+    was. `skipped_edge_ids` still degrades the numeric score (see
+    `_assess_wire_quality`'s `missing_endpoints` penalty) — it just no
+    longer overrides an otherwise-earned "closed_loop"/"open_chain" label.
+    `gap_count` is different: it means the walk building THIS wire itself
+    had to jump, which is a real property of this wire, not the component.
+    """
     if not ordered_edge_ids:
         return "empty"
-    if skipped_edge_ids or gap_count:
+    if gap_count:
         return "partial"
     if branch_point_count:
         return "branched"
     if is_closed:
         return "closed_loop"
     return "open_chain"
+
+
+def _part_projected_bbox_area(part: PartGeometry, pull_direction: Vec3) -> float:
+    """
+    Area of the part's bounding box projected into the pull-normal plane.
+
+    Used as the reference for `silhouette_coverage_ratio`: a main parting line
+    should wrap the part's outer silhouette, so its own projected extent
+    should be a large fraction of this.
+    """
+    bbox = part.bounding_box
+    if bbox is None:
+        return 0.0
+    u_axis, v_axis = _projection_basis(pull_direction)
+    corners = [
+        (x, y, z)
+        for x in (bbox.xmin, bbox.xmax)
+        for y in (bbox.ymin, bbox.ymax)
+        for z in (bbox.zmin, bbox.zmax)
+    ]
+    us = [dot3(c, u_axis) for c in corners]
+    vs = [dot3(c, v_axis) for c in corners]
+    return max(0.0, (max(us) - min(us)) * (max(vs) - min(vs)))
 
 
 def _projection_basis(pull_direction: Vec3) -> tuple[Vec3, Vec3]:
@@ -1634,9 +2085,19 @@ def _build_ordered_wire(
         keys = _edge_endpoint_keys(edge, point_tolerance)
         is_single_edge_component = len(component.edge_ids) == 1
         same_endpoint_key = keys is not None and keys[0] == keys[1]
-        if keys is None or (same_endpoint_key and is_single_edge_component):
+        if is_single_edge_component and (keys is None or same_endpoint_key):
+            # The ONLY edge in this component has no distinct start/end (a
+            # full closed curve, e.g. a circle) — sampling its own curve
+            # geometry is the only way to get a wire out of it at all.
+            # `_sample_closed_edge_points` makes real OCC calls, so it must
+            # only ever be invoked for this genuine single-edge case — never
+            # for an unparseable edge sitting inside a larger multi-edge
+            # component (see the plain `keys is None` skip below), where
+            # there is no "whole closed wire" to sample into and calling it
+            # anyway is both pointless and (on a mocked/invalid OCC object)
+            # can hang indefinitely.
             sampled_points = _sample_closed_edge_points(edge)
-            if sampled_points and is_single_edge_component:
+            if sampled_points:
                 sampled_closed_wire = PartingLineWire(
                     component_id=component.component_id,
                     ordered_edge_ids=[edge_id],
@@ -1653,9 +2114,8 @@ def _build_ordered_wire(
                     ),
                 )
                 continue
-            if same_endpoint_key:
-                skipped_edge_ids.append(edge_id)
-                continue
+            skipped_edge_ids.append(edge_id)
+            continue
         if keys is None:
             skipped_edge_ids.append(edge_id)
             continue
@@ -1741,6 +2201,64 @@ def _build_ordered_wire(
         and gap_count == 0
         and not unused
     )
+
+    if not is_closed and len(endpoint_keys_by_edge) >= 3:
+        # Bug B fix: the greedy walk above never backtracks, so a branch
+        # point can strand it without ever finding a closed loop that a
+        # smarter search would have found through the same edges (this is
+        # exactly what let a bridged 259-edge super-component score 0.00 and
+        # get discarded on Part3 — see BUG H-2). Try the shared exact/
+        # contracted search as a second pass, purely additive: only replace
+        # the greedy result when the search finds a genuine closed loop the
+        # greedy walk missed; otherwise keep the greedy result unchanged.
+        def _search_edge_weight(edge_id: int) -> tuple[float, float, int]:
+            return edge_rank(edge_id)
+
+        def _search_edge_scalar_weight(edge_id: int) -> float:
+            score, length, _ = edge_rank(edge_id)
+            return max(0.01, score) * max(1e-6, length)
+
+        def _search_point_to_edges_of(key: tuple[int, int, int]) -> set[int]:
+            return point_to_edges.get(key, set())
+
+        search_all_nodes = list(point_coords)
+        search_open_points = [
+            key for key in search_all_nodes if len(point_to_edges.get(key, set())) == 1
+        ]
+        search_start_points = sorted(
+            search_open_points or search_all_nodes,
+            key=lambda key: start_rank(key, set(endpoint_keys_by_edge)),
+            reverse=True,
+        )
+
+        searched_edges, searched_keys, searched_is_closed, _state_count, _strategy, _hit_limit = (
+            _best_path_with_contraction_fallback(
+                endpoint_keys_by_edge,
+                edge_weight=_search_edge_weight,
+                edge_scalar_weight=_search_edge_scalar_weight,
+                point_to_edges_of=_search_point_to_edges_of,
+                start_points=search_start_points,
+                all_nodes=search_all_nodes,
+            )
+        )
+        if searched_is_closed and searched_edges:
+            ordered_edge_ids = searched_edges
+            ordered_point_keys = searched_keys
+            is_closed = True
+            gap_count = 0
+            # Bug H-3: `branch_point_count` computed further below from the
+            # WHOLE component's structure describes the messy graph this
+            # loop was searched OUT OF, not the loop itself — a search-
+            # verified closed simple loop is, by construction, branch-free
+            # within its own edges (it never reuses a point except to close
+            # back to the start). Recompute scoped to just the selected
+            # subset so a clean find isn't penalised for the haystack.
+            selected_point_degree: dict[tuple[int, int, int], int] = {}
+            for selected_edge_id in searched_edges:
+                for endpoint_key in endpoint_keys_by_edge.get(selected_edge_id, ()):
+                    selected_point_degree[endpoint_key] = selected_point_degree.get(endpoint_key, 0) + 1
+            branch_point_count = sum(1 for degree in selected_point_degree.values() if degree > 2)
+
     if not is_closed and ordered_edge_ids:
         reversed_edge_ids = list(reversed(ordered_edge_ids))
         if tuple(reversed_edge_ids) < tuple(ordered_edge_ids):
@@ -1800,12 +2318,36 @@ def _wire_selection_key(
         "empty": -1.0,
     }.get(wire.projection.quality, 0.0)
 
+    # Ordering follows Nee et al. (1998) §5, which selects the parting loop by:
+    #   1. largest projected area  ("maximum contour rule")
+    #   2. fewest sharp turns / highest flatness
+    #   3. avoidance of critical regions
+    #
+    # Two deliberate adjustments to that order:
+    #
+    # * `projection_rank` stays first as a VALIDITY GATE, not a preference — a
+    #   wire that does not project to a usable contour cannot be a parting
+    #   line at any area.
+    # * Undercut conflict (criterion 3) is placed ABOVE area, because a loop
+    #   that runs through an undercut is not manufacturable however large it
+    #   is. This is asserted by
+    #   `test_undercut_conflict_penalty_prefers_clean_parting_loop`.
+    #
+    # Projected area then ranks ABOVE wire quality. It previously sat 5th,
+    # behind `quality_assessment.score` and `quality_rank`, which inverted the
+    # paper: a small tidy loop outranked the true main silhouette. Measured on
+    # the real parts, that picked a loop covering 27.6% of Part1's projected
+    # extent and just 1.0% of Part3's (a hole rim, not a parting line), while
+    # every reported metric read "ready / high quality". Quality is a
+    # tiebreaker between contours of comparable size, not a reason to prefer a
+    # small one — a branched-but-dominant contour is handed to the graph
+    # refinement stage, which exists precisely to resolve branching.
     return (
-        projection_rank,
-        wire.quality_assessment.score,
-        -wire.undercut_conflict.conflict_score,
+        projection_rank,                              # validity gate
+        -wire.undercut_conflict.conflict_score,       # Nee 3: avoid critical regions
+        wire.projection.abs_area_mm2,                 # Nee 1: MAXIMUM CONTOUR RULE
+        wire.quality_assessment.score,                # Nee 2: flatness / cleanliness
         quality_rank,
-        wire.projection.abs_area_mm2,
         wire.projection.bbox_area_mm2,
         float(silhouette_count),
         total_length,
@@ -2074,6 +2616,490 @@ def _chaikin_smooth(points: list[Vec3], *, is_closed: bool, iterations: int) -> 
     return smoothed
 
 
+def _search_best_closed_or_open_path(
+    endpoint_keys_by_edge: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]],
+    *,
+    edge_weight: Callable[[int], tuple[float, float, int]],
+    edge_scalar_weight: Callable[[int], float],
+    point_to_edges_of: Callable[[tuple[int, int, int]], set[int]],
+    start_points: list[tuple[int, int, int]],
+    search_edge_limit: int,
+    max_search_states: int,
+    min_closing_edges: int = 3,
+) -> tuple[list[int], list[tuple[int, int, int]], bool, int]:
+    """
+    Exhaustive-but-bounded search for the best weighted closed (preferred) or
+    open trail through a graph of "edges" identified by integer id.
+
+    `min_closing_edges` is the fewest edges a path may use before it is
+    allowed to count as closed (default 3, matching the original raw B-Rep
+    edge search — a valid geometric loop needs at least a triangle). Callers
+    searching a contracted hyper-edge graph pass 1, since a single hyper-edge
+    can already represent a legitimate large ring of many raw edges.
+
+    This is the exact search body Milestone 1.6 always claimed to have
+    replaced with a real graph algorithm — extracted so it can run over
+    either raw B-Rep edges (small components) or a topologically contracted
+    graph (Bug B fix, see `_contract_degree2_chains`) without duplicating the
+    DFS/record-path logic for each.
+
+    Returns (best_path_edges, best_path_keys, best_is_closed, state_count).
+    Empty `best_path_edges` means the search found nothing (caller decides
+    the fallback).
+    """
+    best_path_edges: list[int] = []
+    best_path_keys: list[tuple[int, int, int]] = []
+    best_is_closed = False
+    best_key: tuple[float, int, int, int, int] | None = None
+    state_count = 0
+
+    if len(endpoint_keys_by_edge) > search_edge_limit or not endpoint_keys_by_edge:
+        return best_path_edges, best_path_keys, best_is_closed, state_count
+
+    def record_path(
+        path_edges: list[int],
+        path_keys: list[tuple[int, int, int]],
+        total_weight: float,
+        is_closed: bool,
+    ) -> None:
+        nonlocal best_path_edges, best_path_keys, best_is_closed, best_key
+        if not path_edges:
+            return
+        candidate_key = (
+            round(total_weight, 9),
+            len(path_edges),
+            1 if is_closed else 0,
+            -sum(path_edges),
+            -path_edges[0],
+        )
+        if best_key is None or candidate_key > best_key:
+            best_key = candidate_key
+            best_path_edges = list(path_edges)
+            best_path_keys = list(path_keys)
+            best_is_closed = is_closed
+
+    def dfs(
+        *,
+        start_key: tuple[int, int, int],
+        current_key: tuple[int, int, int],
+        used_edges: set[int],
+        path_edges: list[int],
+        path_keys: list[tuple[int, int, int]],
+        total_weight: float,
+    ) -> None:
+        nonlocal state_count
+        state_count += 1
+        if state_count > max_search_states:
+            return
+
+        if path_edges:
+            record_path(
+                path_edges,
+                path_keys,
+                total_weight,
+                is_closed=len(path_keys) > min_closing_edges - 1 and path_keys[-1] == start_key,
+            )
+
+        available = sorted(
+            [
+                edge_id
+                for edge_id in point_to_edges_of(current_key)
+                if edge_id not in used_edges
+            ],
+            key=edge_weight,
+            reverse=True,
+        )
+        for edge_id in available:
+            start_endpoint, end_endpoint = endpoint_keys_by_edge[edge_id]
+            next_key = end_endpoint if current_key == start_endpoint else start_endpoint
+            next_edges = path_edges + [edge_id]
+            next_keys = path_keys + [next_key]
+            next_weight = total_weight + edge_scalar_weight(edge_id)
+            closes_loop = next_key == start_key and len(next_edges) >= min_closing_edges
+            record_path(next_edges, next_keys, next_weight, is_closed=closes_loop)
+            if closes_loop:
+                continue
+            dfs(
+                start_key=start_key,
+                current_key=next_key,
+                used_edges=used_edges | {edge_id},
+                path_edges=next_edges,
+                path_keys=next_keys,
+                total_weight=next_weight,
+            )
+
+    for start_key in start_points:
+        if state_count > max_search_states:
+            break
+        dfs(
+            start_key=start_key,
+            current_key=start_key,
+            used_edges=set(),
+            path_edges=[],
+            path_keys=[start_key],
+            total_weight=0.0,
+        )
+
+    return best_path_edges, best_path_keys, best_is_closed, state_count
+
+
+def _contract_degree2_chains(
+    endpoint_keys_by_edge: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]],
+    point_to_edges_of: Callable[[tuple[int, int, int]], set[int]],
+    all_nodes: list[tuple[int, int, int]],
+) -> list[dict]:
+    """
+    Bug B fix: collapse maximal chains of degree-2 nodes into single
+    "hyper-edges" so the best-loop search scales with the number of real
+    branch points, not the number of raw B-Rep edges.
+
+    A candidate-edge graph traced from real geometry is mostly a simple
+    curve with occasional branches — measured on Part3's 254-edge merged
+    bridging result, only 36 of 236 nodes were actual junctions (degree != 2);
+    the other 200 were plain interior points of a chain with no real choice
+    to make.  The exhaustive search only needs to reason about the 36
+    junctions, not the 254 edges between them.
+
+    Self-loop hyper-edges (a chain that leaves and returns to the SAME
+    junction without touching any other junction) are kept, not dropped.
+    They look like dead-end spurs (a small hole rim hanging off one point of
+    the main silhouette) but are NOT always that: a genuine closed loop can
+    attach to the rest of the graph at only a single junction, in which case
+    it self-loops there by construction — dropping it would silently discard
+    the answer. Measured directly: on a real ring-bridged Part3 component,
+    `nx.find_cycle` found a genuine 15-edge cycle that an earlier version of
+    this function (which dropped self-loops) caused the exact search to miss
+    entirely, despite running to full completion. Keeping every hyper-edge
+    guarantees the search sees the complete graph topology; avoiding
+    detours into genuinely irrelevant small features is handled upstream
+    (per-component filtering in `_bridge_via_angular_ring`) and by the
+    search's own preference for higher-scoring paths, not by removing edges
+    before the search can even see them.
+
+    Returns a list of dicts: {a, b, edge_chain (raw edge ids, a->b order),
+    point_chain (raw point keys, a->b order, inclusive)}.
+    """
+    degrees = {node: len(point_to_edges_of(node)) for node in all_nodes}
+    junctions = {node for node, degree in degrees.items() if degree != 2}
+
+    hyper_edges: list[dict] = []
+    visited_edges: set[int] = set()
+
+    def walk_chain(start_node: tuple[int, int, int], first_edge_id: int) -> dict:
+        chain_edges = [first_edge_id]
+        visited_edges.add(first_edge_id)
+        s_key, e_key = endpoint_keys_by_edge[first_edge_id]
+        current_node = e_key if s_key == start_node else s_key
+        point_chain = [start_node, current_node]
+        previous_edge_id = first_edge_id
+        max_chain_length = len(endpoint_keys_by_edge) + 1
+        # Stop at a real junction OR back at our own anchor — the latter is
+        # required when `junctions` is empty (the whole component is one
+        # simple ring with no branch points at all): `current_node not in
+        # junctions` would otherwise never become false and this would loop
+        # forever re-walking the same ring. `max_chain_length` is a hard
+        # backstop against any other unforeseen non-termination.
+        while current_node not in junctions and current_node != start_node:
+            if len(chain_edges) > max_chain_length:
+                break
+            next_candidates = point_to_edges_of(current_node) - {previous_edge_id}
+            if not next_candidates:
+                break  # dead end inside what should be a degree-2 run (defensive)
+            next_edge_id = next(iter(next_candidates))
+            if next_edge_id in visited_edges:
+                break  # defensive: would otherwise re-walk an already-used edge
+            visited_edges.add(next_edge_id)
+            chain_edges.append(next_edge_id)
+            ns_key, ne_key = endpoint_keys_by_edge[next_edge_id]
+            current_node = ne_key if ns_key == current_node else ns_key
+            point_chain.append(current_node)
+            previous_edge_id = next_edge_id
+        return {"a": start_node, "b": current_node, "edge_chain": chain_edges, "point_chain": point_chain}
+
+    for start_node in sorted(junctions):
+        for first_edge_id in sorted(point_to_edges_of(start_node)):
+            if first_edge_id in visited_edges:
+                continue
+            hyper_edges.append(walk_chain(start_node, first_edge_id))
+
+    # Leftover edges belong to junction-free simple loops entirely detached
+    # from every junction found above (only possible if the WHOLE component
+    # has no junctions at all — handled by the caller before this runs — or
+    # a disjoint sub-loop slipped through; anchor arbitrarily and include it).
+    remaining_starts = {
+        endpoint_keys_by_edge[eid][0]
+        for eid in endpoint_keys_by_edge
+        if eid not in visited_edges
+    }
+    for start_node in sorted(remaining_starts):
+        for first_edge_id in sorted(point_to_edges_of(start_node)):
+            if first_edge_id in visited_edges:
+                continue
+            hyper_edges.append(walk_chain(start_node, first_edge_id))
+
+    return hyper_edges
+
+
+def _find_any_cycle_via_networkx(
+    endpoint_keys_by_edge: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]],
+    edge_scalar_weight: Callable[[int], float] | None = None,
+) -> tuple[list[int], list[tuple[int, int, int]]] | None:
+    """
+    Last-resort guarantee: the exhaustive best-weighted-path search solves a
+    near-NP-hard problem (optimal weighted closed trail) and can exhaust its
+    state budget on a large graph without ever resolving whether a closed
+    loop exists at all. `nx.find_cycle`/`nx.cycle_basis` answer that in
+    polynomial time. Measured directly on a real ring-bridged Part3
+    component: the exhaustive search hit its 3,000,000-state budget
+    inconclusively while these found genuine cycles in under a second.
+
+    `nx.find_cycle` alone returns whichever cycle its internal DFS happens
+    to stumble on first — on Part3 that was a real but small 15-of-269-edge
+    cycle, too small to beat the alternative it was being compared against.
+    When `edge_scalar_weight` is supplied, this instead scores every cycle
+    in `nx.cycle_basis` (a polynomial-time, near-instant enumeration of
+    independent cycles — not exhaustive of every possible cycle, but a much
+    richer candidate set than "the first one found") and returns the
+    highest-scoring one. Falls back to plain `nx.find_cycle` if the basis is
+    empty or no weight function is given.
+
+    Still not guaranteed optimal — just a much better-than-arbitrary correct
+    answer, fast. Whether it's actually USED is still gated by the caller's
+    normal accept/reject comparison against the alternative (e.g. the
+    un-bridged selection), so this can only ever improve outcomes, never
+    force a worse result to be accepted. Returns None if networkx is
+    unavailable or no cycle exists.
+    """
+    if not _NX_AVAILABLE or not endpoint_keys_by_edge:
+        return None
+
+    pair_to_edges: dict[frozenset, list[int]] = {}
+    for eid, (sk, ek) in endpoint_keys_by_edge.items():
+        pair_to_edges.setdefault(frozenset((sk, ek)), []).append(eid)
+
+    def reconstruct(node_cycle: list[tuple[int, int, int]]) -> tuple[list[int], list[tuple[int, int, int]]] | None:
+        if len(node_cycle) < 3:
+            return None
+        closed_nodes = list(node_cycle) + [node_cycle[0]]
+        remaining = {pair: list(eids) for pair, eids in pair_to_edges.items()}
+        path_edges: list[int] = []
+        path_keys: list[tuple[int, int, int]] = [closed_nodes[0]]
+        for u, v in zip(closed_nodes, closed_nodes[1:]):
+            available = remaining.get(frozenset((u, v)))
+            if not available:
+                return None
+            path_edges.append(available.pop())
+            path_keys.append(v)
+        return path_edges, path_keys
+
+    if edge_scalar_weight is not None:
+        try:
+            G_simple: object = nx.Graph()  # type: ignore[union-attr]
+            for sk, ek in endpoint_keys_by_edge.values():
+                if sk != ek:
+                    G_simple.add_edge(sk, ek)  # type: ignore[union-attr]
+            basis = nx.cycle_basis(G_simple)  # type: ignore[union-attr]
+        except nx.exception.NetworkXError:  # type: ignore[union-attr]
+            basis = []
+        best: tuple[list[int], list[tuple[int, int, int]]] | None = None
+        best_score = float("-inf")
+        for node_cycle in basis:
+            candidate = reconstruct(node_cycle)
+            if candidate is None:
+                continue
+            score = sum(edge_scalar_weight(e) for e in candidate[0])
+            if score > best_score:
+                best_score = score
+                best = candidate
+        if best is not None:
+            return best
+
+    G_cycle: object = nx.MultiGraph()  # type: ignore[union-attr]
+    for eid, (sk, ek) in endpoint_keys_by_edge.items():
+        G_cycle.add_edge(sk, ek, key=eid)  # type: ignore[union-attr]
+    try:
+        cycle = nx.find_cycle(G_cycle, orientation="ignore")  # type: ignore[union-attr]
+    except (nx.NetworkXNoCycle, nx.exception.NetworkXError):  # type: ignore[union-attr]
+        return None
+    if not cycle:
+        return None
+
+    used: set[int] = set()
+    path_edges: list[int] = []
+    path_keys: list[tuple[int, int, int]] = [cycle[0][0]]
+    for entry in cycle:
+        u, v = entry[0], entry[1]
+        eid = entry[2] if len(entry) >= 3 and entry[2] in endpoint_keys_by_edge else None
+        if eid is None or eid in used:
+            eid = None
+            for candidate_eid, (sk, ek) in endpoint_keys_by_edge.items():
+                if candidate_eid in used:
+                    continue
+                if {sk, ek} == {u, v}:
+                    eid = candidate_eid
+                    break
+        if eid is None:
+            return None  # could not reconstruct a valid edge sequence; bail out safely
+        used.add(eid)
+        path_edges.append(eid)
+        path_keys.append(v)
+    return path_edges, path_keys
+
+
+def _best_path_with_contraction_fallback(
+    endpoint_keys_by_edge: dict[int, tuple[tuple[int, int, int], tuple[int, int, int]]],
+    *,
+    edge_weight: Callable[[int], tuple[float, float, int]],
+    edge_scalar_weight: Callable[[int], float],
+    point_to_edges_of: Callable[[tuple[int, int, int]], set[int]],
+    start_points: list[tuple[int, int, int]],
+    all_nodes: list[tuple[int, int, int]],
+    search_edge_limit: int = 22,
+    contracted_search_edge_limit: int = 90,
+    max_search_states: int = 75_000,
+    contracted_max_search_states: int = 3_000_000,
+) -> tuple[list[int], list[tuple[int, int, int]], bool, int, str, bool]:
+    """
+    Bug B fix, shared dispatcher: exact search on the raw graph when it is
+    small; otherwise contract degree-2 chains into hyper-edges (see
+    `_contract_degree2_chains`) and run the exact search on that instead —
+    the search space scales with the number of real branch points, not raw
+    edge count. Falls back to an empty result (caller decides what to do,
+    typically a plain greedy walk) only when neither is feasible.
+
+    Used by both `_trace_best_weighted_path` (refinement of an already
+    selected wire) and `_build_ordered_wire` (initial per-component
+    ordering, including bridged super-components) — the two previously had
+    separate, inconsistent search sophistication; this is the one exact/
+    contracted search both now share.
+
+    `contracted_max_search_states` is deliberately much larger than
+    `max_search_states`: the contracted graph is already far smaller (tens of
+    hyper-edges, not hundreds of raw edges), so a much bigger state budget is
+    affordable there. Measured need: Part3's real 259-edge bridged
+    super-component contracts to 50 hyper-edges, and the default 75,000-state
+    budget (calibrated for the raw graph) was exhausted mid-search without
+    finding a closed loop that a larger budget does find.
+
+    Whenever a search (raw or contracted) fails to produce a closed result —
+    empty, or open only — this falls through to
+    `_find_any_cycle_via_networkx` before giving up: finding the OPTIMAL
+    weighted closed trail is near-NP-hard and can exhaust any finite state
+    budget on a large enough graph, but finding SOME cycle is polynomial.
+    Guaranteed correct if used; whether it's actually accepted is still up
+    to the caller's normal comparison against the alternative.
+
+    Returns (best_path_edges, best_path_keys, best_is_closed, state_count,
+    strategy, hit_state_limit) — `hit_state_limit` is measured against
+    whichever budget actually applied (`max_search_states` for the raw
+    search, `contracted_max_search_states` for the hyper-edge search), so
+    callers never need to guess which constant to compare against.
+    """
+    if len(endpoint_keys_by_edge) <= search_edge_limit:
+        edges, keys, closed, state_count = _search_best_closed_or_open_path(
+            endpoint_keys_by_edge,
+            edge_weight=edge_weight,
+            edge_scalar_weight=edge_scalar_weight,
+            point_to_edges_of=point_to_edges_of,
+            start_points=start_points,
+            search_edge_limit=search_edge_limit,
+            max_search_states=max_search_states,
+        )
+        if not closed:
+            fallback = _find_any_cycle_via_networkx(endpoint_keys_by_edge, edge_scalar_weight)
+            if fallback is not None:
+                return (
+                    fallback[0], fallback[1], True, state_count,
+                    "networkx-cycle-fallback", state_count > max_search_states,
+                )
+        return edges, keys, closed, state_count, "bounded-dfs", state_count > max_search_states
+
+    hyper_edges = _contract_degree2_chains(endpoint_keys_by_edge, point_to_edges_of, all_nodes)
+    if not hyper_edges or len(hyper_edges) > contracted_search_edge_limit:
+        return [], [], False, 0, "greedy-fallback", False
+
+    hyper_by_id = dict(enumerate(hyper_edges))
+    hyper_endpoint_keys = {hid: (h["a"], h["b"]) for hid, h in hyper_by_id.items()}
+    hyper_scalar_weight_cache = {
+        hid: sum(edge_scalar_weight(e) for e in h["edge_chain"]) for hid, h in hyper_by_id.items()
+    }
+    hyper_priority_cache = {
+        hid: (
+            sum(edge_weight(e)[0] for e in h["edge_chain"]) / len(h["edge_chain"]),
+            sum(edge_weight(e)[1] for e in h["edge_chain"]),
+            -min(h["edge_chain"]),
+        )
+        for hid, h in hyper_by_id.items()
+    }
+    hyper_adjacency: dict[tuple[int, int, int], set[int]] = {}
+    for hid, h in hyper_by_id.items():
+        hyper_adjacency.setdefault(h["a"], set()).add(hid)
+        hyper_adjacency.setdefault(h["b"], set()).add(hid)
+
+    def hyper_edge_weight(hid: int) -> tuple[float, float, int]:
+        return hyper_priority_cache[hid]
+
+    def hyper_edge_scalar_weight(hid: int) -> float:
+        return hyper_scalar_weight_cache[hid]
+
+    def hyper_point_to_edges_of(node: tuple[int, int, int]) -> set[int]:
+        return hyper_adjacency.get(node, set())
+
+    hyper_nodes = list(hyper_adjacency)
+    hyper_open_points = [n for n in hyper_nodes if len(hyper_adjacency[n]) == 1]
+    hyper_start_points = sorted(
+        hyper_open_points or hyper_nodes,
+        key=lambda n: (
+            1 if len(hyper_adjacency.get(n, set())) == 1 else 0,
+            max((hyper_edge_weight(h) for h in hyper_adjacency.get(n, set())), default=(0.0, 0.0, 0)),
+        ),
+        reverse=True,
+    )
+
+    hyper_path, hyper_path_keys, hyper_is_closed, state_count = _search_best_closed_or_open_path(
+        hyper_endpoint_keys,
+        edge_weight=hyper_edge_weight,
+        edge_scalar_weight=hyper_edge_scalar_weight,
+        point_to_edges_of=hyper_point_to_edges_of,
+        start_points=hyper_start_points,
+        search_edge_limit=contracted_search_edge_limit,
+        max_search_states=contracted_max_search_states,
+        min_closing_edges=1,
+    )
+    if not hyper_path or not hyper_is_closed:
+        fallback = _find_any_cycle_via_networkx(endpoint_keys_by_edge, edge_scalar_weight)
+        if fallback is not None:
+            return (
+                fallback[0], fallback[1], True, state_count,
+                "networkx-cycle-fallback", state_count > contracted_max_search_states,
+            )
+    if not hyper_path:
+        return [], [], False, state_count, "greedy-fallback", state_count > contracted_max_search_states
+
+    # Expand the winning hyper-edge sequence back into raw edges and the
+    # full-fidelity point chain — never collapse a long chain's interior
+    # polyline down to just its junction points.
+    expanded_edges: list[int] = []
+    expanded_keys: list[tuple[int, int, int]] = [hyper_path_keys[0]]
+    cursor = hyper_path_keys[0]
+    for hid in hyper_path:
+        h = hyper_by_id[hid]
+        forward = h["a"] == cursor
+        chain_edges = h["edge_chain"] if forward else list(reversed(h["edge_chain"]))
+        chain_points = h["point_chain"] if forward else list(reversed(h["point_chain"]))
+        expanded_edges.extend(chain_edges)
+        expanded_keys.extend(chain_points[1:])
+        cursor = chain_points[-1]
+    return (
+        expanded_edges,
+        expanded_keys,
+        hyper_is_closed,
+        state_count,
+        "contracted-graph-search",
+        state_count > contracted_max_search_states,
+    )
+
+
 def _trace_best_weighted_path(
     component: PartingLineComponent,
     edges_by_id: dict[int, EdgeData],
@@ -2211,109 +3237,26 @@ def _trace_best_weighted_path(
     start_points = sorted(open_points or all_vertex_keys, key=start_weight, reverse=True)
     search_edge_limit = 22
     max_search_states = 75_000
-    strategy = "bounded-dfs"
 
-    best_path_edges: list[int] = []
-    best_path_keys: list[tuple[int, int, int]] = []
-    best_is_closed = False
-    best_key: tuple[float, int, int, int, int] | None = None
-
-    def record_path(
-        path_edges: list[int],
-        path_keys: list[tuple[int, int, int]],
-        total_weight: float,
-        is_closed: bool,
-    ) -> None:
-        nonlocal best_path_edges, best_path_keys, best_is_closed, best_key
-        if not path_edges:
-            return
-        candidate_key = (
-            round(total_weight, 9),
-            len(path_edges),
-            1 if is_closed else 0,
-            -sum(path_edges),
-            -path_edges[0],
+    best_path_edges, best_path_keys, best_is_closed, state_count, strategy, hit_state_limit = (
+        _best_path_with_contraction_fallback(
+            endpoint_keys_by_edge,
+            edge_weight=edge_weight,
+            edge_scalar_weight=edge_scalar_weight,
+            point_to_edges_of=point_to_edges_of,
+            start_points=start_points,
+            all_nodes=all_vertex_keys,
+            search_edge_limit=search_edge_limit,
+            max_search_states=max_search_states,
         )
-        if best_key is None or candidate_key > best_key:
-            best_key = candidate_key
-            best_path_edges = list(path_edges)
-            best_path_keys = list(path_keys)
-            best_is_closed = is_closed
-
-    if len(endpoint_keys_by_edge) <= search_edge_limit:
-        state_count = 0
-
-        def dfs(
-            *,
-            start_key: tuple[int, int, int],
-            current_key: tuple[int, int, int],
-            used_edges: set[int],
-            path_edges: list[int],
-            path_keys: list[tuple[int, int, int]],
-            total_weight: float,
-        ) -> None:
-            nonlocal state_count
-            state_count += 1
-            if state_count > max_search_states:
-                return
-
-            if path_edges:
-                record_path(
-                    path_edges,
-                    path_keys,
-                    total_weight,
-                    is_closed=len(path_keys) > 2 and path_keys[-1] == start_key,
-                )
-
-            available = sorted(
-                [
-                    edge_id
-                    for edge_id in point_to_edges_of(current_key)
-                    if edge_id not in used_edges
-                ],
-                key=edge_weight,
-                reverse=True,
-            )
-            for edge_id in available:
-                start_endpoint, end_endpoint = endpoint_keys_by_edge[edge_id]
-                next_key = end_endpoint if current_key == start_endpoint else start_endpoint
-                next_edges = path_edges + [edge_id]
-                next_keys = path_keys + [next_key]
-                next_weight = total_weight + edge_scalar_weight(edge_id)
-                closes_loop = next_key == start_key and len(next_edges) >= 3
-                record_path(next_edges, next_keys, next_weight, is_closed=closes_loop)
-                if closes_loop:
-                    continue
-                dfs(
-                    start_key=start_key,
-                    current_key=next_key,
-                    used_edges=used_edges | {edge_id},
-                    path_edges=next_edges,
-                    path_keys=next_keys,
-                    total_weight=next_weight,
-                )
-
-        for start_key in start_points:
-            if state_count > max_search_states:
-                break
-            dfs(
-                start_key=start_key,
-                current_key=start_key,
-                used_edges=set(),
-                path_edges=[],
-                path_keys=[start_key],
-                total_weight=0.0,
-            )
-
-        if state_count > max_search_states:
-            warnings.append(
-                "Refinement path search hit the state limit; best path found so far was retained."
-            )
-    else:
-        state_count = 0
-        strategy = "greedy-fallback"
+    )
+    if strategy == "greedy-fallback":
         warnings.append(
             "Refinement candidate graph is large; bounded search skipped and greedy fallback used."
+        )
+    elif hit_state_limit:
+        warnings.append(
+            "Refinement path search hit the state limit; best path found so far was retained."
         )
 
     if not best_path_edges:
@@ -2922,29 +3865,93 @@ def _parting_line_diagnostics(
     )
 
 
+def _decimate_closed_loop(points: list[Vec3], max_segments: int) -> list[Vec3]:
+    """
+    Reduce a dense display curve to at most ``max_segments`` segments while
+    preserving closure.
+
+    The refined parting curve is a *display* polyline — Chaikin smoothing plus
+    resampling leaves ~24,000 points on a real part.  ``BRepFill_Filling``
+    takes one edge constraint per segment, so feeding it the raw curve means
+    ~24,000 constraints, which is unusable.  Uniform index sampling keeps the
+    loop's shape while making the constraint set tractable.
+    """
+    if max_segments < 3 or len(points) <= max_segments + 1:
+        return list(points)
+
+    closed = len(points) > 2 and points[0] == points[-1]
+    body = points[:-1] if closed else list(points)
+    if len(body) <= max_segments:
+        return list(points)
+
+    step = len(body) / float(max_segments)
+    sampled = [body[int(round(i * step)) % len(body)] for i in range(max_segments)]
+
+    # Drop consecutive duplicates introduced by rounding.
+    deduped: list[Vec3] = []
+    for p in sampled:
+        if not deduped or p != deduped[-1]:
+            deduped.append(p)
+    if len(deduped) < 3:
+        return list(points)
+    deduped.append(deduped[0])  # re-close
+    return deduped
+
+
 def _build_parting_surface(
     loop_points: list[Vec3],
     bbox_diagonal_mm: float,
     *,
+    pull_direction: Vec3 | None = None,
     planar_tolerance_mm: float = 0.25,
+    planar_pull_alignment_min: float = 0.90,
     extension_factor: float = 1.5,
     filling_max_degree: int = 3,
     filling_tolerance_mm: float = 0.01,
+    filling_max_constraint_edges: int = 120,
 ) -> PartingSurfaceResult:
     """
     Build a B-Rep parting surface from a closed parting-line loop (Milestone 1.9).
 
     Tries two strategies in order:
-    1. **PCA planar extrusion** (robust, preferred): fits a plane to the loop
-       via PCA and extrudes a bounded face past the bounding box.
-    2. **BRepFill_Filling** (fallback): N-sided patch filling for non-planar loops.
 
-    The returned ``PartingSurfaceResult.occ_shape`` is the B-Rep surface shell
-    for use by Milestone 1.10's Boolean solid split. Returns ``status="failed"``
-    with a ``failure_reason`` on any OCC error — never raises.
+    1. **PCA planar extrusion** — only when the loop is genuinely flat *and*
+       its best-fit plane is a valid parting plane.
+    2. **BRepFill_Filling** — an N-sided patch through the loop, for the
+       ordinary case of a real 3-D parting line.
 
-    Only callable when ``_OCC_SURFACE_AVAILABLE`` is True (i.e., pythonOCC is
-    installed in the conda environment).
+    Why the planar path needs a pull-direction check
+    ------------------------------------------------
+    A mold opens along the pull direction, so a parting plane's normal must be
+    roughly parallel to it.  PCA finds the plane that best *fits* the points,
+    which is not the same thing.  Measured on Part3: PCA fits the loop to
+    0.74 mm, but its normal sits ~60° off the pull axis — using it would slice
+    the mold diagonally instead of separating cavity from core.  So the planar
+    strategy additionally requires ``|dot(plane_normal, pull)| >=
+    planar_pull_alignment_min``.
+
+    Most real parting lines are not planar at all.  Measured pull-axis span of
+    the parting loop: Part1 16.16 mm on a 30.78 mm part, Part3 7.14 mm on
+    68.12 mm.  Nee et al. (1998) is titled "Automatic Determination of *3-D*
+    Parting Lines and Surfaces" for exactly this reason — the filling path is
+    the normal path, not an exotic fallback.
+
+    The returned ``PartingSurfaceResult.occ_shape`` is the reported/displayed
+    parting-line candidate surface — it is NOT what Milestone 1.10's Boolean
+    solid split uses as its splitting tool. Returns ``status="failed"`` with
+    a ``failure_reason`` on any OCC error — never raises.
+
+    Stage 2 (S2.3) tried extending this patch to the blank's walls with a
+    lofted "shoulder" collar and confirmed (via ``BRepCheck_Analyzer`` plus
+    ``ShapeFix_Shape``/``ShapeFix_Face``/``BRepBuilderAPI_Sewing`` healing
+    attempts, all unsuccessful) that the underlying ``BRepFill_Filling``
+    patch is topologically invalid on both real parts *independent of any
+    extension* — see CHANGELOG.md 2026-07-28 "Stage 2b". Milestone 1.10 now
+    builds its own separate, always-valid planar splitting tool instead
+    (``core_cavity.build_planar_split_tool``); this function's output is
+    unaffected by that and stays exactly what Milestone 1.9 always returned.
+
+    Only callable when ``_OCC_SURFACE_AVAILABLE`` is True.
     """
     if not _OCC_SURFACE_AVAILABLE:
         return PartingSurfaceResult(
@@ -2984,8 +3991,22 @@ def _build_parting_surface(
     deviations = _np.abs(centered @ normal_arr)
     max_deviation = float(deviations.max())
 
+    # A flat loop is only a valid PARTING plane if the plane's normal is
+    # roughly parallel to the pull direction (see docstring).
+    pull_alignment: float | None = None
+    if pull_direction is not None:
+        pull_arr = _np.array([float(v) for v in pull_direction], dtype=float)
+        pull_norm = _np.linalg.norm(pull_arr)
+        if pull_norm > 1e-12:
+            pull_alignment = float(abs(normal_arr @ (pull_arr / pull_norm)))
+
+    planar_is_flat = max_deviation <= planar_tolerance_mm
+    planar_is_valid_orientation = (
+        pull_alignment is None or pull_alignment >= planar_pull_alignment_min
+    )
+
     # --- Strategy 1: Planar extrusion (if loop is sufficiently flat) ---
-    if max_deviation <= planar_tolerance_mm:
+    if planar_is_flat and planar_is_valid_orientation:
         try:
             # Build OCC wire from consecutive loop points
             wire_builder = BRepBuilderAPI_MakeWire()
@@ -3043,14 +4064,44 @@ def _build_parting_surface(
         except Exception as exc:
             # Fall through to BRepFill_Filling strategy
             planar_failure = str(exc)
+    elif not planar_is_flat:
+        planar_failure = (
+            f"Loop is non-planar (max deviation {max_deviation:.3f} mm > "
+            f"tolerance {planar_tolerance_mm} mm)"
+        )
     else:
-        planar_failure = f"Loop is non-planar (max deviation {max_deviation:.3f} mm > tolerance {planar_tolerance_mm} mm)"
+        planar_failure = (
+            f"Best-fit plane is flat ({max_deviation:.3f} mm) but is not a valid "
+            f"parting plane: |dot(normal, pull)| = {pull_alignment:.3f} < "
+            f"{planar_pull_alignment_min} — the plane is tilted relative to the "
+            f"mold opening direction"
+        )
 
-    # --- Strategy 2: BRepFill_Filling (N-sided patch) ---
+    # --- Strategy 2: BRepFill_Filling (N-sided patch through the loop) ---
+    # The refined curve is a dense DISPLAY polyline (~24k points on a real
+    # part).  Filling takes one edge constraint per segment, so it must be
+    # decimated first or the solver is swamped.
+    fill_pts = _decimate_closed_loop(pts, filling_max_constraint_edges)
     try:
-        filling = BRepFill_Filling(filling_max_degree, 0, 0, False, filling_tolerance_mm)
-        prev_pt = gp_Pnt(*[float(v) for v in pts[-1]])
-        for pt in pts:
+        # Positional signature is
+        #   (Degree, NbPtsOnCur, NbIter, Anisotropie, Tol2d, Tol3d, ...)
+        # The previous call passed NbPtsOnCur=0 and NbIter=0, which OCC
+        # rejects outright with
+        #   "Standard_ConstructionErrorGeomPlate : Number of iteration must be >= 1"
+        # so the filling path could never run.  Use OCC's own defaults for the
+        # solver knobs and put the caller's tolerance on Tol3d (a 3-D distance),
+        # not Tol2d (a parametric tolerance).
+        filling = BRepFill_Filling(
+            filling_max_degree,   # Degree
+            15,                   # NbPtsOnCur  (OCC default)
+            2,                    # NbIter      (OCC default; MUST be >= 1)
+            False,                # Anisotropie
+            1e-5,                 # Tol2d       (OCC default)
+            float(filling_tolerance_mm),  # Tol3d
+        )
+        constraint_edges = 0
+        prev_pt = gp_Pnt(*[float(v) for v in fill_pts[-1]])
+        for pt in fill_pts:
             curr_pt = gp_Pnt(*[float(v) for v in pt])
             if prev_pt.Distance(curr_pt) < 1e-9:
                 prev_pt = curr_pt
@@ -3058,7 +4109,13 @@ def _build_parting_surface(
             edge = BRepBuilderAPI_MakeEdge(prev_pt, curr_pt)
             if edge.IsDone():
                 filling.Add(edge.Edge(), 0)  # GeomAbs_C0 = 0
+                constraint_edges += 1
             prev_pt = curr_pt
+
+        if constraint_edges < 3:
+            raise RuntimeError(
+                f"Only {constraint_edges} usable constraint edge(s) after decimation."
+            )
 
         filling.Build()
         if not filling.IsDone():
@@ -3068,7 +4125,24 @@ def _build_parting_surface(
         props = GProp_GProps()
         brepgprop_SurfaceProperties(surface_shape, props)
         area = float(props.Mass())
+        if not (area > 0.0):
+            raise RuntimeError(f"Filling produced a degenerate face (area {area}).")
 
+        # Stage 2 (S2.3) tried extending this patch to the blank's walls with
+        # a lofted "shoulder" collar (see CHANGELOG.md 2026-07-28 "Stage 2b").
+        # It genuinely worked as *area extension* (measured 2,352->20,226 mm^2
+        # on Part1, 603->71,308 mm^2 on Part3) but did not fix the real
+        # problem: BRepCheck_Analyzer confirms this BRepFill_Filling patch is
+        # topologically invalid on its own, before any extension is applied,
+        # on both real parts. ShapeFix_Shape, ShapeFix_Face, and
+        # BRepBuilderAPI_Sewing were all tried directly against the raw patch
+        # and against the shoulder-extended/sewn compound; none produced a
+        # valid shape. BRepAlgoAPI_Splitter cannot reliably consume an
+        # invalid tool shape, so extending it further does not help. The
+        # Boolean split (Milestone 1.10) now uses a separate, always-valid
+        # planar tool instead (`core_cavity.build_planar_split_tool`) — this
+        # surface remains purely the reported/displayed parting-line
+        # candidate, unchanged from before Stage 2.
         return PartingSurfaceResult(
             status="generated_filling",
             strategy="brepfill_filling",
@@ -3085,7 +4159,7 @@ def _build_parting_surface(
             planar_deviation_mm=max_deviation,
             failure_reason=(
                 f"Planar strategy: {planar_failure}. "
-                f"Filling fallback: {exc}"
+                f"Filling fallback ({len(fill_pts)} decimated pts): {exc}"
             ),
         )
 
@@ -3101,43 +4175,64 @@ def _attempt_loop_closure(
     bridge_penalty_factor: float,
     boundary_bridge_factor: float,
     max_closure_error_mm: float,
-) -> tuple[bool, float, list[str]]:
+) -> tuple[bool, float, list[Vec3], int, list[str]]:
     """
-    Assess loop closure and attempt to fix it when possible (Milestone 1.8).
+    Assess loop closure and actually close the wire when possible (Milestone 1.8).
 
-    If the wire is already closed, returns ``(True, 0.0, [])``.
-    If the closure error is within ``max_closure_error_mm``, treats the wire as
-    closed. Otherwise, tries to find a closing path through the full edge graph;
-    gates readiness at "review" when the loop cannot be closed.
+    Returns
+    -------
+    ``(closure_guaranteed, closure_error_mm, closed_points, bridge_edge_count, warnings)``
 
-    Returns ``(closure_guaranteed, closure_error_mm, new_warnings)``.
+    ``closed_points`` is the FULL point list the caller must use downstream.
+    When a closing path is found, it is ``refined_points`` plus the real
+    B-Rep vertices along that path plus an exact repeat of the first point,
+    so the returned curve is genuinely closed.  When closure is not achieved
+    it is ``refined_points`` unchanged and ``closure_guaranteed`` is False.
+
+    ``closure_error_mm`` always describes the FINAL state of
+    ``closed_points`` — it is measured, never assumed.
+
+    Honesty contract
+    ----------------
+    This function must never report ``closure_guaranteed=True`` unless the
+    points it returns are measurably closed within ``max_closure_error_mm``.
+    A previous implementation computed the closing path and then discarded
+    it, returning ``(True, 0.0)`` while handing back a curve with a 17 mm
+    gap; the parting *surface* was then built from that open curve and every
+    downstream stage silently trusted the false guarantee.  The final
+    measured re-check below exists specifically to make that class of bug
+    impossible.
     """
     raw_error = _closure_error_mm(refined_points, is_closed=is_closed)
 
     if is_closed:
-        return True, raw_error, []
+        return True, raw_error, list(refined_points), 0, []
 
     if not refined_points:
-        return False, 0.0, []
+        return False, 0.0, [], 0, []
 
     start = refined_points[0]
     end = refined_points[-1]
     error = mag3((end[0] - start[0], end[1] - start[1], end[2] - start[2]))
 
     if error <= max_closure_error_mm:
-        return True, error, [
+        return True, error, list(refined_points), 0, [
             f"Closure error {error:.4f} mm ≤ threshold {max_closure_error_mm} mm; "
             "wire treated as closed."
         ]
 
     if not _NX_AVAILABLE:
-        return False, error, [
+        return False, error, list(refined_points), 0, [
             f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
             "loop-closure requires networkx (unavailable)."
         ]
 
     # Rebuild G_all to find a closing path (same edge graph used in bridging).
+    # `key_to_point` lets us map the resulting path of quantized node keys
+    # back to real 3-D coordinates — without it the path cannot be spliced
+    # into the curve, which is exactly how the original defect arose.
     G_cls: object = nx.Graph()  # type: ignore[union-attr]
+    key_to_point: dict[tuple[int, int, int], Vec3] = {}
     candidate_edge_ids = set(candidate_by_id)
     for edge in edges_by_id.values():
         if edge.start_vertex is None or edge.end_vertex is None:
@@ -3148,6 +4243,8 @@ def _attempt_loop_closure(
             continue
         if any(fid in undercut_face_ids for fid in edge.adjacent_face_ids):
             continue
+        key_to_point.setdefault(sk, edge.start_vertex)
+        key_to_point.setdefault(ek, edge.end_vertex)
         if edge.edge_id in candidate_edge_ids:
             cost = 1.0 * max(edge.length, 1e-9)
         elif edge.is_boundary:
@@ -3160,7 +4257,7 @@ def _attempt_loop_closure(
     end_key = _point_key(end, point_tolerance)
 
     if start_key not in G_cls or end_key not in G_cls:  # type: ignore[operator]
-        return False, error, [
+        return False, error, list(refined_points), 0, [
             f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
             "endpoint keys not in part edge graph — cannot force closure.",
             "Readiness downgraded to 'review': loop cannot be closed automatically.",
@@ -3170,17 +4267,50 @@ def _attempt_loop_closure(
         path = nx.shortest_path(  # type: ignore[union-attr]
             G_cls, source=end_key, target=start_key, weight="cost"
         )
-        closing_edges = len(path) - 1
-        return True, 0.0, [
-            f"Loop closed via {closing_edges} additional edge(s) through B-Rep geometry; "
-            f"original open gap was {error:.4f} mm."
-        ]
     except (nx.NetworkXNoPath, nx.NodeNotFound, nx.exception.NetworkXError):  # type: ignore[union-attr]
-        return False, error, [
+        return False, error, list(refined_points), 0, [
             f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
             "no path found in part edge graph to close the loop.",
             "Readiness downgraded to 'review': loop closure required but failed.",
         ]
+
+    # Splice the closing path into the curve.  `path` runs end_key -> ... ->
+    # start_key; path[0] duplicates the existing last point and path[-1]
+    # duplicates the first, so only the interior nodes are appended.  The
+    # loop is then closed exactly by repeating the original first point.
+    interior_keys = path[1:-1]
+    missing = [k for k in interior_keys if k not in key_to_point]
+    if missing:
+        return False, error, list(refined_points), 0, [
+            f"Wire is open (closure error {error:.4f} mm > {max_closure_error_mm} mm); "
+            f"{len(missing)} closing-path vertex coordinate(s) unavailable — "
+            "cannot splice a closing path.",
+            "Readiness downgraded to 'review': loop closure required but failed.",
+        ]
+
+    closed_points = list(refined_points)
+    closed_points.extend(key_to_point[k] for k in interior_keys)
+    closed_points.append(refined_points[0])
+    bridge_edge_count = len(path) - 1
+
+    # Measured re-check: never trust the construction, verify it.
+    final_error = mag3((
+        closed_points[-1][0] - closed_points[0][0],
+        closed_points[-1][1] - closed_points[0][1],
+        closed_points[-1][2] - closed_points[0][2],
+    ))
+    if final_error > max_closure_error_mm:
+        return False, final_error, list(refined_points), 0, [
+            f"Loop-closure splice did not converge: residual gap {final_error:.4f} mm "
+            f"still exceeds {max_closure_error_mm} mm. Original curve retained.",
+            "Readiness downgraded to 'review': loop closure required but failed.",
+        ]
+
+    return True, final_error, closed_points, bridge_edge_count, [
+        f"Loop closed via {bridge_edge_count} additional B-Rep edge(s); "
+        f"original open gap was {error:.4f} mm, residual gap is {final_error:.6f} mm "
+        f"(≤ {max_closure_error_mm} mm)."
+    ]
 
 
 def detect_parting_line_candidates(
@@ -3245,42 +4375,129 @@ def detect_parting_line_candidates(
 
     candidate_by_id = {candidate.edge_id: candidate for candidate in candidates if candidate.is_candidate}
 
-    # Milestone 1.7: bridge disconnected silhouette components through real B-Rep edges.
-    bridge_warnings: list[str] = []
-    if bridge_components and len(components) > 1 and _NX_AVAILABLE:
-        undercut_ids_for_bridge: set[int] = set()
-        if undercut_context is not None and hasattr(undercut_context, "undercut_face_ids"):
-            undercut_ids_for_bridge = set(undercut_context.undercut_face_ids or [])
-        components, component_points, bridge_warnings = _bridge_disconnected_components(
-            components,
-            component_points,
-            edges_by_id,
-            candidate_by_id,
-            point_tolerance=point_tolerance,
-            undercut_face_ids=undercut_ids_for_bridge,
-            bridge_penalty_factor=bridge_penalty_factor,
-            boundary_bridge_factor=boundary_bridge_factor,
+    def _build_and_select(
+        comps: list[PartingLineComponent],
+    ) -> tuple[list[PartingLineWire], PartingLineWire]:
+        wires = [
+            _build_ordered_wire(
+                component,
+                edges_by_id,
+                candidate_by_id,
+                point_tolerance=point_tolerance,
+                pull_direction=direction,
+            )
+            for component in comps
+        ]
+        wires = _apply_wire_assessments(
+            wires, comps, part, edges_by_id, direction, undercut_context
         )
+        return wires, _select_projected_wire(wires, comps)
 
-    component_wires = [
-        _build_ordered_wire(
-            component,
-            edges_by_id,
-            candidate_by_id,
-            point_tolerance=point_tolerance,
-            pull_direction=direction,
-        )
-        for component in components
-    ]
-    component_wires = _apply_wire_assessments(
-        component_wires,
-        components,
-        part,
-        edges_by_id,
-        direction,
-        undercut_context,
-    )
-    selected_wire = _select_projected_wire(component_wires, components)
+    # Select from the ORIGINAL components first.
+    component_wires, selected_wire = _build_and_select(components)
+
+    # Milestone 1.7: bridge disconnected silhouette components through real
+    # B-Rep edges — but only as a FALLBACK.
+    #
+    # Bridging exists to turn disconnected silhouette fragments into a closed
+    # loop.  When `_select_projected_wire` has already found a clean closed
+    # loop among the individual components, bridging has nothing to add and
+    # measurably destroys the result: it merges every component into one
+    # branchy super-component.  Measured on Part1 at its optimal direction —
+    # identical inputs, bridging the only variable:
+    #
+    #     bridging OFF : ready(1.000)  quality high(0.96)  closed=True
+    #                    0 branch pts / 0 gaps   0.2 s
+    #     bridging ON  : weak (0.080)  quality empty(0.0)  closed=False
+    #                    11 branch pts / 15 gaps  49.8 s
+    #
+    # So: skip bridging when the selected wire is already closed — UNLESS
+    # that closed loop is implausibly small (Bug H-2).  A closed loop is not
+    # automatically the main parting line: on Part3 the pre-bridge selection
+    # was a closed 47-edge loop covering only 18% of the part's projected
+    # extent — a real closed loop, just the wrong one (its true silhouette is
+    # fragmented across 22 components with no single one covering it). Gate
+    # the fast path on coverage, not just closedness, and when we do bridge,
+    # keep the result only if it actually improves on what we had.
+    from backend.config import settings as _bridge_cfg_s
+    _min_coverage = _bridge_cfg_s.dfm.parting_line.min_silhouette_coverage_ratio
+    _part_extent_area = _part_projected_bbox_area(part, direction)
+    _cov_u_axis, _cov_v_axis = _projection_basis(direction)
+
+    def _coverage_ratio(points: list[Vec3]) -> float:
+        if _part_extent_area <= 0.0 or len(points) < 3:
+            return 0.0
+        us = [dot3(p, _cov_u_axis) for p in points]
+        vs = [dot3(p, _cov_v_axis) for p in points]
+        return ((max(us) - min(us)) * (max(vs) - min(vs))) / _part_extent_area
+
+    original_coverage = _coverage_ratio(selected_wire.points)
+
+    bridge_warnings: list[str] = []
+    bridging_status = "disabled" if not bridge_components else "not_needed"
+    if bridge_components and len(components) > 1 and not _NX_AVAILABLE:
+        bridging_status = "unavailable"
+    if bridge_components and len(components) > 1 and _NX_AVAILABLE:
+        if selected_wire.is_closed and original_coverage >= _min_coverage:
+            # Healthy fast path — deliberately NOT a warning, so it does not
+            # penalise the readiness score. Reported via `bridging_status`.
+            bridging_status = "not_needed"
+        else:
+            undercut_ids_for_bridge: set[int] = set()
+            if undercut_context is not None and hasattr(undercut_context, "undercut_face_ids"):
+                undercut_ids_for_bridge = set(undercut_context.undercut_face_ids or [])
+            bridged_components, bridged_points, attempt_warnings = _bridge_disconnected_components(
+                components,
+                component_points,
+                edges_by_id,
+                candidate_by_id,
+                point_tolerance=point_tolerance,
+                undercut_face_ids=undercut_ids_for_bridge,
+                bridge_penalty_factor=bridge_penalty_factor,
+                boundary_bridge_factor=boundary_bridge_factor,
+                part_extent_area=_part_extent_area,
+                projection_basis=(_cov_u_axis, _cov_v_axis),
+                min_coverage_ratio=_min_coverage,
+            )
+            bridged_wires, bridged_selected = _build_and_select(bridged_components)
+            bridged_coverage = _coverage_ratio(bridged_selected.points)
+
+            # Accept the bridged result only if it is genuinely better:
+            # closing the loop (when it wasn't) or materially improving
+            # coverage (when it already was, but too small) is the win
+            # condition; otherwise fall back to the higher-quality wire
+            # rather than blindly taking the merge.
+            improved = bridged_selected.is_closed and (
+                not selected_wire.is_closed
+                or bridged_coverage > original_coverage + 0.05
+            )
+            not_worse = (
+                bridged_selected.quality_assessment.score
+                >= selected_wire.quality_assessment.score
+                and bridged_coverage >= original_coverage - 0.02
+            )
+            if improved or not_worse:
+                components = bridged_components
+                component_points = bridged_points
+                component_wires = bridged_wires
+                selected_wire = bridged_selected
+                bridge_warnings = attempt_warnings
+                bridging_status = "applied"
+            else:
+                bridging_status = "discarded_not_an_improvement"
+                closure_note = (
+                    "closed the loop but did not improve coverage or quality enough"
+                    if bridged_selected.is_closed
+                    else "did not close the loop"
+                )
+                bridge_warnings = attempt_warnings + [
+                    "Component bridging discarded: the bridged wire scored "
+                    f"{bridged_selected.quality_assessment.score:.2f} vs "
+                    f"{selected_wire.quality_assessment.score:.2f} for the "
+                    f"unbridged selection ({closure_note}, "
+                    f"coverage {bridged_coverage * 100:.1f}% vs {original_coverage * 100:.1f}%). "
+                    "Original selection retained."
+                ]
     selected_component_id = selected_wire.component_id
     selected_edge_ids = selected_wire.ordered_edge_ids
     wire_points = selected_wire.points
@@ -3352,7 +4569,13 @@ def detect_parting_line_candidates(
     if undercut_context is not None and hasattr(undercut_context, "undercut_face_ids"):
         undercut_ids_for_closure = set(undercut_context.undercut_face_ids or [])
     refined_pts = refinement.refined_points if refinement.refined_points else list(wire_points)
-    closure_guaranteed, closure_error_mm, closure_warnings = _attempt_loop_closure(
+    (
+        closure_guaranteed,
+        closure_error_mm,
+        closed_pts,
+        closure_bridge_edge_count,
+        closure_warnings,
+    ) = _attempt_loop_closure(
         refined_pts,
         is_closed=selected_wire.is_closed,
         edges_by_id=edges_by_id,
@@ -3363,6 +4586,18 @@ def detect_parting_line_candidates(
         boundary_bridge_factor=boundary_bridge_factor,
         max_closure_error_mm=max_closure_error_mm,
     )
+
+    # The spliced curve is the authoritative one from here on: the parting
+    # surface, the API payload and the UI overlay must all see the CLOSED
+    # points, not the original open ones.  Rebuilding `refinement` keeps
+    # `refinement.refined_points` (what `main.py` serialises for the viewer)
+    # consistent with what the surface was actually built from.
+    if closure_bridge_edge_count > 0 and closed_pts != refined_pts:
+        refined_pts = closed_pts
+        if refinement.refined_points:
+            refinement = replace(refinement, refined_points=closed_pts)
+    else:
+        refined_pts = closed_pts
 
     # Milestone 1.9: build a parting surface if the loop is closed and OCC is available.
     from backend.config import settings as _cfg_s
@@ -3377,10 +4612,13 @@ def detect_parting_line_candidates(
         parting_surface = _build_parting_surface(
             refined_pts,
             bbox_diagonal,
+            pull_direction=direction,
             planar_tolerance_mm=_ps_cfg.planar_tolerance_mm,
+            planar_pull_alignment_min=_ps_cfg.planar_pull_alignment_min,
             extension_factor=_ps_cfg.extension_factor,
             filling_max_degree=_ps_cfg.filling_max_degree,
             filling_tolerance_mm=_ps_cfg.filling_tolerance_mm,
+            filling_max_constraint_edges=_ps_cfg.filling_max_constraint_edges,
         )
     else:
         parting_surface = PartingSurfaceResult(
@@ -3427,6 +4665,31 @@ def detect_parting_line_candidates(
             "Graph cleanup reduced undercut-conflict risk versus the raw selected wire."
         )
     warnings.extend(refinement.warnings)
+
+    # Bug H guard: a main parting line wraps the outer silhouette.  If the
+    # selected loop's projected extent is a small fraction of the part's own,
+    # the engine picked a local feature loop (hole rim, boss) and every
+    # downstream result — surface, core/cavity split, export — is built on the
+    # wrong curve.  Rather than fail silently, measure it and say so.
+    silhouette_coverage_ratio = 0.0
+    _part_extent_area = _part_projected_bbox_area(part, pull_direction)
+    _loop_points = refinement.refined_points or wire_points
+    if _part_extent_area > 0.0 and len(_loop_points) >= 3:
+        _u_axis, _v_axis = _projection_basis(pull_direction)
+        _us = [dot3(p, _u_axis) for p in _loop_points]
+        _vs = [dot3(p, _v_axis) for p in _loop_points]
+        _loop_area = (max(_us) - min(_us)) * (max(_vs) - min(_vs))
+        silhouette_coverage_ratio = _loop_area / _part_extent_area
+        min_coverage = _cfg_s.dfm.parting_line.min_silhouette_coverage_ratio
+        if silhouette_coverage_ratio < min_coverage:
+            warnings.append(
+                f"Selected parting loop spans only {silhouette_coverage_ratio * 100:.1f}% of the "
+                f"part's projected extent (expected at least {min_coverage * 100:.0f}%); it is "
+                f"likely a local feature loop rather than the main parting line. "
+                f"The silhouette may be fragmented across {len(components)} components that "
+                f"could not be assembled into one loop."
+            )
+
     readiness = _parting_line_readiness(effective_selected_wire, refinement, warnings)
     diagnostic_gate = _parting_line_diagnostic_gate(
         readiness,
@@ -3476,5 +4739,8 @@ def detect_parting_line_candidates(
         warnings=warnings,
         closure_error_mm=closure_error_mm,
         closure_guaranteed=closure_guaranteed,
+        closure_bridge_edge_count=closure_bridge_edge_count,
+        bridging_status=bridging_status,
+        silhouette_coverage_ratio=silhouette_coverage_ratio,
         parting_surface=parting_surface,
     )

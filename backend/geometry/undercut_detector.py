@@ -438,22 +438,40 @@ class UndercutFeature:
     """
     Feature-level undercut representation (Sangolli 2021 adaptation).
 
-    Notes on ``depth_proxy_mm``:
-    This field deliberately takes the *largest* plausible depth estimate across
-    multiple methods (Boolean-vertex evidence, centroid-projection proxy, and
-    bounding-box spans), rather than preferring the most precise one.  This is
-    an intentional conservative safety margin for mold engineering: it is safer
-    to over-estimate undercut depth (leading to conservative tooling allowance)
-    than to under-estimate it (leading to stuck parts at demold time).
+    Depth: two metrics, two different jobs (TEAM DECISION, 2026-07-27)
+    -----------------------------------------------------------------
+    The project intentionally maintains two depth numbers with *different
+    objectives*.  This is a deliberate separation of concerns, not an
+    inconsistency to be "fixed":
 
-    This contrasts with the *per-face* ``BooleanInterferenceMetrics.depth_mm``,
-    which deliberately prefers the most precise evidence (exact Boolean-vertex
-    reference first, then falling back to volume/area ratios).  Both are tested
-    and reconciled as-designed — see ``docs/ARCHITECTURE_ROADMAP.md`` Milestone
-    1.3 note and ``TODO.md`` for the team-decision record.
+    ``BooleanInterferenceMetrics.depth_mm``  (per-face)  -> PRECISION
+        Highest-confidence interference depth for an individual face,
+        intended for precise engineering measurement.  Prefers exact
+        Boolean-vertex evidence, falling back to bbox/volume-area only when
+        exact evidence is unavailable.
 
-    Use ``boolean_depth_proxy_mm`` when you need the Boolean-geometry-grounded
-    depth estimate for a specific feature.
+    ``UndercutFeature.depth_proxy_mm``  (per-feature)  -> CONSERVATIVE SEVERITY
+        Conservative UPPER-BOUND estimate of overall undercut feature depth,
+        intended for severity ranking and DfM decision support.  Takes the
+        *maximum* across available estimators (Boolean depth, centroid
+        projection, bounding-box span).  This value MAY intentionally exceed
+        the precise Boolean depth, to reduce the risk of under-reporting a
+        manufacturability issue.
+
+    Rationale: in DfM workflows a false positive (flagging a feature that
+    turns out fine) is far cheaper than a false negative (missing an
+    undercut, producing a mold that will not release).  Over-estimating
+    depth costs a conservative tooling allowance; under-estimating it costs
+    a stuck part at demold.
+
+    DO NOT resurrect the reverted change that made ``depth_proxy_mm`` prefer
+    precision (attempted and reverted during Milestone 1.3 — it broke three
+    tests that assert this behaviour deliberately).  See
+    ``docs/ARCHITECTURE_ROADMAP.md`` Milestone 1.3 note and ``TODO.md``
+    for the full decision record.
+
+    Use ``boolean_depth_proxy_mm`` when you specifically need the
+    Boolean-geometry-grounded depth estimate for a feature.
     """
 
     feature_id: int
