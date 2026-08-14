@@ -1,0 +1,706 @@
+# IMPROVISED ALGORITHM FOR OPTIMAL PULL DIRECTION AND UNDERCUT DETECTION
+
+The major changes from the original plan are: **X/Y/Z are preferred directions, not hard restrictions; draft and undercut are treated as two independent properties; draft calculations are cached/reused instead of repeated; accessibility becomes the geometric basis for undercut detection; and the search becomes hierarchical rather than immediately sampling ~54 directions.** This is consistent with Bosch's clarification that X/Y/Z are normally preferred, but other directions can be searched when no suitable direction is found. 
+
+## 1. Load the STEP file and construct `PartGeometry`
+
+1. Bosch provides the product as a STEP file.
+2. OpenCascade loads the STEP file into a `TopoDS_Shape`.
+3. The loader traverses the B-Rep and constructs our application-level `PartGeometry`.
+4. `PartGeometry` contains:
+
+   * `TopoDS_Shape`
+   * unique `FaceData`
+   * unique `EdgeData`
+   * unique `VertexData`
+   * face normals
+   * face areas
+   * surface types
+   * face → edge relationships
+   * edge → face relationships
+   * face adjacency
+   * original OCC geometry.
+5. These geometric properties are computed **once during loading and cached**.
+6. Therefore, later modules should not repeatedly ask OCC for the same face normal, area, topology, etc.
+7. For direction analysis, the fundamental face representation is:
+
+`FaceData = {face_id, normal, area, occ_face, surface_type, adjacency}`
+
+This remains the single geometric source of truth throughout the pipeline. 
+
+## 2. Precompute the direction-analysis data
+
+Before evaluating directions:
+
+1. Store all face normals in a matrix:
+
+`N = [n1, n2, n3, ... nF]`
+
+2. Store all face areas:
+
+`A = [a1, a2, a3, ... aF]`
+
+3. Generate the preferred direction set:
+
+`D_preferred = {+X, -X, +Y, -Y, +Z, -Z}`
+
+4. Normalize every candidate direction.
+5. Instead of recalculating `normal · direction` independently inside the draft and undercut modules, calculate the relationships once and reuse them.
+
+For `F` faces and `K` candidate directions:
+
+`Dot[F,K] = N × Dᵀ`
+
+This gives us all face-direction relationships at once.
+
+This eliminates one of the current redundancies where draft analysis and the cheap undercut analysis independently derive essentially the same directional information. The existing system currently calls draft analysis and cheap undercut analysis separately for each candidate. 
+
+## 3. Stage 1 — Evaluate the six preferred Bosch directions
+
+Evaluate:
+
+`+X, -X, +Y, -Y, +Z, -Z`
+
+Important: **do not assume +Z is the benchmark**. Each of the six directions is an independent candidate. The current system's initial direction is mainly a before/after baseline, not a mathematical threshold. 
+
+For each direction `d`, perform the following analysis.
+
+## 4. Calculate draft for every face
+
+For every face:
+
+`dot = n · d`
+
+Then:
+
+`draft_angle = asin(|dot|)`
+
+This is calculated for every face using the cached normal.
+
+The result is stored temporarily for the candidate direction rather than immediately mutating the permanent `FaceData`.
+
+For example:
+
+`Face 17 → n = (...) → d = +Z → draft = 0.32°`
+
+The important optimization is:
+
+**Calculate `n · d` once → reuse it for draft classification, mold-side classification and other cheap directional tests.**
+
+## 5. Classify the draft
+
+Using the existing thresholds:
+
+`draft >= 1.5° → GOOD`
+
+`0.5° <= draft < 1.5° → MARGINAL`
+
+`draft < 0.5° → BAD`
+
+Then calculate the **area** belonging to each class.
+
+For example:
+
+`Total area = 10,000 mm²`
+
+`Good = 8,500 mm²`
+
+`Marginal = 800 mm²`
+
+`Bad = 700 mm²`
+
+Therefore:
+
+`bad_draft_pct = 700 / 10,000 × 100 = 7%`
+
+`marginal_pct = 800 / 10,000 × 100 = 8%`
+
+This is important because we care about the amount of problematic geometry, not simply how many B-Rep faces happen to have poor draft. 
+
+## 6. Do NOT use bad draft as the actual undercut definition
+
+This is one of the most important changes.
+
+Currently, the cheap undercut detector uses low draft as a proxy:
+
+`draft < 0.5° → proxy undercut`
+
+That is useful for quickly identifying suspicious faces, but it is **not a true undercut test**. The existing architecture itself relies on later Boolean refinement to establish actual geometric obstruction. 
+
+Therefore:
+
+`BAD DRAFT ≠ UNDERCUT`
+
+Instead:
+
+`Bad draft → poor surface orientation`
+
+`Undercut → physical obstruction during withdrawal`
+
+These must become separate scoring signals.
+
+## 7. Perform cheap accessibility analysis
+
+For each relevant face, ask:
+
+> “If the mold opens in direction `d`, can this surface move out without colliding with the rest of the part?”
+
+Instead of immediately performing an expensive Boolean operation:
+
+1. Select representative/sample points on the face.
+2. Slightly offset each point away from the face to avoid immediately intersecting the originating surface.
+3. Cast a ray in the proposed withdrawal direction.
+4. Intersect the ray against the complete `part.occ_shape`.
+5. Ignore the originating face/self-intersection.
+6. If another face is encountered along the withdrawal path, mark that sample as obstructed.
+7. Otherwise mark it accessible.
+8. Repeat for sufficient samples across the face.
+
+For a face:
+
+`accessibility_ratio = accessible_samples / total_samples`
+
+and:
+
+`occlusion_ratio = obstructed_samples / total_samples`
+
+For example:
+
+`Face 27`
+
+`100 samples`
+
+`65 accessible`
+
+`35 obstructed`
+
+Therefore:
+
+`accessibility = 65%`
+
+`occlusion = 35%`
+
+This gives us a continuous measurement rather than simply:
+
+`Face 27 = undercut`.
+
+## 8. Determine candidate undercut area
+
+For each face:
+
+`obstructed_area ≈ face_area × occlusion_ratio`
+
+Then:
+
+`total_undercut_area = Σ obstructed_area`
+
+and:
+
+`undercut_area_pct = total_undercut_area / total_part_area × 100`
+
+Now we have two genuinely different measurements:
+
+`bad_draft_area_pct → surface orientation problem`
+
+`undercut_area_pct → physical accessibility problem`
+
+This is the key correction to the redundancy in the current scoring system. The existing cheap stage can otherwise derive both signals from the same low-draft faces. 
+
+## 9. Calculate the preliminary direction score
+
+For each candidate direction:
+
+`Score(d) =`
+
+`W_bad × bad_draft_pct`
+
+`+ W_marginal × marginal_pct`
+
+`+ W_undercut × undercut_area_pct`
+
+`+ W_tooling × tooling_penalty`
+
+Lower score = better direction.
+
+The important difference from the current implementation is that:
+
+**`W_undercut` should operate on actual accessibility/obstruction information, not simply on `draft < 0.5°`.**
+
+The current documented score uses approximately:
+
+`1500 × undercut_pct + 1000 × bad_draft_pct + 100 × marginal_pct + ...`
+
+but the cheap undercut term is highly correlated with bad draft before Boolean refinement. 
+
+So the improved architecture should make the two terms genuinely independent.
+
+## 10. Decide whether the preferred directions are suitable
+
+Now evaluate the six principal directions.
+
+For each:
+
+`draft quality`
+
+`accessibility/undercut`
+
+`preliminary score`
+
+Then determine whether any direction satisfies the **manufacturing suitability criteria**.
+
+Important: Bosch has confirmed that X/Y/Z are preferred, but they have **not yet given us numerical thresholds defining “suitable.”**
+
+Therefore we should make this a configurable gate rather than hard-code an arbitrary value.
+
+Conceptually:
+
+`if direction satisfies manufacturing criteria → suitable`
+
+Otherwise:
+
+`direction → rejected`
+
+## 11. If a preferred direction is suitable, select it
+
+If one or more of the six directions is suitable:
+
+1. Compare the suitable directions.
+2. Calculate their final scores.
+3. Select the lowest-scoring suitable principal direction.
+
+For example:
+
+`+X → suitable → score 42`
+
+`-X → unsuitable`
+
+`+Y → suitable → score 51`
+
+`-Y → suitable → score 37`
+
+`+Z → unsuitable`
+
+`-Z → unsuitable`
+
+Result:
+
+`optimal direction = -Y`
+
+This respects Bosch's preference for conventional directions without forcing an unsuitable axis.
+
+## 12. If none of the six directions is suitable, expand the search
+
+This is the major change from our previous plan.
+
+We **do not stop at six directions**.
+
+We move to Stage 2.
+
+### Stage 2 — Controlled 45° directions
+
+Evaluate the explicitly defined 45° candidates.
+
+For example, depending on the agreed definition:
+
+`(±1, ±1, 0) / √2`
+
+`(±1, 0, ±1) / √2`
+
+`(0, ±1, ±1) / √2`
+
+The exact candidate set should be configurable rather than hard-coded until Bosch confirms which 45° orientations they consider practical.
+
+Again:
+
+`draft → accessibility → score → suitability`
+
+If a suitable direction exists, choose the best one.
+
+## 13. If the 45° directions also fail, expand to arbitrary directions
+
+This is where Bosch's latest clarification changes the architecture significantly.
+
+We are **allowed to search other directions** when the preferred directions do not produce a suitable mold direction. 
+
+Therefore Stage 3 can use:
+
+`broader spherical sampling`
+
+or an adaptive angular search.
+
+For example:
+
+`15° coarse search`
+
+→ identify promising region
+
+→ refine around that region with:
+
+`7.5°`
+
+→ then:
+
+`3°`
+
+→ then potentially finer resolution.
+
+This is better than immediately evaluating hundreds of directions at high precision.
+
+So the search becomes **coarse → promising region → fine refinement**, rather than uniformly spending computation everywhere.
+
+## 14. Use manufacturing preference as a preference, not an artificial restriction
+
+The direction score can include a small preference for conventional directions, but it should not overpower geometry.
+
+Conceptually:
+
+`geometric/manufacturing quality`
+
+should dominate:
+
+`principal-axis preference`.
+
+For example, if:
+
+`+Z score = 80`
+
+but:
+
+`direction 23° from +Z score = 30`
+
+we should not automatically choose +Z merely because it is principal.
+
+Instead, if Bosch says the arbitrary direction is manufacturable, the optimizer should be capable of selecting it.
+
+This is much more faithful to Bosch's actual clarification.
+
+## 15. Run accurate Boolean validation on the shortlisted directions
+
+Now we use the expensive OCC operation.
+
+For each shortlisted candidate:
+
+1. Take the actual `TopoDS_Face`.
+2. Offset it slightly.
+3. Sweep the offset face along the withdrawal direction.
+4. Generate the swept volume.
+5. Intersect the swept volume with `part.occ_shape`.
+6. Measure the resulting intersection.
+7. Determine whether actual part material obstructs withdrawal.
+
+Conceptually:
+
+`Face`
+
+→ `offset`
+
+→ `sweep`
+
+→ `BRepPrimAPI_MakePrism`
+
+→ `BRepAlgoAPI_Common`
+
+→ `intersection volume`
+
+→ `actual geometric obstruction`.
+
+This is the current system's strongest undercut evidence. 
+
+## 16. Use Boolean validation to correct the accessibility estimate
+
+The ray/accessibility stage is a **fast approximation**.
+
+The Boolean stage is the **high-confidence geometric validation**.
+
+Therefore:
+
+`Ray accessibility → candidate undercut`
+
+`Boolean sweep → confirmed undercut`
+
+If the two disagree:
+
+`Boolean result takes precedence`.
+
+This gives us a two-level undercut detector rather than forcing expensive Boolean operations on the entire search space.
+
+## 17. Recalculate the final direction score using confirmed undercuts
+
+For each refined candidate:
+
+`Final Score(d) =`
+
+`W_bad × bad_draft_pct`
+
+`+ W_marginal × marginal_pct`
+
+`+ W_undercut × confirmed_undercut_area_pct`
+
+`+ W_interference × interference_volume`
+
+`+ W_tooling × tooling_penalty`
+
+Then:
+
+`lowest final score = optimal pull direction`
+
+The undercut term now represents actual geometric accessibility rather than the cheap draft proxy.
+
+## 18. Store the winning direction
+
+Once the winner is identified:
+
+`PartGeometry.optimal_pull_direction = d_best`
+
+Then run:
+
+`analyze_draft(..., mutate=True)`
+
+and:
+
+`detect_undercuts(..., mutate=True)`
+
+for the winning direction.
+
+This updates the permanent `FaceData` records so they describe the **actual selected mold direction**, rather than the temporary candidate directions tested during optimization. 
+
+## 19. Determine the final undercut features
+
+For the selected direction:
+
+1. Keep all confirmed inaccessible faces.
+2. Calculate their obstructed areas.
+3. Record accessibility/occlusion.
+4. Record the faces responsible for obstruction where possible.
+5. Use the existing face adjacency graph to group connected undercut regions.
+6. Produce undercut features rather than just a flat list of faces.
+
+The result should eventually look conceptually like:
+
+`Undercut Feature 1`
+
+`→ faces: 17, 18, 19`
+
+`→ affected area: 240 mm²`
+
+`→ accessibility: 18%`
+
+`→ obstruction: confirmed`
+
+rather than simply:
+
+`Face 17 = undercut`.
+
+## 20. Evaluate parting-line complexity
+
+This is the **new manufacturing factor introduced by Bosch's feedback**.
+
+Once a candidate direction has been selected, determine the resulting parting-line structure.
+
+Potential measurable properties include:
+
+* number of disconnected parting-line components
+* number of segments/edges
+* number of branches
+* gaps/discontinuities
+* number of separate parting regions
+* complexity of the resulting parting surface.
+
+However, **do not assign arbitrary weights or thresholds yet**. Bosch has only told us that complex parts can produce complex parting lines; they have not yet defined exactly how they want complexity measured.
+
+So initially:
+
+`Parting-line complexity = diagnostic metric`
+
+Later:
+
+`Parting-line complexity → scoring term`
+
+once Bosch provides the engineering criteria.
+
+## 21. Final selection logic
+
+The final direction-selection logic therefore becomes:
+
+**First preference:**
+
+`Can a conventional ±X/±Y/±Z direction produce a suitable mold?`
+
+If yes:
+
+`choose best suitable principal direction`.
+
+If no:
+
+`Can an allowed 45° direction produce a suitable mold?`
+
+If yes:
+
+`choose best suitable 45° direction`.
+
+If no:
+
+`search broader arbitrary directions`.
+
+Then among the feasible candidates:
+
+`minimize manufacturing score`.
+
+The fundamental change is that **direction preference and direction feasibility are no longer the same thing**.
+
+## 22. Final undercut logic
+
+The final undercut logic becomes:
+
+`Face`
+
+→ `draft analysis`
+
+→ **do not call it undercut merely because draft is bad**
+
+→ `accessibility sampling`
+
+→ `obstructed?`
+
+→ candidate undercut
+
+→ `Boolean swept-volume validation`
+
+→ confirmed undercut
+
+→ calculate undercut area/severity
+
+→ group into undercut features.
+
+This directly fixes the current conceptual problem where the cheap undercut proxy and bad-draft calculation overlap. The current architecture explicitly acknowledges that the Boolean stage is what introduces the stronger geometric evidence. 
+
+## 23. Final optimization architecture
+
+The complete improved system is therefore:
+
+```text
+STEP FILE
+    │
+    ▼
+STEP Loader / OpenCascade
+    │
+    ▼
+TopoDS_Shape
+    │
+    ▼
+PartGeometry
+    │
+    ├── Faces
+    ├── Edges
+    ├── Vertices
+    ├── Normals
+    ├── Areas
+    └── Adjacency
+    │
+    ▼
+PRECOMPUTE GEOMETRY
+    │
+    └── normals × candidate directions
+    │
+    ▼
+┌───────────────────────────────┐
+│ STAGE 1: PREFERRED DIRECTIONS │
+│ +X -X +Y -Y +Z -Z             │
+└───────────────┬───────────────┘
+                │
+                ▼
+       Draft Analysis
+                │
+       Good / Marginal / Bad
+                │
+                ▼
+      Accessibility Analysis
+                │
+        Accessible / Blocked
+                │
+                ▼
+         Preliminary Score
+                │
+                ▼
+          Suitable Direction?
+          /                \
+        YES                 NO
+         │                   │
+         ▼                   ▼
+   Best Principal      STAGE 2
+     Direction          45° Directions
+                             │
+                             ▼
+                       Draft + Access
+                             │
+                             ▼
+                         Score
+                             │
+                     Suitable?
+                      /       \
+                    YES        NO
+                     │          │
+                     ▼          ▼
+                  Select     STAGE 3
+                              Arbitrary
+                              Directions
+                                │
+                                ▼
+                         Coarse Search
+                                │
+                                ▼
+                       Promising Regions
+                                │
+                                ▼
+                         Fine Search
+                                │
+                                ▼
+                       Best Candidates
+                                │
+                                ▼
+                 ┌────────────────────────┐
+                 │ BOOLEAN VALIDATION     │
+                 │                        │
+                 │ Face → Offset → Sweep  │
+                 │       → Boolean        │
+                 │       → Intersection   │
+                 └───────────┬────────────┘
+                             │
+                             ▼
+                    CONFIRMED UNDERCUTS
+                             │
+                             ▼
+                     FINAL DIRECTION SCORE
+                             │
+                             ▼
+                    LOWEST SCORE WINS
+                             │
+                             ▼
+                 OPTIMAL PULL DIRECTION
+                             │
+              ┌──────────────┴──────────────┐
+              ▼                             ▼
+       Final Draft State              Final Undercuts
+              │                             │
+              └──────────────┬──────────────┘
+                             ▼
+                    Parting-Line Analysis
+                             │
+                             ▼
+                  Parting-Line Complexity
+                             │
+                             ▼
+                    Core / Cavity Analysis
+```
+
+### The final algorithm in one line
+
+**STEP → exact B-Rep → cache geometry → test preferred ±X/±Y/±Z → draft + accessibility → if unsuitable, expand to 45° → if still unsuitable, search arbitrary directions → shortlist candidates → Boolean-confirm undercuts → score draft + confirmed undercut + eventual parting-line complexity → select lowest-risk feasible direction → finalize the geometry state.**
+
+The **three biggest changes** from our original plan are therefore:
+
+1. **We are no longer restricting the final answer to 6 or 18 directions.** Bosch has confirmed that X/Y/Z are preferred, but other directions are allowed when necessary. 
+2. **Bad draft is no longer treated as actual undercut.** Draft is a surface-orientation metric; accessibility/Boolean interference is the undercut metric. 
+3. **The search becomes hierarchical and adaptive:** preferred directions first, progressively broader search only when required. This replaces the current blanket 15°/54-candidate strategy. 
+
+One thing remains intentionally **open**: Bosch has not yet defined the numerical meaning of **“suitable”** or how exactly parting-line complexity should be weighted. Those should become configuration parameters once the panel gives us that information, rather than us inventing arbitrary engineering thresholds.
