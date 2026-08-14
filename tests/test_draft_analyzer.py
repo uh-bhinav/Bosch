@@ -693,3 +693,165 @@ class TestFaceConditionThresholds:
         }
         assert required_by_face_group[(0,)] == 1.5
         assert required_by_face_group[(1,)] == 5.0
+
+
+# =============================================================================
+# Milestone 1 — Directional Metric Reuse (precompute_directional_metrics)
+# =============================================================================
+
+class TestPrecomputeDirectionalMetrics:
+    """
+    Tests for ``precompute_directional_metrics()`` and the
+    ``precomputed_metrics`` fast-path in ``analyze_draft()``.
+    """
+
+    def test_precompute_returns_one_entry_per_valid_face(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+
+        f0 = _make_face(0, (0.0, 0.0, 1.0))   # valid
+        f1 = _make_face(1, (1.0, 0.0, 0.0), valid=False)  # invalid normal
+        part = _make_part_with_faces([f0, f1])
+
+        result = precompute_directional_metrics(part, (0.0, 0.0, 1.0))
+
+        assert 0 in result
+        assert 1 not in result   # invalid face excluded
+
+    def test_precompute_signed_dot_matches_face_method(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+        from backend.models.geometry_models import dot3, normalize3
+
+        normal = (0.3, 0.4, math.sqrt(1.0 - 0.09 - 0.16))  # unit normal
+        face = _make_face(0, normal)
+        part = _make_part_with_faces([face])
+        pull = normalize3((0.1, 0.2, 0.97))
+
+        pm = precompute_directional_metrics(part, pull)
+
+        expected_dot = dot3(normal, pull)
+        assert abs(pm[0].signed_dot - expected_dot) < 1e-9
+
+    def test_precompute_draft_angle_matches_face_method(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+        from backend.models.geometry_models import dot3, normalize3
+
+        normal = (0.0, 0.0, 1.0)
+        face = _make_face(0, normal)
+        part = _make_part_with_faces([face])
+        pull = normalize3((0.0, 0.0, 1.0))
+
+        pm = precompute_directional_metrics(part, pull)
+        expected_angle = math.degrees(math.asin(abs(dot3(normal, pull))))
+
+        assert abs(pm[0].draft_angle_deg - expected_angle) < 1e-9
+
+    def test_precompute_mold_side_positive_for_cavity(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+
+        face = _make_face(0, (0.0, 0.0, 1.0))   # normal aligns with pull
+        part = _make_part_with_faces([face])
+        pm = precompute_directional_metrics(part, (0.0, 0.0, 1.0))
+
+        assert pm[0].mold_side == "positive"
+
+    def test_precompute_mold_side_negative_for_core(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+
+        face = _make_face(0, (0.0, 0.0, -1.0))   # normal opposes pull
+        part = _make_part_with_faces([face])
+        pm = precompute_directional_metrics(part, (0.0, 0.0, 1.0))
+
+        assert pm[0].mold_side == "negative"
+
+    def test_precompute_classification_good_for_well_drafted(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+
+        face = _make_face(0, (0.0, 0.0, 1.0))   # 90° draft → good
+        part = _make_part_with_faces([face])
+        pm = precompute_directional_metrics(part, (0.0, 0.0, 1.0))
+
+        assert pm[0].draft_classification == "good"
+
+    def test_precompute_classification_bad_for_vertical_wall(self):
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+
+        # Normal perpendicular to pull → 0° draft → bad
+        face = _make_face(0, (1.0, 0.0, 0.0))
+        part = _make_part_with_faces([face])
+        pm = precompute_directional_metrics(part, (0.0, 0.0, 1.0))
+
+        assert pm[0].draft_classification == "bad"
+
+    def test_analyze_draft_with_precomputed_gives_identical_result(self):
+        """
+        ``analyze_draft()`` with ``precomputed_metrics`` must produce
+        byte-identical per-face data compared to without it.
+        """
+        from backend.geometry.draft_analyzer import (
+            analyze_draft,
+            precompute_directional_metrics,
+        )
+
+        f0 = _make_face(0, (0.0, 0.0, 1.0))    # good draft
+        f1 = _make_face(1, (1.0, 0.0, 0.0))    # bad draft
+        part = _make_part_with_faces([f0, f1])
+        pull = (0.0, 0.0, 1.0)
+
+        pm = precompute_directional_metrics(part, pull)
+        result_precomputed = analyze_draft(part, pull, mutate=False, precomputed_metrics=pm)
+        result_direct = analyze_draft(part, pull, mutate=False)
+
+        for fid in [0, 1]:
+            assert (
+                result_precomputed.face_results[fid]["draft_angle_deg"]
+                == pytest.approx(result_direct.face_results[fid]["draft_angle_deg"], abs=1e-9)
+            )
+            assert (
+                result_precomputed.face_results[fid]["draft_classification"]
+                == result_direct.face_results[fid]["draft_classification"]
+            )
+            assert (
+                result_precomputed.face_results[fid]["mold_side"]
+                == result_direct.face_results[fid]["mold_side"]
+            )
+
+    def test_analyze_draft_face_conditions_bypass_precomputed(self):
+        """
+        When ``face_conditions`` is provided, ``precomputed_metrics`` must
+        NOT be used (per-face thresholds override global defaults).
+        """
+        from backend.geometry.draft_analyzer import (
+            analyze_draft,
+            precompute_directional_metrics,
+        )
+
+        # 2° draft face — good for smooth (>1.5°), bad for heavy_texture (>5°)
+        # Normal must give n·d = sin(2°) so asin(|n·d|) = 2°.
+        # With pull=(0,0,1): n=(cos(2°),0,sin(2°)) → n·d = sin(2°) ≈ 0.035 → draft=2°
+        face = _make_face(0, (math.cos(math.radians(2.0)), 0.0, math.sin(math.radians(2.0))))
+        part = _make_part_with_faces([face])
+        pull = (0.0, 0.0, 1.0)
+
+        pm = precompute_directional_metrics(part, pull)
+
+        result_precomputed = analyze_draft(
+            part, pull, mutate=False, precomputed_metrics=pm,
+            face_conditions={0: "heavy_texture"},
+        )
+        # face_conditions provided → must not use precomputed (which only knows global defaults)
+        # classification should use heavy_texture thresholds (good=5.0°, marginal=3.5°)
+        assert result_precomputed.face_results[0]["draft_classification"] == "bad"
+        assert result_precomputed.face_results[0]["condition_applied"] == "heavy_texture"
+
+    def test_FaceDirectionalMetrics_is_frozen(self):
+        """FaceDirectionalMetrics is a frozen dataclass — immutable."""
+        from backend.geometry.draft_analyzer import FaceDirectionalMetrics
+
+        m = FaceDirectionalMetrics(
+            signed_dot=0.5,
+            draft_angle_deg=30.0,
+            mold_side="positive",
+            draft_classification="good",
+        )
+        with pytest.raises((AttributeError, TypeError)):
+            m.signed_dot = 0.9  # type: ignore[misc]

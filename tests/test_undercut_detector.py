@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _make_face(face_id: int, normal: tuple[float, float, float], area: float = 100.0):
     from backend.models.geometry_models import FaceData
@@ -1681,3 +1683,164 @@ def test_feature_semantics_identify_core_side_lifter_review(monkeypatch):
     assert feature.side_action_candidate is True
     assert feature.recommended_mold_action == "lifter-or-collapsible-core-review"
     assert feature.action_confidence_label == "high"
+
+
+# ---------------------------------------------------------------------------
+# Milestone 2: Accessibility Risk Signal
+# ---------------------------------------------------------------------------
+
+class TestAccessibilityRisk:
+    """
+    Tests for _compute_accessibility_risk() and the new fields it populates
+    on UndercutDetectionResult.
+
+    The three core invariants being tested:
+    1. Bad draft + all convex edges → NOT accessibility risk (draft ≠ undercut)
+    2. Good draft + core-side + concave edge → IS accessibility risk
+    3. Core-side + all convex edges → NOT risk (no concave geometry evidence)
+    """
+
+    def test_bad_draft_all_convex_edges_not_accessibility_risk(self):
+        """
+        A face with bad draft (normal perpendicular to pull) but ALL convex
+        edges must NOT be flagged as an accessibility risk.
+        BAD DRAFT ≠ UNDERCUT — no concave edge means no pocket evidence.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        # Normal perpendicular to pull → 0° draft (bad), but completely convex
+        face = _make_face(0, (1.0, 0.0, 0.0))
+        edge0 = _make_edge(0, [0], convexity="convex")
+        edge1 = _make_edge(1, [0], convexity="convex")
+        part = _make_part([face], edges=[edge0, edge1], face_to_edges={0: [0, 1]})
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert result.accessibility_risk_area_mm2 == 0.0
+        assert result.accessibility_risk_face_ids == []
+        assert result.accessibility_risk_area_pct == 0.0
+
+    def test_good_draft_core_side_concave_edge_is_accessibility_risk(self):
+        """
+        A face with good draft CAN still be an accessibility risk when it is
+        core-side (normal opposes pull) and has a concave bounding edge.
+        This proves accessibility risk is INDEPENDENT of draft classification.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        # Normal = (-0.02, 0, -0.9998): strongly core-side (signed_dot ≈ -0.9998),
+        # draft_angle = asin(0.9998) ≈ 88.9° → classified "good"
+        face = _make_face(0, (-0.02, 0.0, -0.9998), area=200.0)
+        concave_edge = _make_edge(0, [0], convexity="concave")
+        part = _make_part([face], edges=[concave_edge], face_to_edges={0: [0]})
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert 0 in result.accessibility_risk_face_ids
+        assert result.accessibility_risk_area_mm2 == pytest.approx(200.0)
+
+    def test_core_side_all_convex_edges_not_accessibility_risk(self):
+        """
+        A core-side face with ALL convex edges must NOT be flagged.
+        A convex boss facing away from pull has no pocket geometry evidence.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        # Normal = (0, 0, -1): directly opposing pull (core-side), but convex profile
+        face = _make_face(0, (0.0, 0.0, -1.0))
+        edge0 = _make_edge(0, [0], convexity="convex")
+        edge1 = _make_edge(1, [0], convexity="tangent")
+        part = _make_part([face], edges=[edge0, edge1], face_to_edges={0: [0, 1]})
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert result.accessibility_risk_face_ids == []
+        assert result.accessibility_risk_area_mm2 == 0.0
+
+    def test_accessibility_risk_area_pct_computed_correctly(self):
+        """
+        accessibility_risk_area_pct must equal risk_area / total_area * 100.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        # Two faces: one cavity-side (no risk), one core-side+concave (risk).
+        cavity_face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)   # positive → cavity
+        risk_face = _make_face(1, (0.0, 0.0, -1.0), area=400.0)     # negative → core-side
+        concave_edge = _make_edge(0, [1], convexity="concave")
+        part = _make_part(
+            [cavity_face, risk_face],
+            edges=[concave_edge],
+            face_to_edges={0: [], 1: [0]},
+        )
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        total_area = 100.0 + 400.0
+        expected_pct = 400.0 / total_area * 100.0
+        assert result.accessibility_risk_area_pct == pytest.approx(expected_pct, rel=1e-6)
+
+    def test_accessibility_risk_fields_present_in_to_dict(self):
+        """
+        UndercutDetectionResult.to_dict() must include the accessibility_risk
+        section with face_ids, area_mm2, and area_pct keys.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        face = _make_face(0, (1.0, 0.0, 0.0))
+        part = _make_part([face])
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+        d = result.to_dict()
+
+        assert "accessibility_risk" in d
+        risk = d["accessibility_risk"]
+        assert "face_ids" in risk
+        assert "area_mm2" in risk
+        assert "area_pct" in risk
+
+    def test_accessibility_risk_not_proof_of_undercut(self):
+        """
+        A face flagged as accessibility risk must NOT appear in proxy_undercut_ids
+        unless it also independently qualifies for the proxy criterion (draft < 0.5°).
+        The two signals are independent — accessibility risk is a heuristic, not
+        confirmation.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        # Normal ≈ (-0.02, 0, -0.9998): core-side with good draft (~88.9°).
+        # This face is NOT a proxy undercut (draft >> 0.5°), but IS accessibility risk.
+        face = _make_face(0, (-0.02, 0.0, -0.9998), area=150.0)
+        concave_edge = _make_edge(0, [0], convexity="concave")
+        part = _make_part([face], edges=[concave_edge], face_to_edges={0: [0]})
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        # accessibility risk IS flagged
+        assert 0 in result.accessibility_risk_face_ids
+        # but NOT in undercut_face_ids (good draft ≫ 0.5° threshold, so not a proxy undercut)
+        assert 0 not in result.undercut_face_ids
+
+    def test_precomputed_metrics_match_direct_computation(self):
+        """
+        detect_undercuts() called with precomputed_metrics must produce the same
+        accessibility_risk_face_ids as when called without them.
+        """
+        from backend.geometry.draft_analyzer import precompute_directional_metrics
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        face = _make_face(0, (0.0, 0.0, -1.0), area=100.0)
+        concave_edge = _make_edge(0, [0], convexity="concave")
+        part = _make_part([face], edges=[concave_edge], face_to_edges={0: [0]})
+        pull = (0.0, 0.0, 1.0)
+
+        pm = precompute_directional_metrics(part, pull)
+        result_with = detect_undercuts(
+            part, pull, mutate=False, boolean_refine=False,
+            precomputed_metrics=pm,
+        )
+        result_without = detect_undercuts(part, pull, mutate=False, boolean_refine=False)
+
+        assert result_with.accessibility_risk_face_ids == result_without.accessibility_risk_face_ids
+        assert result_with.accessibility_risk_area_mm2 == pytest.approx(
+            result_without.accessibility_risk_area_mm2
+        )

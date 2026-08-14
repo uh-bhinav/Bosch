@@ -698,9 +698,9 @@ and `TODO.md` S2.3/S2.4.
 | Module | File | Lines | Status | Notes |
 |---|---|---|---|---|
 | STEP Loader | `backend/geometry/step_loader.py` | ~1,236 | ✅ Done | Full topology + edge convexity (1.1) + `load_step_cached()` LRU cache with mutate-safe cloning (S3.8, 2026-07-28) |
-| Draft Analyzer | `backend/geometry/draft_analyzer.py` | 872 | ✅ Done | Face-level draft + conditional thresholds (1.5) |
-| Undercut Detector | `backend/geometry/undercut_detector.py` | 3,517 | ✅ Done | Selective Boolean refinement, feature grouping, convexity suppression (1.2) |
-| Direction Optimizer | `backend/geometry/direction_optimizer.py` | 1,058 | ✅ Done | Candidate search, Boolean pruning, flash risk + coarse-to-fine (1.4) |
+| Draft Analyzer | `backend/geometry/draft_analyzer.py` | ~900 | ✅ Done | Face-level draft + conditional thresholds (1.5) + `FaceDirectionalMetrics` precomputation (M1, 2026-08-13) |
+| Undercut Detector | `backend/geometry/undercut_detector.py` | ~3,530 | ✅ Done | Selective Boolean refinement, feature grouping, convexity suppression (1.2) + independent accessibility risk signal (M2, 2026-08-13) |
+| Direction Optimizer | `backend/geometry/direction_optimizer.py` | ~1,380 | ✅ Done | Hierarchical staged search (M3) + independent scoring: accessibility risk cheap / Boolean-confirmed refined stage (M4) + metric reuse (M1). 2026-08-13. |
 | Parting Line | `backend/geometry/parting_line.py` | 4,720 | ✅ Substantial | Real graph search (1.6/Bug B), ring bridging (1.7/Bug H-2), verified closure (1.8/Bug A), parting surface (1.9/Bug E). Full Hou global optimization still not applied |
 | Core/Cavity | `backend/geometry/core_cavity.py` | ~695 | ✅ Split verified end-to-end (Stage 2b) | Face classification + Boolean solid split (1.10) + AP214 export (1.11). `split_ok` + 2 solids + reloadable STEP export verified on both real parts via `build_planar_split_tool()` (a labeled planar approximation — see Resolved "Stage 2b"), not the (topologically invalid) real 3-D parting surface |
 | Visualize Raw | `backend/geometry/visualize_raw.py` | 442 | ✅ Done | Display mesh with `face_id` mapping + triangle ceiling |
@@ -726,9 +726,9 @@ Docker, container recreated 2026-07-28 with the F7 mount fix live). No
 | Test File | Lines | Status |
 |---|---|---|
 | `test_parting_line.py` | 1,190 | ✅ 32/32 — includes 8 honesty/regression guards added this session |
-| `test_undercut_detector.py` | 1,683 | ✅ Passes (mock-based) |
-| `test_draft_analyzer.py` | 695 | ✅ Passes (mock-based) |
-| `test_direction_optimizer.py` | 522 | ✅ Passes (mock-based) |
+| `test_undercut_detector.py` | ~1,850 | ✅ Passes (mock-based) — +7 new `TestAccessibilityRisk` tests (M2, 2026-08-13) |
+| `test_draft_analyzer.py` | ~870 | ✅ Passes (mock-based) — +10 new `TestPrecomputeDirectionalMetrics` tests (M1, 2026-08-13) |
+| `test_direction_optimizer.py` | ~760 | ✅ Passes (mock-based) — +9 new `TestHierarchicalSearch`/`TestScoringIndependence` tests (M3/M4, 2026-08-13) |
 | `test_step_loader.py` | ~600 | ✅ Passes — +5 tests 2026-07-28: `TestLoadStepCached`, the mandatory mutate-safety guard for the S3.8 LRU cache |
 | `test_part_validation.py` | ~430 | ✅ Passes — +9 tests 2026-07-28 for `check_assertions()` (X.1), each built from a deliberately bad payload |
 | `test_core_cavity.py` | (2026-07-28) | ✅ 14/14 — 9 from Stage 2a + 5 from Stage 2b. Includes `test_real_split_and_export_round_trips_on_part1`/`_on_part3`: the first tests to ever run the full real pipeline (direction → parting line → Boolean split → AP214 export → STEP reload) against `data/parts/Part1.stp`/`Part3.stp` and assert exactly 2 reloaded solids |

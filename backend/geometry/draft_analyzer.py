@@ -85,6 +85,38 @@ FaceDraftResult = dict[str, FaceDraftValue]
 
 
 # =============================================================================
+# Pre-computation dataclass (shared with undercut_detector, direction_optimizer)
+# =============================================================================
+
+@dataclass(frozen=True)
+class FaceDirectionalMetrics:
+    """
+    Pre-computed per-face directional data for a single pull direction.
+
+    Computed once by ``precompute_directional_metrics()`` and consumed by
+    both ``analyze_draft()`` and ``detect_undercuts()`` to avoid redundant
+    n·d calculations during the direction-optimizer candidate loop.
+
+    Three signals derive from a single ``signed_dot = n · d`` computation.
+    They represent strictly different physical properties — callers MUST NOT
+    conflate them:
+
+    - ``draft_angle_deg`` — surface-orientation quality (how far the face
+      tilts relative to the pull axis).  NOT an undercut indicator.
+    - ``mold_side`` — which mold half the face points into.  NOT an undercut
+      indicator; a core-side face is normal.  Combined with concave-edge
+      evidence it becomes a heuristic accessibility *risk* signal, but only
+      Boolean swept-volume validation can confirm an actual undercut.
+    - ``draft_classification`` — three-level quality class derived from the
+      draft angle and global thresholds (no per-face overrides applied).
+    """
+    signed_dot: float           # n · d (clamped to [-1, 1], with sign)
+    draft_angle_deg: float      # asin(|signed_dot|) in degrees
+    mold_side: str              # "positive" | "negative" | "parting"
+    draft_classification: str   # "good" | "marginal" | "bad"
+
+
+# =============================================================================
 # Result dataclasses
 # =============================================================================
 
@@ -585,6 +617,50 @@ def _resolve_face_thresholds(
     return default_good, default_marginal, "global_default", "smooth"
 
 
+def precompute_directional_metrics(
+    part: PartGeometry,
+    pull_direction: Vec3,
+) -> dict[int, FaceDirectionalMetrics]:
+    """
+    Compute n·d and derived draft metrics for every valid face in one pass.
+
+    Intended for the direction-optimizer candidate loop where the same pull
+    direction is consumed by both ``analyze_draft()`` and
+    ``detect_undercuts()``.  Passing the returned dict to both as
+    ``precomputed_metrics`` eliminates the redundant n·d computations those
+    functions would otherwise each perform independently.
+
+    Notes
+    -----
+    - Global draft thresholds are used.  Per-face ``face_conditions``
+      overrides are NOT applied — callers that need per-face threshold
+      overrides should call ``analyze_draft()`` directly without precomputed
+      metrics.
+    - Faces with ``normal_valid=False`` are omitted from the returned dict.
+    - The returned dict is keyed by ``face_id`` (0-based integer).
+    - For 311 faces × 54 candidates this eliminates ~33 k redundant dot-
+      product computations per optimize_mold_direction() call.
+    """
+    pull_dir = normalize3(pull_direction)
+    cfg = settings.dfm.draft
+    good_thresh = cfg.good_threshold_deg
+    marginal_thresh = cfg.marginal_threshold_deg
+    result: dict[int, FaceDirectionalMetrics] = {}
+    for face in part.faces:
+        if not face.normal_valid:
+            continue
+        raw = dot3(face.normal, pull_dir)
+        clamped = max(-1.0, min(1.0, raw))
+        angle_deg = math.degrees(math.asin(abs(clamped)))
+        result[face.face_id] = FaceDirectionalMetrics(
+            signed_dot=clamped,
+            draft_angle_deg=angle_deg,
+            mold_side=_mold_side(clamped),
+            draft_classification=_classify_draft(angle_deg, good_thresh, marginal_thresh),
+        )
+    return result
+
+
 def analyze_draft(
     part: PartGeometry,
     pull_direction: Vec3,
@@ -592,6 +668,7 @@ def analyze_draft(
     analysis_pass: str = "initial",
     mutate: bool = True,
     face_conditions: Optional[dict[int, str]] = None,
+    precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]] = None,
 ) -> DraftAnalysisResult:
     """
     Compute draft angles for all valid faces and return a `DraftAnalysisResult`.
@@ -674,17 +751,31 @@ def analyze_draft(
             skipped_area += face.area
             continue
 
-        angle = face.draft_angle_for_direction(pull_dir)
-        (
-            face_good_thresh,
-            face_marginal_thresh,
-            threshold_source,
-            condition_applied,
-        ) = _resolve_face_thresholds(
-            face.face_id, face_conditions, good_thresh, marginal_thresh, cfg
+        pm = (
+            precomputed_metrics.get(face.face_id)
+            if precomputed_metrics is not None and face_conditions is None
+            else None
         )
-        classification = _classify_draft(angle, face_good_thresh, face_marginal_thresh)
-        side = _mold_side(dot3(face.normal, pull_dir))
+        if pm is not None:
+            angle = pm.draft_angle_deg
+            classification = pm.draft_classification
+            side = pm.mold_side
+            face_good_thresh = good_thresh
+            face_marginal_thresh = marginal_thresh
+            threshold_source = "global_default"
+            condition_applied = "smooth"
+        else:
+            angle = face.draft_angle_for_direction(pull_dir)
+            (
+                face_good_thresh,
+                face_marginal_thresh,
+                threshold_source,
+                condition_applied,
+            ) = _resolve_face_thresholds(
+                face.face_id, face_conditions, good_thresh, marginal_thresh, cfg
+            )
+            classification = _classify_draft(angle, face_good_thresh, face_marginal_thresh)
+            side = _mold_side(dot3(face.normal, pull_dir))
 
         face_results[face.face_id] = {
             "draft_angle_deg": angle,

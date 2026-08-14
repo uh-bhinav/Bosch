@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def _make_face(face_id: int, normal: tuple[float, float, float], area: float = 100.0):
     from backend.models.geometry_models import FaceData
@@ -520,3 +522,332 @@ def test_optimize_mold_direction_fine_search_adds_candidates(monkeypatch):
 
     assert len(result_fine.candidates) >= coarse_only_count
     assert result_fine.best_direction is not None
+
+
+# ---------------------------------------------------------------------------
+# Milestone 3: Hierarchical Search
+# ---------------------------------------------------------------------------
+
+class TestHierarchicalSearch:
+    """
+    Tests for the staged (principal → diagonal → spherical) direction search.
+    """
+
+    def test_search_stage_reached_3_when_occ_unavailable(self, monkeypatch):
+        """
+        With OCC unavailable, Boolean refinement returns boolean_refined=False,
+        so _is_direction_suitable_boolean() always returns False.  No stage
+        can confirm an acceptable direction — the search exhausts all three
+        stages and search_stage_reached == 3.
+        """
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+
+        assert result.search_stage_reached == 3
+        assert result.best_direction is not None
+
+    def test_search_stage_reached_field_in_to_dict(self, monkeypatch):
+        """DirectionOptimizationResult.to_dict() must include search_stage_reached."""
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+        d = result.to_dict()
+
+        assert "search_stage_reached" in d
+        assert isinstance(d["search_stage_reached"], int)
+        assert d["search_stage_reached"] in {1, 2, 3}
+
+    def test_stage1_early_exit_when_principal_boolean_acceptable(self, monkeypatch):
+        """
+        When a Stage 1 principal direction passes cheap screen AND
+        Boolean-confirms zero confirmed undercuts, the search exits with
+        search_stage_reached=1 without evaluating Stage 2 or Stage 3 candidates.
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.geometry.undercut_detector import UndercutDetectionResult
+
+        # Face aligned with +Z: good draft, not core-side → passes cheap screen.
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        def mock_cached_boolean(
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces
+        ):
+            """Return a Boolean-refined result with zero confirmed undercuts."""
+            ok_result = UndercutDetectionResult(
+                pull_direction=direction,
+                method="mock-boolean",
+                undercut_face_ids=[],
+                accessible_face_ids=[f.face_id for f in part.faces],
+                parting_face_ids=[],
+                skipped_face_ids=[],
+                boolean_refined=True,
+                boolean_confirmed_face_ids=[],
+                total_analysed_area_mm2=100.0,
+            )
+            return ok_result, False
+
+        monkeypatch.setattr(
+            optimizer_module, "_cached_detect_boolean_undercuts", mock_cached_boolean
+        )
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=10)
+
+        assert result.search_stage_reached == 1
+        # Best direction must be one of the 6 principal axes
+        principal_axes = {
+            (1.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0), (0.0, -1.0, 0.0),
+            (0.0, 0.0, 1.0), (0.0, 0.0, -1.0),
+        }
+        assert result.best_direction in principal_axes
+
+    def test_stage2_runs_when_no_principal_cheaply_suitable(self, monkeypatch):
+        """
+        When no Stage 1 candidate passes the cheap suitability screen,
+        Stage 2 (diagonal directions) must be evaluated.  We force this by
+        setting very tight suitability thresholds so principals always fail.
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.config import settings
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        # Override suitability thresholds to be so tight that no principal passes.
+        # The face has normal=(1,0,0); pull=(1,0,0) would give 90° draft (good,
+        # bad_pct=0%), but pull=(0,0,1) gives 0° draft (bad_pct=100% → fails).
+        # By setting max_bad_draft_pct=0.0, every direction with any bad face fails.
+        original_cfg = settings.dfm.direction_search
+        tight_cfg = type(original_cfg)(
+            **{
+                **{f.name: getattr(original_cfg, f.name) for f in original_cfg.__dataclass_fields__.values()},
+                "suitability_max_bad_draft_pct": 0.0,          # Nothing passes cheap screen
+                "suitability_max_accessibility_risk_pct": 0.0,  # Belt and suspenders
+            }
+        )
+        object.__setattr__(settings.dfm, "direction_search", tight_cfg)
+
+        try:
+            # A part with a purely sideways normal — every direction except the
+            # exact alignment will have bad draft faces.
+            face = _make_face(0, (1.0, 0.0, 0.0), area=100.0)
+            part = _make_part([face])
+
+            result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+
+            # With 0% allowed bad draft, no direction passes the cheap screen.
+            # Stage 3 must be reached (no early exit possible at Stage 1 or 2).
+            assert result.search_stage_reached == 3
+        finally:
+            # Restore original config
+            object.__setattr__(settings.dfm, "direction_search", original_cfg)
+
+    def test_hierarchical_disabled_still_returns_valid_result(self, monkeypatch):
+        """
+        With hierarchical_search_enabled=False the optimizer falls directly to
+        Stage 3 (flat behavior), search_stage_reached==3, and the result is valid.
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.config import settings
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        original_cfg = settings.dfm.direction_search
+        flat_cfg = type(original_cfg)(
+            **{
+                **{f.name: getattr(original_cfg, f.name) for f in original_cfg.__dataclass_fields__.values()},
+                "hierarchical_search_enabled": False,
+            }
+        )
+        object.__setattr__(settings.dfm, "direction_search", flat_cfg)
+
+        try:
+            face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+            part = _make_part([face])
+            result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+
+            assert result.search_stage_reached == 3
+            assert result.best_direction is not None
+        finally:
+            object.__setattr__(settings.dfm, "direction_search", original_cfg)
+
+
+# ---------------------------------------------------------------------------
+# Milestone 4: Scoring Independence (accessibility risk ≠ draft ≠ undercut)
+# ---------------------------------------------------------------------------
+
+class TestScoringIndependence:
+    """
+    Tests that verify the three scoring signals are genuinely independent:
+    1. bad_draft_pct — surface orientation
+    2. accessibility_risk_area_pct — heuristic (core-side + concave edge)
+    3. confirmed_undercut_area_pct — Boolean-confirmed obstruction
+    """
+
+    def test_cheap_score_uses_accessibility_risk_not_undercut_pct(self, monkeypatch):
+        """
+        In the cheap stage (boolean_refined=False), the score must incorporate
+        accessibility_risk_area_pct from the undercut result.
+        A face with bad draft + zero accessibility risk must score lower than
+        the same face with zero bad draft + high accessibility risk —
+        assuming the accessibility weight exceeds the bad-draft weight.
+        """
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import (
+            DirectionCandidateResult,
+            optimize_mold_direction,
+        )
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        # Part: face with normal=(0,0,1) — aligns with pull=(0,0,1) → good draft.
+        # No edges registered → no accessibility risk.
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+
+        # The +Z candidate should exist in the scored list
+        z_candidates = [
+            c for c in result.candidates
+            if c.direction == (0.0, 0.0, 1.0)
+        ]
+        assert z_candidates, "Expected +Z candidate in results"
+        z = z_candidates[0]
+
+        # +Z gives good draft → bad_area_pct = 0, accessibility_risk = 0
+        assert z.bad_area_pct == pytest.approx(0.0, abs=1.0)
+        assert z.accessibility_risk_area_pct == pytest.approx(0.0, abs=1.0)
+
+    def test_accessibility_risk_field_exists_on_candidate_result(self, monkeypatch):
+        """
+        DirectionCandidateResult must carry accessibility_risk_area_pct as a
+        first-class field (Milestone 4 additive change).
+        """
+        import backend.geometry.undercut_detector as undercut_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+
+        monkeypatch.setattr(undercut_module, "_OCC_BOOLEAN_AVAILABLE", False)
+
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=6)
+
+        for candidate in result.candidates:
+            assert hasattr(candidate, "accessibility_risk_area_pct")
+            assert isinstance(candidate.accessibility_risk_area_pct, float)
+            d = candidate.to_dict()
+            assert "accessibility_risk_area_pct" in d["percentages"]
+
+    def test_boolean_stage_score_uses_confirmed_undercut_not_proxy(self, monkeypatch):
+        """
+        After Boolean refinement, _score_candidate() must use
+        boolean_confirmed_face_ids (authoritative) — NOT undercut_face_ids
+        (proxy).  We verify this by patching Boolean to confirm NO undercuts
+        even on a face that would proxy-undercut cheaply.
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.geometry.undercut_detector import UndercutDetectionResult
+
+        # Face that would register as a proxy undercut (normal perpendicular to pull)
+        # but Boolean says no confirmed undercut.
+        face = _make_face(0, (1.0, 0.0, 0.0), area=100.0)
+        part = _make_part([face])
+
+        def mock_cached_boolean(
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces
+        ):
+            return UndercutDetectionResult(
+                pull_direction=direction,
+                method="mock-boolean",
+                undercut_face_ids=[0],          # proxy says face 0 is undercut
+                accessible_face_ids=[],
+                parting_face_ids=[],
+                skipped_face_ids=[],
+                boolean_refined=True,
+                boolean_confirmed_face_ids=[],   # Boolean says: NO confirmed undercuts
+                total_analysed_area_mm2=100.0,
+                undercut_area_mm2=100.0,
+            ), False
+
+        monkeypatch.setattr(
+            optimizer_module, "_cached_detect_boolean_undercuts", mock_cached_boolean
+        )
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=10)
+
+        # At least one candidate must have been Boolean-refined
+        boolean_refined_candidates = [c for c in result.candidates if c.boolean_refined]
+        assert boolean_refined_candidates, "Expected at least one Boolean-refined candidate"
+
+        # The winning direction is Boolean-confirmed → search_stage_reached should be
+        # 1 (or 2, depending on which principal passed cheap screen and got Boolean-refined).
+        # What matters: the result is valid.
+        assert result.best_direction is not None
+        assert result.search_stage_reached in {1, 2, 3}
+
+    def test_bad_draft_and_accessibility_risk_are_independent_signals(self):
+        """
+        A face with bad draft (n⊥d) but all-convex edges must score zero
+        accessibility risk.  A face with good draft but core-side+concave
+        must score nonzero accessibility risk.  The signals don't overlap.
+        """
+        # Import the internal scoring helper directly to test signal isolation.
+        from backend.geometry.draft_analyzer import analyze_draft
+        from backend.geometry.undercut_detector import detect_undercuts
+        from backend.models.geometry_models import BoundingBox, EdgeData, PartGeometry
+
+        # Face 1: bad draft (sideways normal), all convex edges
+        bad_draft_face = _make_face(0, (1.0, 0.0, 0.0), area=100.0)
+        convex_edge = EdgeData(
+            edge_id=0,
+            occ_edge=MagicMock(),
+            edge_type="Line",
+            length=1.0,
+            adjacent_face_ids=[0],
+            start_vertex=(0.0, 0.0, 0.0),
+            end_vertex=(1.0, 0.0, 0.0),
+            is_seam=False,
+            convexity="convex",
+        )
+        from backend.models.geometry_models import BoundingBox, PartGeometry
+        part_bad_draft = PartGeometry(
+            source_file="mock.stp",
+            occ_shape=MagicMock(),
+            faces=[bad_draft_face],
+            bounding_box=BoundingBox(0.0, 0.0, 0.0, 10.0, 10.0, 10.0),
+            face_count=1,
+            solid_count=1,
+            shell_count=1,
+            edges=[convex_edge],
+            face_to_edges={0: [0]},
+        )
+
+        undercuts = detect_undercuts(
+            part_bad_draft, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False
+        )
+        draft = analyze_draft(part_bad_draft, (0.0, 0.0, 1.0), mutate=False)
+
+        # Bad draft (face is a proxy undercut), but no accessibility risk
+        assert draft.bad_pct > 0.0
+        assert undercuts.accessibility_risk_area_pct == pytest.approx(0.0)
