@@ -2,6 +2,94 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-14 — Regression fix: stale pyenv backend shadowing OCC-capable micromamba backend on port 8000
+
+**Root cause:** Two `uvicorn backend.api.main:app` processes were running simultaneously on port 8000:
+- PID 88562 — pyenv Python 3.10.13, **no OCC**, bound to `localhost:8000` (started ~11:30PM previous session)
+- PID 94952 — micromamba `dfm_agent` env, **has OCC**, bound to `*:8000` (started 9:33AM current session)
+
+TCP kernel routing prefers the more-specific `localhost` binding, so all `localhost:8000` connections landed on the pyenv process. This process has no `pythonocc-core`, so `load_step_cached()` raised `ImportError` → `_raise_dependency_error()` returned HTTP 503 → frontend displayed "STEP load failed: CAD runtime dependency missing".
+
+**Why the regression appeared:** The micromamba process was started in a new terminal session while the old pyenv process from the previous session remained alive. No code change caused this — it was a process-management issue.
+
+**Fix:** Killed PID 88562 (`kill 88562`). The micromamba process (PID 94952) now owns port 8000 exclusively.
+
+**Verification:**
+- `lsof -i :8000` confirms only PID 94952 on `*:irdmi`
+- `/parts/Part1.stp/summary` → HTTP 200, face_count=311
+- `/parts/Part1.stp/draft?dz=1` → good_pct=28.3%, bad_pct=71.7%
+- `/parts/Part1.stp/undercuts?dz=1&boolean_refine=false` → accessibility_risk section present (M2 verified)
+- All M1-M4 uncommitted changes intact (1,584 insertions in 11 files)
+- Streamlit frontend (PID 94730, micromamba env) on port 8501 unaffected
+
+**Files changed:** None — environment fix only.
+
+**Remaining blocker:** Milestone 5 (Docker regression matrix) still open.
+
+---
+
+### 2026-08-13 — Milestones 1–4: Hierarchical Pull-Direction Search + Independent Scoring Signals
+
+**What changed:**
+
+**Milestone 1 — Directional metric reuse** (`backend/geometry/draft_analyzer.py`):
+- New `FaceDirectionalMetrics` frozen dataclass (`signed_dot`, `draft_angle_deg`, `mold_side`, `draft_classification`) — single source of truth per face-direction pair.
+- New `precompute_directional_metrics(part, pull_direction) → dict[int, FaceDirectionalMetrics]` — computes n·d once, shared by both `analyze_draft()` and `detect_undercuts()`.
+- `analyze_draft()` accepts optional `precomputed_metrics` param; falls back to per-face computation when absent or when `face_conditions` is provided (backward compatible).
+- `direction_optimizer._score_direction_candidate()` now calls `precompute_directional_metrics()` once and passes result to both consumers — eliminates 2 of 3 redundant n·d passes per candidate (for 311 faces × 54 candidates ≈ 33,588 dot products eliminated).
+
+**Milestone 2 — Independent accessibility risk signal** (`backend/geometry/undercut_detector.py`):
+- New `_compute_accessibility_risk(part, pull_dir, precomputed_metrics)` — flags faces that are BOTH core-side (n·d < -0.01) AND have ≥1 concave bounding edge. Uses load-time edge convexity; no new OCC calls.
+- This is a **heuristic risk signal only** — NOT proof of undercut. Explicitly documented; cannot be equated with `undercut_face_ids`.
+- New fields on `UndercutDetectionResult`: `accessibility_risk_face_ids: list[int]`, `accessibility_risk_area_mm2: float`, property `accessibility_risk_area_pct`. Additive — no existing fields changed.
+- `to_dict()` now includes an `accessibility_risk` section (`face_ids`, `area_mm2`, `area_pct`).
+- New config: `dfm.undercut.accessibility_risk_core_side_threshold: 0.01` (matches `_PARTING_THRESHOLD`).
+
+**Milestone 3 — Hierarchical candidate generation** (`backend/geometry/direction_optimizer.py`):
+- Staged search: Stage 1 (6 ±X/Y/Z principals) → Stage 2 (configurable diagonals, default 12 face-diagonals) → Stage 3 (existing 15° spherical grid + fine search).
+- Cheap suitability screen at each stage: `bad_draft_pct ≤ max_bad_pct (30.0%, provisional)` AND `accessibility_risk_pct ≤ max_risk_pct (15.0%, provisional)`.
+- Boolean confirmation required: cheap screen narrows candidates for Boolean, but ONLY Boolean (`boolean_refined=True`, `confirmed_undercut_pct ≤ 10.0% provisional`) stops the search. If Boolean rejects, falls through to next stage.
+- `hierarchical_search_enabled: false` restores flat 54-candidate behavior exactly (backward compatible).
+- New configurable `stage2_directions` list in `config.yaml` (replaceable by Bosch without code change).
+- New field: `DirectionOptimizationResult.search_stage_reached: int` (1/2/3). Included in `to_dict()`.
+- All suitability thresholds explicitly labeled PROVISIONAL ENGINEERING DEFAULTS — not Bosch requirements.
+
+**Milestone 4 — Independent scoring weights** (`backend/geometry/direction_optimizer.py`):
+- `_score_candidate()` now has two independent modes:
+  - **Cheap stage** (`boolean_refined=False`): uses `accessibility_risk_area_pct` (independent of draft) instead of the old `undercut_pct` (which was derived from `draft < 0.5°`, double-counting with `bad_pct`).
+  - **Boolean-refined stage** (`boolean_refined=True`): uses `confirmed_undercut_area_pct` from `boolean_confirmed_face_ids` only. Accessibility proxy term is dropped.
+- New field: `DirectionCandidateResult.accessibility_risk_area_pct: float = 0.0`. Included in `to_dict()`.
+- All weights configurable via `config.yaml` (`scoring_bad_draft`, `scoring_marginal_draft`, `scoring_accessibility_risk`, `scoring_confirmed_undercut`, etc.).
+- Six prohibited equivalences enforced by design and docstrings:
+  - `draft < 0.5°` ≠ undercut
+  - `accessibility_risk == True` ≠ undercut
+  - `cheap screen pass` ≠ suitable direction
+  - `proxy_undercut` ≠ `confirmed_undercut`
+  - `accessibility_risk_area_pct` ≠ `undercut_area_pct`
+  - provisional thresholds ≠ Bosch requirements
+
+**Config changes** (`config.yaml`, `backend/config.py`):
+- New keys under `dfm.undercut`: `accessibility_risk_core_side_threshold`
+- New keys under `dfm.direction_search`: `hierarchical_search_enabled`, `stage2_directions`, `suitability_max_bad_draft_pct`, `suitability_max_accessibility_risk_pct`, `suitability_max_confirmed_undercut_pct`, `scoring_bad_draft`, `scoring_marginal_draft`, `scoring_accessibility_risk`, `scoring_confirmed_undercut`, `scoring_bad_draft_count`, `scoring_marginal_draft_count`, `scoring_accessibility_risk_count`, `scoring_axis_preference`
+- `DirectionSearchSettings` and `UndercutSettings` dataclasses updated in `backend/config.py`.
+
+**Tests** (26 new tests, all passing):
+- `tests/test_draft_analyzer.py`: `TestPrecomputeDirectionalMetrics` (10 tests) — M1 metric reuse, signed dot accuracy, mold-side classification, frozen dataclass invariant.
+- `tests/test_undercut_detector.py`: `TestAccessibilityRisk` (7 tests) — bad draft + convex → no risk, good draft + core-side + concave → risk, convex boss → no risk, pct computation, to_dict presence, independence from proxy undercut, precomputed vs direct parity.
+- `tests/test_direction_optimizer.py`: `TestHierarchicalSearch` (5 tests) + `TestScoringIndependence` (4 tests) — Stage 1 early exit, stage tracking, disabled hierarchical, scoring uses accessibility_risk_area_pct, accessibility_risk field present in to_dict, Boolean stage uses confirmed not proxy, bad draft ≠ accessibility risk.
+
+**Verification:**
+- 380 tests pass locally (4 pre-existing failures: OCC unavailable locally, pre-existing agent provider and core cavity issues — all unrelated to this work).
+- `test_draft_analyzer.py`: 57 passed / 10 skipped (all new tests green).
+- `test_undercut_detector.py`: all existing + 7 new accessibility risk tests green.
+- `test_direction_optimizer.py`: all existing + 9 new M3/M4 tests green.
+
+**Limitations / Known gaps:**
+- Stage 1/2 early exits require Boolean refinement to confirm acceptability. With OCC unavailable locally, all searches reach Stage 3 (correct fallback behavior — `search_stage_reached=3`).
+- Suitability thresholds (30%/15%/10%) are provisional engineering defaults. Bosch has NOT provided numerical thresholds for "suitable" — these are explicitly search-gating heuristics, NOT manufacturing guarantees.
+- Stage 2 directions (12 face-diagonals) are configurable but Bosch has not confirmed which 45° orientations are practical for injection molding. Replace via `config.yaml:dfm.direction_search.stage2_directions`.
+- Real regression matrix on Part1.stp and Part3.stp (Milestone 5) requires Docker with OCC.
+
 ### 2026-08-15 — D-044: secondary-action delegation implemented — H4 can now exclude explicitly authorized, independently validated secondary-mechanism geometry from its primary rigid-body orientation test
 
 **What changed:**

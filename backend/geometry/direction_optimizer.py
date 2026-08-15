@@ -35,7 +35,12 @@ import time
 from dataclasses import dataclass, field
 
 from backend.config import settings
-from backend.geometry.draft_analyzer import DraftAnalysisResult, analyze_draft
+from backend.geometry.draft_analyzer import (
+    DraftAnalysisResult,
+    FaceDirectionalMetrics,
+    analyze_draft,
+    precompute_directional_metrics,
+)
 from backend.geometry.undercut_detector import (
     BooleanVolumeCache,
     UndercutDetectionResult,
@@ -129,6 +134,8 @@ class DirectionCandidateResult:
     boolean_checked_count: int
     interference_volume_mm3: float
     principal_axis_alignment: float
+    # Milestone 4: independent accessibility risk signal (heuristic — NOT proof of undercut)
+    accessibility_risk_area_pct: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -149,6 +156,7 @@ class DirectionCandidateResult:
                 "bad_area_pct": round(self.bad_area_pct, 3),
                 "marginal_area_pct": round(self.marginal_area_pct, 3),
                 "undercut_area_pct": round(self.undercut_area_pct, 3),
+                "accessibility_risk_area_pct": round(self.accessibility_risk_area_pct, 3),
             },
             "undercuts": {
                 "face_count": self.undercut_face_count,
@@ -185,6 +193,8 @@ class DirectionOptimizationResult:
     direction_cache_entries: int = 0
     direction_cache_final_reused: bool = False
     boolean_volume_cache_entries: int = 0
+    # Milestone 3: which search stage found the winner (1=principal, 2=diagonal, 3=sphere)
+    search_stage_reached: int = 3
 
     def to_dict(self, include_all_candidates: bool = True) -> dict:
         cache_lookups = self.direction_cache_hits + self.direction_cache_misses
@@ -197,6 +207,7 @@ class DirectionOptimizationResult:
             "initial_pull_direction": [round(v, 6) for v in self.initial_pull_direction],
             "initial_label": self.initial_label,
             "method": self.method,
+            "search_stage_reached": self.search_stage_reached,
             "analysis_time_s": round(self.analysis_time_s, 4),
             "boolean_refined_candidate_count": self.boolean_refined_candidate_count,
             "boolean_pruned_candidate_count": self.boolean_pruned_candidate_count,
@@ -580,37 +591,73 @@ def _score_candidate(
     """
     Lower score is better.
 
-    Bad area dominates; marginal area is secondary. Flash risk is a
-    manufacturability nuisance (Phase 1d) — weighted between marginal draft
-    and bad draft, never dominant. The final term is a small penalty for
-    non-principal directions because simple two-plate tooling is easier to
-    set up around principal axes when manufacturability is similar.
+    Milestone 4: Two independent scoring modes depending on whether
+    Boolean refinement data is available.
+
+    **Cheap stage** (``undercuts.boolean_refined=False``):
+      Uses ``accessibility_risk_area_pct`` as the obstruction signal.
+      This is independent of draft: a face with bad draft but all-convex
+      edges contributes to ``bad_pct`` but NOT to ``accessibility_risk``.
+      Conversely, a well-drafted core-side face with a concave edge
+      contributes to ``accessibility_risk`` but NOT to ``bad_pct``.
+      The two signals are genuinely orthogonal.
+
+    **Boolean-refined stage** (``undercuts.boolean_refined=True``):
+      Replaces the accessibility-risk proxy with Boolean-confirmed undercut
+      area (computed from ``boolean_confirmed_face_ids``).  Interference
+      volume is retained from existing Boolean measurement.
+
+    **Prohibited equivalences** (enforced here by design):
+    - ``bad draft`` ≠ ``accessibility_risk`` (different faces flagged)
+    - ``accessibility_risk`` ≠ ``confirmed_undercut`` (heuristic vs geometric)
+    - ``proxy_undercut_pct`` ≠ ``confirmed_undercut_pct`` (always)
     """
+    cfg = settings.dfm.direction_search
     bad_pct = draft.bad_pct / 100.0
     marginal_pct = draft.marginal_pct / 100.0
-    undercut_pct = undercuts.undercut_area_pct / 100.0
     face_count = max(1, draft.face_count_analysed)
     bad_count_frac = len(draft.bad_face_ids) / face_count
     marginal_count_frac = len(draft.marginal_face_ids) / face_count
-    undercut_count_frac = len(undercuts.undercut_face_ids) / face_count
     dims = part.bounding_box.dimensions
     bbox_volume = max(dims[0] * dims[1] * dims[2], 1.0)
     interference_volume_frac = min(1.0, undercuts.interference_volume_mm3 / bbox_volume)
-    interference_weight = settings.dfm.direction_search.boolean_interference_weight
-    flash_risk_weight = settings.dfm.direction_search.flash_risk_weight
     flash_area_frac = _flash_risk_area_fraction(part, direction)
     non_axis_penalty = 1.0 - _principal_axis_alignment(direction)
-    return (
-        1500.0 * undercut_pct
-        + 1000.0 * bad_pct
-        + 100.0 * marginal_pct
-        + interference_weight * interference_volume_frac
-        + flash_risk_weight * flash_area_frac
-        + 25.0 * undercut_count_frac
-        + 10.0 * bad_count_frac
-        + 2.0 * marginal_count_frac
-        + 0.25 * non_axis_penalty
-    )
+
+    if undercuts.boolean_refined:
+        # Boolean-refined stage: use confirmed undercut area only.
+        # Compute confirmed area from boolean_confirmed_face_ids (authoritative).
+        total_area = max(undercuts.total_analysed_area_mm2, 1.0)
+        confirmed_area = sum(
+            f.area for fid in undercuts.boolean_confirmed_face_ids
+            if (f := part.get_face(fid)) is not None
+        )
+        confirmed_undercut_pct = confirmed_area / total_area
+        return (
+            cfg.scoring_confirmed_undercut * confirmed_undercut_pct
+            + cfg.scoring_bad_draft * bad_pct
+            + cfg.scoring_marginal_draft * marginal_pct
+            + cfg.boolean_interference_weight * interference_volume_frac
+            + cfg.flash_risk_weight * flash_area_frac
+            + cfg.scoring_bad_draft_count * bad_count_frac
+            + cfg.scoring_marginal_draft_count * marginal_count_frac
+            + cfg.scoring_axis_preference * non_axis_penalty
+        )
+    else:
+        # Cheap stage: use accessibility risk (heuristic, NOT proof of undercut).
+        # This is independent from bad_pct — do NOT treat them as the same signal.
+        risk_pct = undercuts.accessibility_risk_area_pct / 100.0
+        risk_count_frac = len(undercuts.accessibility_risk_face_ids) / face_count
+        return (
+            cfg.scoring_accessibility_risk * risk_pct
+            + cfg.scoring_bad_draft * bad_pct
+            + cfg.scoring_marginal_draft * marginal_pct
+            + cfg.flash_risk_weight * flash_area_frac
+            + cfg.scoring_bad_draft_count * bad_count_frac
+            + cfg.scoring_marginal_draft_count * marginal_count_frac
+            + cfg.scoring_accessibility_risk_count * risk_count_frac
+            + cfg.scoring_axis_preference * non_axis_penalty
+        )
 
 
 def _select_boolean_refinement_candidates(
@@ -819,13 +866,21 @@ def _score_direction_candidate(
     candidate, and only the single final winner (in `optimize_mold_direction`)
     is ever scored with `mutate=True`. Shared by the coarse grid and the
     coarse-to-fine refinement (Phase 1d) so both use identical scoring.
+
+    Directional metrics (n·d, draft_angle, mold_side, classification) are
+    precomputed once and shared with both analyze_draft and detect_undercuts,
+    eliminating the redundant per-face dot-product computations that those
+    functions would otherwise each perform independently.
     """
+    # Compute n·d for every face ONCE; pass the result to both consumers.
+    precomputed = precompute_directional_metrics(part, direction)
     draft = analyze_draft(
         part=part,
         pull_direction=direction,
         pull_direction_label=f"candidate {_direction_label(direction)}",
         analysis_pass="candidate",
         mutate=False,
+        precomputed_metrics=precomputed,
     )
     draft_by_direction[direction] = draft
     undercuts = detect_undercuts(
@@ -833,6 +888,8 @@ def _score_direction_candidate(
         direction,
         mutate=False,
         boolean_refine=False,
+        precomputed_metrics=precomputed,
+        draft_result=draft,
     )
     score = _score_candidate(draft, undercuts, direction, part)
     return DirectionCandidateResult(
@@ -854,6 +911,92 @@ def _score_direction_candidate(
         boolean_checked_count=len(undercuts.boolean_checked_face_ids),
         interference_volume_mm3=undercuts.interference_volume_mm3,
         principal_axis_alignment=_principal_axis_alignment(direction),
+        accessibility_risk_area_pct=undercuts.accessibility_risk_area_pct,
+    )
+
+
+def _is_direction_suitable_cheap(
+    candidate: DirectionCandidateResult,
+    cfg: "DirectionSearchSettings",
+) -> bool:
+    """
+    Provisional cheap suitability screen for the hierarchical search.
+
+    A direction passes when BOTH component thresholds hold simultaneously:
+    - ``bad_area_pct <= suitability_max_bad_draft_pct`` (surface orientation)
+    - ``accessibility_risk_area_pct <= suitability_max_accessibility_risk_pct``
+      (heuristic risk — NOT proof of undercut)
+
+    CRITICAL NOTES:
+    - All thresholds are PROVISIONAL engineering defaults, NOT Bosch
+      requirements.  Bosch has not provided numerical thresholds for "suitable".
+    - Passing this screen does NOT mean the direction is acceptable.  It only
+      means the direction is a candidate for Boolean validation.
+    - Only Boolean confirmation (``_is_direction_suitable_boolean``) determines
+      actual acceptability.
+    - This is a SCREENING step, never a final verdict.
+    """
+    return (
+        candidate.bad_area_pct <= cfg.suitability_max_bad_draft_pct
+        and candidate.accessibility_risk_area_pct <= cfg.suitability_max_accessibility_risk_pct
+    )
+
+
+def _is_direction_suitable_boolean(
+    undercuts: UndercutDetectionResult,
+    part: PartGeometry,
+    cfg: "DirectionSearchSettings",
+) -> bool:
+    """
+    Provisional Boolean-confirmation suitability check.
+
+    Only authoritative when ``undercuts.boolean_refined=True``.  Computes
+    confirmed undercut area from ``boolean_confirmed_face_ids`` ONLY —
+    proxy faces (failed or skipped Boolean) are excluded.
+
+    CRITICAL: This threshold is PROVISIONAL.  Bosch has not provided a
+    numerical definition of "acceptable confirmed undercut area".  The check
+    is a search-gating heuristic only — NOT a manufacturing guarantee.
+    """
+    if not undercuts.boolean_refined:
+        return False
+    total_area = max(undercuts.total_analysed_area_mm2, 1.0)
+    confirmed_area = sum(
+        f.area for fid in undercuts.boolean_confirmed_face_ids
+        if (f := part.get_face(fid)) is not None
+    )
+    confirmed_pct = 100.0 * confirmed_area / total_area
+    return confirmed_pct <= cfg.suitability_max_confirmed_undercut_pct
+
+
+def _build_refined_candidate(
+    direction: Vec3,
+    draft: DraftAnalysisResult,
+    undercuts: UndercutDetectionResult,
+    part: PartGeometry,
+) -> DirectionCandidateResult:
+    """Build a DirectionCandidateResult from Boolean-refined undercut data."""
+    refined_score = _score_candidate(draft, undercuts, direction, part)
+    return DirectionCandidateResult(
+        direction=direction,
+        label=_direction_label(direction),
+        score=refined_score,
+        bad_face_count=len(draft.bad_face_ids),
+        marginal_face_count=len(draft.marginal_face_ids),
+        good_face_count=len(draft.good_face_ids),
+        bad_area_mm2=draft.bad_area_mm2,
+        marginal_area_mm2=draft.marginal_area_mm2,
+        total_area_mm2=draft.total_analysed_area_mm2,
+        bad_area_pct=draft.bad_pct,
+        marginal_area_pct=draft.marginal_pct,
+        undercut_face_count=len(undercuts.undercut_face_ids),
+        undercut_feature_count=len(undercuts.features),
+        undercut_area_pct=undercuts.undercut_area_pct,
+        boolean_refined=undercuts.boolean_refined,
+        boolean_checked_count=len(undercuts.boolean_checked_face_ids),
+        interference_volume_mm3=undercuts.interference_volume_mm3,
+        principal_axis_alignment=_principal_axis_alignment(direction),
+        accessibility_risk_area_pct=undercuts.accessibility_risk_area_pct,
     )
 
 
@@ -867,11 +1010,28 @@ def optimize_mold_direction(
     """
     Find the best candidate mold opening direction for Level 1.
 
+    Milestone 3: Hierarchical search (when ``hierarchical_search_enabled=True``).
+
+    Stage 1 — 6 principal ±X/Y/Z directions (Bosch preferred):
+      Cheap-screen each (draft + accessibility risk).  If any pass, Boolean
+      refine them.  If Boolean confirms acceptability, return immediately.
+
+    Stage 2 — Configurable diagonal directions (default: 12 face-diagonals):
+      Score new directions cheaply.  Boolean-refine any cheap-screen passes
+      not yet refined.  If Boolean confirms acceptability, return immediately.
+
+    Stage 3 — Remaining spherical candidates (existing coarse-to-fine search):
+      Score all remaining directions, run fine search around top-K, apply
+      the existing Boolean pruning gate, and select the best available
+      direction (even if no direction is fully acceptable).
+
+    When ``hierarchical_search_enabled=False``, the flat 54-candidate
+    behavior is preserved exactly (backward compatible).
+
     The initial-direction draft/undercut result is computed with
-    `mutate=False`; the final best direction result is computed with
-    `mutate=True`, so `part.faces` holds the active optimal overlay after this
-    call.  +Z remains the default caller value, but callers can pass the
-    UI-selected direction so "initial" is never silently hardcoded.
+    ``mutate=False``; the final best direction result is computed with
+    ``mutate=True``, so ``part.faces`` holds the active optimal overlay
+    after this call.
     """
     t_start = time.perf_counter()
     cfg = settings.dfm.direction_search
@@ -900,15 +1060,204 @@ def optimize_mold_direction(
     else:
         direction_cache_misses += 1
 
-    candidates = generate_candidate_directions(angular_step_deg, max_candidates)
-    if not candidates:
-        raise ValueError("No candidate directions generated.")
-
     scored: list[DirectionCandidateResult] = []
     draft_by_direction: dict[Vec3, DraftAnalysisResult] = {}
+    seen_directions: set[tuple[int, int, int]] = set()
+    search_stage_reached = 3
+    pruning_summary: BooleanPruningSummary | None = None
 
-    for direction in candidates:
-        scored.append(_score_direction_candidate(part, direction, draft_by_direction))
+    # ── Helper: Boolean-refine a list of cheap-screened candidates ────────
+    def _boolean_refine_candidates(
+        candidates_to_refine: list[DirectionCandidateResult],
+    ) -> tuple[list[DirectionCandidateResult], list[DirectionCandidateResult]]:
+        """
+        Run Boolean refinement on candidates and return (refined_list, acceptable_list).
+
+        ``refined_list`` contains the updated DirectionCandidateResults (Boolean data).
+        ``acceptable_list`` contains those that also pass the Boolean suitability check
+        (PROVISIONAL threshold — NOT a manufacturing guarantee).
+
+        Uses the shared caches; updates direction_cache_hits/misses via nonlocal.
+        """
+        nonlocal direction_cache_hits, direction_cache_misses
+        refined: list[DirectionCandidateResult] = []
+        acceptable: list[DirectionCandidateResult] = []
+        for candidate in candidates_to_refine:
+            direction = candidate.direction
+            draft = draft_by_direction[direction]
+            undercuts, hit = _cached_detect_boolean_undercuts(
+                part=part,
+                direction=direction,
+                direction_cache=direction_undercut_cache,
+                boolean_volume_cache=boolean_volume_cache,
+                mutate=False,
+                max_boolean_faces=cfg.boolean_refine_max_faces,
+            )
+            if hit:
+                direction_cache_hits += 1
+            else:
+                direction_cache_misses += 1
+            updated = _build_refined_candidate(direction, draft, undercuts, part)
+            refined.append(updated)
+            if _is_direction_suitable_boolean(undercuts, part, cfg):
+                acceptable.append(updated)
+        return refined, acceptable
+
+    if cfg.hierarchical_search_enabled:
+        # ── Stage 1: Bosch preferred ±X/Y/Z directions ───────────────────
+        for raw_dir in [
+            (1.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0), (0.0, -1.0, 0.0),
+            (0.0, 0.0, 1.0), (0.0, 0.0, -1.0),
+        ]:
+            d = normalize3(raw_dir)
+            if _dedupe_direction(d, seen_directions):
+                scored.append(_score_direction_candidate(part, d, draft_by_direction))
+
+        # Check cheap suitability for Stage 1 candidates
+        s1_suitable = [c for c in scored if _is_direction_suitable_cheap(c, cfg)]
+        if s1_suitable:
+            refined_s1, acceptable_s1 = _boolean_refine_candidates(s1_suitable)
+            # Update scored with Boolean-refined results
+            refined_map = {c.label: c for c in refined_s1}
+            scored = [refined_map.get(c.label, c) for c in scored]
+            if acceptable_s1:
+                # Early exit: Stage 1 produced a Boolean-confirmed acceptable direction
+                search_stage_reached = 1
+                best = min(acceptable_s1, key=lambda c: c.score)
+                best_direction = best.direction
+                best_score = best.score
+                optimal = analyze_draft(
+                    part=part,
+                    pull_direction=best_direction,
+                    pull_direction_label=f"best candidate {_direction_label(best_direction)}",
+                    analysis_pass="optimal",
+                    mutate=True,
+                )
+                optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
+                    part=part,
+                    direction=best_direction,
+                    direction_cache=direction_undercut_cache,
+                    boolean_volume_cache=boolean_volume_cache,
+                    mutate=True,
+                    max_boolean_faces=cfg.boolean_refine_max_faces,
+                )
+                if cache_hit:
+                    direction_cache_hits += 1
+                else:
+                    direction_cache_misses += 1
+                part.optimal_pull_direction = best_direction
+                part.direction_score = best_score
+                part.inaccessible_face_ids = list(optimal_undercuts.undercut_face_ids)
+                scored.sort(key=lambda c: c.score)
+                return DirectionOptimizationResult(
+                    best_direction=best_direction,
+                    best_label=_direction_label(best_direction),
+                    best_score=best_score,
+                    initial_pull_direction=initial_direction,
+                    initial_label=initial_direction_label,
+                    initial_draft=initial,
+                    initial_undercuts=initial_undercuts,
+                    optimal_draft=optimal,
+                    optimal_undercuts=optimal_undercuts,
+                    candidates=scored,
+                    boolean_refined_candidate_count=sum(1 for c in scored if c.boolean_refined),
+                    boolean_pruned_candidate_count=0,
+                    boolean_survivor_candidate_count=len(acceptable_s1),
+                    boolean_promising_candidate_count=len(s1_suitable),
+                    boolean_pruning_summary=None,
+                    direction_cache_hits=direction_cache_hits,
+                    direction_cache_misses=direction_cache_misses,
+                    direction_cache_entries=len(direction_undercut_cache),
+                    direction_cache_final_reused=cache_hit,
+                    boolean_volume_cache_entries=len(boolean_volume_cache),
+                    search_stage_reached=search_stage_reached,
+                    analysis_time_s=time.perf_counter() - t_start,
+                )
+            # Stage 1 cheap-passes exist but all failed Boolean: fall through to Stage 2
+
+        # ── Stage 2: Configurable diagonal directions ──────────────────────
+        for raw_dir in cfg.stage2_directions:
+            d = normalize3(raw_dir)
+            if _dedupe_direction(d, seen_directions):
+                scored.append(_score_direction_candidate(part, d, draft_by_direction))
+
+        # Check all not-yet-Boolean-refined candidates that pass cheap screen
+        s2_candidates = [
+            c for c in scored
+            if not c.boolean_refined and _is_direction_suitable_cheap(c, cfg)
+        ]
+        if s2_candidates:
+            refined_s2, acceptable_s2 = _boolean_refine_candidates(s2_candidates)
+            refined_map = {c.label: c for c in refined_s2}
+            scored = [refined_map.get(c.label, c) for c in scored]
+            if acceptable_s2:
+                # Early exit: Stage 2 produced a Boolean-confirmed acceptable direction
+                search_stage_reached = 2
+                best = min(acceptable_s2, key=lambda c: c.score)
+                best_direction = best.direction
+                best_score = best.score
+                optimal = analyze_draft(
+                    part=part,
+                    pull_direction=best_direction,
+                    pull_direction_label=f"best candidate {_direction_label(best_direction)}",
+                    analysis_pass="optimal",
+                    mutate=True,
+                )
+                optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
+                    part=part,
+                    direction=best_direction,
+                    direction_cache=direction_undercut_cache,
+                    boolean_volume_cache=boolean_volume_cache,
+                    mutate=True,
+                    max_boolean_faces=cfg.boolean_refine_max_faces,
+                )
+                if cache_hit:
+                    direction_cache_hits += 1
+                else:
+                    direction_cache_misses += 1
+                part.optimal_pull_direction = best_direction
+                part.direction_score = best_score
+                part.inaccessible_face_ids = list(optimal_undercuts.undercut_face_ids)
+                scored.sort(key=lambda c: c.score)
+                return DirectionOptimizationResult(
+                    best_direction=best_direction,
+                    best_label=_direction_label(best_direction),
+                    best_score=best_score,
+                    initial_pull_direction=initial_direction,
+                    initial_label=initial_direction_label,
+                    initial_draft=initial,
+                    initial_undercuts=initial_undercuts,
+                    optimal_draft=optimal,
+                    optimal_undercuts=optimal_undercuts,
+                    candidates=scored,
+                    boolean_refined_candidate_count=sum(1 for c in scored if c.boolean_refined),
+                    boolean_pruned_candidate_count=0,
+                    boolean_survivor_candidate_count=len(acceptable_s2),
+                    boolean_promising_candidate_count=len(s2_candidates),
+                    boolean_pruning_summary=None,
+                    direction_cache_hits=direction_cache_hits,
+                    direction_cache_misses=direction_cache_misses,
+                    direction_cache_entries=len(direction_undercut_cache),
+                    direction_cache_final_reused=cache_hit,
+                    boolean_volume_cache_entries=len(boolean_volume_cache),
+                    search_stage_reached=search_stage_reached,
+                    analysis_time_s=time.perf_counter() - t_start,
+                )
+            # Stage 2 cheap-passes exist but all failed Boolean: fall through to Stage 3
+
+        # ── Stage 3: Remaining spherical candidates (fallthrough) ─────────
+        # Add any spherical candidates not yet in scored.
+
+    # Generate full candidate set (all stages or flat search)
+    all_candidates = generate_candidate_directions(angular_step_deg, max_candidates)
+    if not all_candidates:
+        raise ValueError("No candidate directions generated.")
+
+    for direction in all_candidates:
+        d = normalize3(direction)
+        if _dedupe_direction(d, seen_directions):
+            scored.append(_score_direction_candidate(part, d, draft_by_direction))
 
     scored.sort(key=lambda c: c.score)
 
@@ -919,25 +1268,20 @@ def optimize_mold_direction(
     # (mutate=False, boolean_refine=False) as the coarse stage — no extra
     # Boolean cost here. Boolean refinement (below) still runs only on the
     # merged shortlist via the existing pruning guards.
-    fine_cfg = settings.dfm.direction_search
-    if fine_cfg.fine_search_enabled and fine_cfg.fine_search_top_k > 0:
-        seen_directions: set[tuple[int, int, int]] = set()
-        for direction in candidates:
-            _dedupe_direction(direction, seen_directions)
-
+    if cfg.fine_search_enabled and cfg.fine_search_top_k > 0:
         fine_directions: list[Vec3] = []
-        for winner in scored[: fine_cfg.fine_search_top_k]:
+        for winner in scored[: cfg.fine_search_top_k]:
             fine_directions.extend(
                 generate_fine_candidate_directions(
                     base_direction=winner.direction,
-                    cone_half_angle_deg=fine_cfg.fine_search_cone_half_angle_deg,
-                    angular_step_deg=fine_cfg.fine_angular_step_deg,
+                    cone_half_angle_deg=cfg.fine_search_cone_half_angle_deg,
+                    angular_step_deg=cfg.fine_angular_step_deg,
                     seen=seen_directions,
                 )
             )
-            if len(fine_directions) >= fine_cfg.fine_search_max_candidates:
+            if len(fine_directions) >= cfg.fine_search_max_candidates:
                 break
-        fine_directions = fine_directions[: fine_cfg.fine_search_max_candidates]
+        fine_directions = fine_directions[: cfg.fine_search_max_candidates]
 
         for direction in fine_directions:
             scored.append(_score_direction_candidate(part, direction, draft_by_direction))
@@ -962,26 +1306,8 @@ def optimize_mold_direction(
             direction_cache_hits += 1
         else:
             direction_cache_misses += 1
-        refined_score = _score_candidate(draft, undercuts, direction, part)
-        refined_by_label[candidate.label] = DirectionCandidateResult(
-            direction=direction,
-            label=candidate.label,
-            score=refined_score,
-            bad_face_count=len(draft.bad_face_ids),
-            marginal_face_count=len(draft.marginal_face_ids),
-            good_face_count=len(draft.good_face_ids),
-            bad_area_mm2=draft.bad_area_mm2,
-            marginal_area_mm2=draft.marginal_area_mm2,
-            total_area_mm2=draft.total_analysed_area_mm2,
-            bad_area_pct=draft.bad_pct,
-            marginal_area_pct=draft.marginal_pct,
-            undercut_face_count=len(undercuts.undercut_face_ids),
-            undercut_feature_count=len(undercuts.features),
-            undercut_area_pct=undercuts.undercut_area_pct,
-            boolean_refined=undercuts.boolean_refined,
-            boolean_checked_count=len(undercuts.boolean_checked_face_ids),
-            interference_volume_mm3=undercuts.interference_volume_mm3,
-            principal_axis_alignment=_principal_axis_alignment(direction),
+        refined_by_label[candidate.label] = _build_refined_candidate(
+            direction, draft, undercuts, part
         )
 
     scored = [refined_by_label.get(candidate.label, candidate) for candidate in scored]
@@ -1013,6 +1339,12 @@ def optimize_mold_direction(
     part.direction_score = best_score
     part.inaccessible_face_ids = list(optimal_undercuts.undercut_face_ids)
 
+    ps = pruning_summary or BooleanPruningSummary(
+        strategy="no-Boolean-pruning", best_prefilter_score=0.0,
+        ratio_threshold=0.0, near_tie_threshold=0.0, uncertainty_threshold=0.0,
+        survivor_count=0, promising_count=0, pruned_count=0,
+        max_refine_count=0, survivor_top_count=0, min_boolean_candidates=0,
+    )
     return DirectionOptimizationResult(
         best_direction=best_direction,
         best_label=_direction_label(best_direction),
@@ -1025,15 +1357,16 @@ def optimize_mold_direction(
         optimal_undercuts=optimal_undercuts,
         candidates=scored,
         boolean_refined_candidate_count=sum(1 for c in scored if c.boolean_refined),
-        boolean_pruned_candidate_count=pruning_summary.pruned_count,
-        boolean_survivor_candidate_count=pruning_summary.survivor_count,
-        boolean_promising_candidate_count=pruning_summary.promising_count,
+        boolean_pruned_candidate_count=ps.pruned_count,
+        boolean_survivor_candidate_count=ps.survivor_count,
+        boolean_promising_candidate_count=ps.promising_count,
         boolean_pruning_summary=pruning_summary,
         direction_cache_hits=direction_cache_hits,
         direction_cache_misses=direction_cache_misses,
         direction_cache_entries=len(direction_undercut_cache),
         direction_cache_final_reused=final_direction_cache_reused,
         boolean_volume_cache_entries=len(boolean_volume_cache),
+        search_stage_reached=search_stage_reached,
         analysis_time_s=time.perf_counter() - t_start,
     )
 

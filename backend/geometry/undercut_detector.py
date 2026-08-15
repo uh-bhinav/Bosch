@@ -36,7 +36,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from backend.config import settings
-from backend.geometry.draft_analyzer import analyze_draft
+from backend.geometry.draft_analyzer import (
+    DraftAnalysisResult,
+    FaceDirectionalMetrics,
+    analyze_draft,
+)
 from backend.models.geometry_models import FaceData, PartGeometry, Vec3, dot3, mag3, normalize3
 
 try:
@@ -624,6 +628,14 @@ class UndercutDetectionResult:
     boolean_time_s: float = 0.0
     boolean_performance: BooleanPerformanceSummary | None = None
     boolean_reliability: BooleanReliabilitySummary | None = None
+    # Milestone 2: independent accessibility risk (heuristic — NOT proof of undercut)
+    # A face is flagged when it is core-side (n·d < -threshold) AND has at
+    # least one concave bounding edge.  This is strictly independent from
+    # draft: a face with good draft can still be flagged; a face with bad
+    # draft but all-convex edges is NOT flagged.  Only Boolean swept-volume
+    # validation confirms actual physical obstruction.
+    accessibility_risk_face_ids: list[int] = field(default_factory=list)
+    accessibility_risk_area_mm2: float = 0.0
     analysis_time_s: float = 0.0
 
     @property
@@ -643,6 +655,20 @@ class UndercutDetectionResult:
     @property
     def has_critical_undercut(self) -> bool:
         return any(feature.severity == "critical" for feature in self.features)
+
+    @property
+    def accessibility_risk_area_pct(self) -> float:
+        """
+        Fraction of total analysed area flagged as accessibility risk (heuristic).
+
+        IMPORTANT: This is a heuristic risk signal (core-side face + concave
+        bounding edge), NOT proof of undercut.  Only Boolean swept-volume
+        validation can confirm actual physical obstruction.  Do NOT use this
+        value as a substitute for ``undercut_area_pct``.
+        """
+        if self.total_analysed_area_mm2 <= 0:
+            return 0.0
+        return 100.0 * self.accessibility_risk_area_mm2 / self.total_analysed_area_mm2
 
     def to_dict(self) -> dict:
         return {
@@ -702,6 +728,16 @@ class UndercutDetectionResult:
                     self.boolean_reliability.to_dict()
                     if self.boolean_reliability is not None
                     else None
+                ),
+            },
+            "accessibility_risk": {
+                "face_ids": self.accessibility_risk_face_ids,
+                "face_count": len(self.accessibility_risk_face_ids),
+                "area_mm2": round(self.accessibility_risk_area_mm2, 3),
+                "area_pct": round(self.accessibility_risk_area_pct, 3),
+                "note": (
+                    "heuristic risk signal (core-side face + concave bounding "
+                    "edge) — NOT proof of undercut; Boolean validation is required"
                 ),
             },
             "analysis_time_s": round(self.analysis_time_s, 4),
@@ -3069,6 +3105,84 @@ def _rank_boolean_candidate_faces(
     return ordered
 
 
+def _compute_accessibility_risk(
+    part: PartGeometry,
+    pull_dir: Vec3,
+    precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]],
+) -> tuple[list[int], float]:
+    """
+    Identify faces that are heuristic accessibility risks for a pull direction.
+
+    A face is flagged when BOTH conditions hold simultaneously:
+
+    1. **Core-side**: ``signed_dot (n·d) < -threshold``
+       The face normal broadly opposes the pull direction — the face is
+       physically on the "away" side of the mold opening.
+
+    2. **At least one confirmed concave bounding edge**: geometric evidence
+       of a pocket, hook, or slot that could obstruct mold withdrawal.
+       Faces whose ALL bounding edges are convex or tangent are NOT flagged —
+       no concave edge means no pocket regardless of centroid orientation.
+
+    CRITICAL NOTES:
+
+    - This is a **HEURISTIC risk signal only**, NOT proof of undercut.
+    - It is **independent of draft angle**: a face with 5° draft (good) can
+      still be flagged if core-side with a concave edge; a face with 0.1°
+      draft (bad) on a convex boss is NOT flagged (no concave edge).
+    - Only Boolean swept-volume validation (``_boolean_refine_undercuts``)
+      can confirm actual physical obstruction.
+    - The returned face IDs are for scoring purposes; they must NOT be
+      treated as ``undercut_face_ids``.
+
+    Uses ``precomputed_metrics`` (from ``precompute_directional_metrics()``)
+    when available to avoid a redundant dot-product per face.  Falls back to
+    calling ``face.signed_dot()`` when precomputed data is absent.
+
+    Parameters
+    ----------
+    part               : Loaded PartGeometry.
+    pull_dir           : Normalised pull direction (unit vector).
+    precomputed_metrics : Optional precomputed per-face directional metrics.
+
+    Returns
+    -------
+    (risk_face_ids, risk_area_mm2) — face IDs and their combined area.
+    """
+    threshold = settings.dfm.undercut.accessibility_risk_core_side_threshold
+    risk_ids: list[int] = []
+    risk_area: float = 0.0
+
+    for face in part.faces:
+        if not face.normal_valid:
+            continue
+
+        # Get signed_dot: prefer precomputed to avoid a redundant dot product.
+        if precomputed_metrics is not None and face.face_id in precomputed_metrics:
+            signed = precomputed_metrics[face.face_id].signed_dot
+        else:
+            signed = face.signed_dot(pull_dir)
+
+        # Condition 1: core-side face (normal broadly opposes pull).
+        if signed >= -threshold:
+            continue
+
+        # Condition 2: at least one confirmed concave bounding edge.
+        # Positive evidence (concave edge exists) is required — absence of
+        # a concave edge does NOT flag the face.
+        face_edges = part.get_face_edges(face.face_id)
+        if not face_edges:
+            continue
+        has_concave = any(e.convexity == "concave" for e in face_edges)
+        if not has_concave:
+            continue
+
+        risk_ids.append(face.face_id)
+        risk_area += face.area
+
+    return risk_ids, risk_area
+
+
 def detect_undercuts(
     part: PartGeometry,
     pull_direction: Vec3,
@@ -3077,6 +3191,8 @@ def detect_undercuts(
     boolean_check_all_faces: bool = False,
     max_boolean_faces: int = 120,
     boolean_volume_cache: Optional[BooleanVolumeCache] = None,
+    precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]] = None,
+    draft_result: Optional[DraftAnalysisResult] = None,
 ) -> UndercutDetectionResult:
     """
     Detect likely undercut/accessibility problem faces for a pull direction.
@@ -3100,13 +3216,21 @@ def detect_undercuts(
     """
     t_start = time.perf_counter()
     pull_dir = normalize3(pull_direction)
-    draft = analyze_draft(
-        part=part,
-        pull_direction=pull_dir,
-        pull_direction_label="undercut detection direction",
-        analysis_pass="undercut",
-        mutate=mutate,
-    )
+
+    # Use provided draft_result when available (e.g. passed from direction
+    # optimizer to avoid a redundant analyze_draft call).  Fall back to
+    # computing it internally when not supplied.
+    if draft_result is not None:
+        draft = draft_result
+    else:
+        draft = analyze_draft(
+            part=part,
+            pull_direction=pull_dir,
+            pull_direction_label="undercut detection direction",
+            analysis_pass="undercut",
+            mutate=mutate,
+            precomputed_metrics=precomputed_metrics,
+        )
     marginal_threshold = settings.dfm.draft.marginal_threshold_deg
 
     proxy_undercut_ids: list[int] = []
@@ -3123,7 +3247,13 @@ def detect_undercuts(
             continue
         total_area += face.area
         angle = float(draft.face_results[face.face_id]["draft_angle_deg"])
-        signed = face.signed_dot(pull_dir)
+        # Use precomputed signed_dot when available to avoid a second dot
+        # product per face.  signed_dot = n·d is already available from the
+        # metrics dict that was passed to analyze_draft above.
+        if precomputed_metrics is not None and face.face_id in precomputed_metrics:
+            signed = precomputed_metrics[face.face_id].signed_dot
+        else:
+            signed = face.signed_dot(pull_dir)
 
         if abs(signed) <= parting_dot_threshold:
             parting_ids.append(face.face_id)
@@ -3174,6 +3304,18 @@ def detect_undercuts(
                     face.is_undercut = False
                     face.undercut_depth_mm = None
                     face.undercut_type = None
+
+    # ── Accessibility risk (Milestone 2) — independent of draft proxy ────────
+    # Core-side faces with at least one concave bounding edge are flagged as
+    # heuristic accessibility risks.  This signal is INDEPENDENT of the
+    # proxy_undercut_ids list above: a face with good draft can be flagged
+    # here; a face with bad draft but all-convex edges is NOT.  This is NOT
+    # proof of undercut — Boolean validation remains authoritative.
+    risk_face_ids, risk_area_mm2 = _compute_accessibility_risk(
+        part=part,
+        pull_dir=pull_dir,
+        precomputed_metrics=precomputed_metrics,
+    )
 
     boolean_checked: list[int] = []
     boolean_confirmed: set[int] = set()
@@ -3513,5 +3655,7 @@ def detect_undercuts(
         boolean_time_s=boolean_time_s,
         boolean_performance=boolean_performance,
         boolean_reliability=boolean_reliability,
+        accessibility_risk_face_ids=sorted(risk_face_ids),
+        accessibility_risk_area_mm2=risk_area_mm2,
         analysis_time_s=time.perf_counter() - t_start,
     )

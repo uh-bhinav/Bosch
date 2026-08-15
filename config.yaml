@@ -45,6 +45,40 @@ dfm:
     fine_angular_step_deg: 5.0
     fine_search_cone_half_angle_deg: 15.0
     fine_search_max_candidates: 60
+    # Milestone 3: hierarchical search (set false to restore flat 54-candidate behavior)
+    hierarchical_search_enabled: true
+    # Stage 2 diagonal directions (configurable — Bosch has not confirmed which
+    # 45-degree orientations are practical; replace this list via config).
+    stage2_directions:
+      - [1, 1, 0]
+      - [1, -1, 0]
+      - [-1, 1, 0]
+      - [-1, -1, 0]
+      - [1, 0, 1]
+      - [1, 0, -1]
+      - [-1, 0, 1]
+      - [-1, 0, -1]
+      - [0, 1, 1]
+      - [0, 1, -1]
+      - [0, -1, 1]
+      - [0, -1, -1]
+    # Suitability thresholds — PROVISIONAL engineering defaults, NOT Bosch requirements.
+    # These gate the hierarchical search between stages only. Bosch has not
+    # provided numerical thresholds for "suitable". Treat as tunable heuristics.
+    suitability_max_bad_draft_pct: 30.0
+    suitability_max_accessibility_risk_pct: 15.0
+    suitability_max_confirmed_undercut_pct: 10.0
+    # Milestone 4: independent scoring weights
+    # Cheap stage (draft + accessibility risk, independent signals):
+    scoring_bad_draft: 1000.0
+    scoring_marginal_draft: 100.0
+    scoring_accessibility_risk: 1500.0
+    scoring_bad_draft_count: 10.0
+    scoring_marginal_draft_count: 2.0
+    scoring_accessibility_risk_count: 25.0
+    scoring_axis_preference: 0.25
+    # Boolean-refined stage (confirmed undercut replaces proxy):
+    scoring_confirmed_undercut: 1500.0
   parting_line:
     # Which engine runs. v1 stays the default until v2 wins or ties on every
     # corpus part (docs/PARTING_LINE_ALGORITHM_PLAN.md, P6 cutover). v1 is
@@ -269,6 +303,12 @@ dfm:
   undercut:
     convexity_tangent_tolerance: 0.01
     convexity_suppression_enabled: true
+    # Milestone 2: accessibility risk signal threshold.
+    # A face is core-side when n·d < -threshold.  This is independent of
+    # draft — it is a heuristic risk signal, NOT proof of undercut.
+    # PROVISIONAL engineering default (not a Bosch requirement): matches the
+    # existing _PARTING_THRESHOLD used throughout the pipeline.
+    accessibility_risk_core_side_threshold: 0.01
 agent:
   # Stage 5 (2026-07-28) — provider-agnostic AI agent layer (roadmap §4.1).
   # Supersedes the old single `model:` key. Gemini is the default: cheapest

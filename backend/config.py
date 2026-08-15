@@ -83,6 +83,47 @@ class DirectionSearchSettings:
     fine_angular_step_deg: float = 5.0
     fine_search_cone_half_angle_deg: float = 15.0
     fine_search_max_candidates: int = 60
+    # ── Milestone 3: hierarchical candidate generation ────────────────────
+    # When True, evaluate ±X/Y/Z first, diagonals second, broader sphere
+    # last — stopping early when Boolean validation confirms an acceptable
+    # direction.  When False, flat 54-candidate behavior is preserved exactly.
+    hierarchical_search_enabled: bool = True
+    # Stage 2 diagonal directions (configurable — Bosch has not confirmed
+    # which 45° orientations are practical; this list must be replaceable
+    # via config without changing code).
+    stage2_directions: tuple[tuple[float, float, float], ...] = (
+        (1.0, 1.0, 0.0), (1.0, -1.0, 0.0), (-1.0, 1.0, 0.0), (-1.0, -1.0, 0.0),
+        (1.0, 0.0, 1.0), (1.0, 0.0, -1.0), (-1.0, 0.0, 1.0), (-1.0, 0.0, -1.0),
+        (0.0, 1.0, 1.0), (0.0, 1.0, -1.0), (0.0, -1.0, 1.0), (0.0, -1.0, -1.0),
+    )
+    # ── Suitability thresholds (PROVISIONAL engineering defaults) ─────────
+    # These gate the hierarchical search between stages and are NOT Bosch
+    # requirements.  Bosch has not provided numerical thresholds for
+    # "suitable".  These values are clearly labeled provisional; they must
+    # remain configurable and must not be treated as engineering laws.
+    #
+    # Cheap screen (stages 1 and 2): gates BEFORE Boolean refinement.
+    # A direction passes when BOTH conditions hold.
+    suitability_max_bad_draft_pct: float = 30.0    # PROVISIONAL
+    suitability_max_accessibility_risk_pct: float = 15.0  # PROVISIONAL
+    # Boolean confirmation screen: gates AFTER Boolean refinement.
+    # Only Boolean-confirmed undercut area is used here — proxy faces
+    # (failed/skipped Boolean) do not count.  A cheap-screen-pass that
+    # fails this check is NOT accepted; the search falls through.
+    suitability_max_confirmed_undercut_pct: float = 10.0  # PROVISIONAL
+    # ── Milestone 4: scoring weights ──────────────────────────────────────
+    # Default weights are chosen to preserve scoring magnitude and keep
+    # backward compat with parts analysed under the pre-M4 formula.
+    # Cheap stage (no Boolean data):
+    scoring_bad_draft: float = 1000.0         # surface-orientation penalty
+    scoring_marginal_draft: float = 100.0
+    scoring_accessibility_risk: float = 1500.0  # heuristic risk (independent)
+    scoring_bad_draft_count: float = 10.0
+    scoring_marginal_draft_count: float = 2.0
+    scoring_accessibility_risk_count: float = 25.0
+    scoring_axis_preference: float = 0.25
+    # Boolean-refined stage (replaces proxy with confirmed data):
+    scoring_confirmed_undercut: float = 1500.0  # Boolean-confirmed area
 
 
 @dataclass(frozen=True)
@@ -144,6 +185,12 @@ class SideCoreSettings:
 class UndercutSettings:
     convexity_tangent_tolerance: float = 0.01
     convexity_suppression_enabled: bool = True
+    # Milestone 2: accessibility risk heuristic threshold.
+    # A face is "core-side" when n·d < -threshold.  Used by
+    # _compute_accessibility_risk() to flag faces that are geometrically on
+    # the pull-opposing side AND have concave edge evidence of a pocket.
+    # PROVISIONAL engineering default — not a Bosch-approved threshold.
+    accessibility_risk_core_side_threshold: float = 0.01
 
 
 @dataclass(frozen=True)
@@ -509,6 +556,33 @@ def _float_tuple(value: Any, default: tuple[float, ...]) -> tuple[float, ...]:
     return parsed or default
 
 
+def _parse_stage2_directions(
+    raw: Any,
+    default: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...]:
+    """
+    Parse the ``stage2_directions`` list from config.yaml.
+
+    Expects a YAML list of 3-element numeric lists, e.g.::
+
+        stage2_directions:
+          - [1, 1, 0]
+          - [-1, 1, 0]
+
+    Returns the default when the input is absent, malformed, or empty.
+    """
+    if not isinstance(raw, (list, tuple)) or not raw:
+        return default
+    result: list[tuple[float, float, float]] = []
+    for item in raw:
+        if isinstance(item, (list, tuple)) and len(item) == 3:
+            try:
+                result.append((float(item[0]), float(item[1]), float(item[2])))
+            except (TypeError, ValueError):
+                continue
+    return tuple(result) if result else default
+
+
 def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings:
     """
     Load frozen settings from config.yaml, falling back to production defaults.
@@ -831,6 +905,84 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
                 base.dfm.direction_search.fine_search_max_candidates,
             )
         ),
+        # Milestone 3: hierarchical search
+        hierarchical_search_enabled=bool(
+            direction_raw.get(
+                "hierarchical_search_enabled",
+                base.dfm.direction_search.hierarchical_search_enabled,
+            )
+        ),
+        stage2_directions=_parse_stage2_directions(
+            direction_raw.get("stage2_directions"),
+            base.dfm.direction_search.stage2_directions,
+        ),
+        suitability_max_bad_draft_pct=float(
+            direction_raw.get(
+                "suitability_max_bad_draft_pct",
+                base.dfm.direction_search.suitability_max_bad_draft_pct,
+            )
+        ),
+        suitability_max_accessibility_risk_pct=float(
+            direction_raw.get(
+                "suitability_max_accessibility_risk_pct",
+                base.dfm.direction_search.suitability_max_accessibility_risk_pct,
+            )
+        ),
+        suitability_max_confirmed_undercut_pct=float(
+            direction_raw.get(
+                "suitability_max_confirmed_undercut_pct",
+                base.dfm.direction_search.suitability_max_confirmed_undercut_pct,
+            )
+        ),
+        # Milestone 4: scoring weights
+        scoring_bad_draft=float(
+            direction_raw.get(
+                "scoring_bad_draft",
+                base.dfm.direction_search.scoring_bad_draft,
+            )
+        ),
+        scoring_marginal_draft=float(
+            direction_raw.get(
+                "scoring_marginal_draft",
+                base.dfm.direction_search.scoring_marginal_draft,
+            )
+        ),
+        scoring_accessibility_risk=float(
+            direction_raw.get(
+                "scoring_accessibility_risk",
+                base.dfm.direction_search.scoring_accessibility_risk,
+            )
+        ),
+        scoring_bad_draft_count=float(
+            direction_raw.get(
+                "scoring_bad_draft_count",
+                base.dfm.direction_search.scoring_bad_draft_count,
+            )
+        ),
+        scoring_marginal_draft_count=float(
+            direction_raw.get(
+                "scoring_marginal_draft_count",
+                base.dfm.direction_search.scoring_marginal_draft_count,
+            )
+        ),
+        scoring_accessibility_risk_count=float(
+            direction_raw.get(
+                "scoring_accessibility_risk_count",
+                base.dfm.direction_search.scoring_accessibility_risk_count,
+            )
+        ),
+        scoring_axis_preference=float(
+            direction_raw.get(
+                "scoring_axis_preference",
+                base.dfm.direction_search.scoring_axis_preference,
+            )
+        ),
+        scoring_confirmed_undercut=float(
+            direction_raw.get(
+                "scoring_confirmed_undercut",
+                base.dfm.direction_search.scoring_confirmed_undercut,
+            )
+        ),
     )
     core_cavity = replace(
         base.dfm.core_cavity,
@@ -982,6 +1134,12 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             undercut_raw.get(
                 "convexity_suppression_enabled",
                 base.dfm.undercut.convexity_suppression_enabled,
+            )
+        ),
+        accessibility_risk_core_side_threshold=float(
+            undercut_raw.get(
+                "accessibility_risk_core_side_threshold",
+                base.dfm.undercut.accessibility_risk_core_side_threshold,
             )
         ),
     )

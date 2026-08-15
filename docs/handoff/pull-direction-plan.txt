@@ -1,0 +1,818 @@
+Yes. I would attach a **normative ideal-pipeline specification** to the forensic prompt. The key is that Claude should not interpret this as "suggestions." It should treat this as the **target mathematical/engineering behavior** and measure the repository against it.
+
+One correction to the earlier framing: **do not define the ideal system as "bad draft → undercut."** That is exactly the conceptual mistake your current output appears to be making. Draft quality and withdrawal obstruction are separate analyses. The pull-direction optimizer may use both, but one must never substitute for the other.
+
+Use the following as the plan/specification attached after the main forensic prompt.
+
+```text
+REFERENCE TARGET: IDEAL PULL-DIRECTION + UNDERCUT ANALYSIS PIPELINE
+
+This section defines the intended behavior of the system. Treat it as the normative target architecture against which the current implementation must be measured. Do not reinterpret it into a different algorithm. The purpose is to determine deviations between the repository and this target, then propose the minimum technically correct changes required to reach this behavior.
+
+1. FUNDAMENTAL GEOMETRIC MODEL
+
+Represent every candidate pull direction as a normalized 3D unit vector:
+
+    d = (dx, dy, dz)
+    ||d|| = 1
+
+d is the direction in which the molded part is withdrawn relative to the mold.
+
+The system must support arbitrary normalized directions. The six principal directions:
+
+    +X, -X, +Y, -Y, +Z, -Z
+
+are preferred initial candidates, not hard restrictions.
+
+Additional diagonal and arbitrary spherical directions may be evaluated when necessary. The search must therefore be hierarchical rather than restricted to the coordinate axes.
+
+The opposite direction -d represents the withdrawal direction of the opposite mold half. The system must reason about both sides of the mold, not assume that every surface must be released in +d.
+
+2. DRAFT ANALYSIS IS A SEPARATE SIGNAL
+
+For every face and candidate direction d, calculate the directional relationship between the face normal n and d.
+
+The fundamental quantity is:
+
+    c = n · d
+
+and, where useful:
+
+    theta = acos(clamp(c, -1, 1))
+
+The exact convention for cavity/core side and draft angle must remain consistent throughout the pipeline.
+
+Draft answers:
+
+    "How favorably is this surface oriented relative to the proposed withdrawal direction?"
+
+It does NOT answer:
+
+    "Is this surface geometrically trapped?"
+
+A face can have:
+- excellent draft and still participate in an undercut;
+- poor/zero draft and still be completely withdrawable;
+- zero draft because it is a normal vertical wall;
+- a negative directional normal relationship because it belongs to the opposite mold side.
+
+Therefore:
+
+    BAD_DRAFT != UNDERCUT
+
+and:
+
+    CORE/CAVITY_SIDE != UNDERCUT
+
+and:
+
+    CONCAVITY != UNDERCUT
+
+Draft must never be used as the final definition of an undercut.
+
+3. WHAT A TRUE UNDERCUT MEANS
+
+For a proposed pull direction d, an undercut is a region of geometry that cannot be withdrawn from its corresponding mold half along its permitted withdrawal direction without intersecting retained part geometry.
+
+The defining property is therefore:
+
+    GEOMETRIC WITHDRAWAL OBSTRUCTION
+
+not:
+
+    poor draft angle.
+
+For a surface region intended to be released in direction r, where r is either +d or -d, consider the open withdrawal ray from points on that surface:
+
+    p(t) = p + t r, t > 0
+
+A surface region is directionally accessible if withdrawal along r does not encounter another portion of the part that blocks the motion.
+
+If another portion of the solid lies in the withdrawal path and produces a genuine positive-area obstruction, that region is a candidate undercut.
+
+The system must distinguish:
+
+    accessible
+    obstructed
+    ambiguous/unknown
+
+rather than collapsing all non-ideal conditions into "undercut."
+
+4. ACCESSIBILITY IS THE PRIMARY GEOMETRIC TEST
+
+Accessibility is the bridge between directional analysis and actual undercut detection.
+
+For each candidate pull direction d:
+
+    evaluate accessibility from +d and -d
+
+for relevant surface regions.
+
+The conceptual test is:
+
+    Can this surface region move away from the part along its assigned mold-half withdrawal direction without colliding with the remaining solid?
+
+This can be implemented using appropriate OCC geometric operations such as ray/visibility tests, swept volumes, interference tests, or equivalent exact/robust geometric reasoning.
+
+The implementation mechanism may differ, but the semantic result must be equivalent to physical withdrawal.
+
+The test must not merely ask:
+
+    Is n · d below a threshold?
+
+It must ask:
+
+    Does geometry actually block translation along the withdrawal direction?
+
+5. LOCAL SURFACE ORIENTATION VS GLOBAL OBSTRUCTION
+
+The algorithm must evaluate both local and global geometry.
+
+Local information:
+
+    face normal
+    draft angle
+    face orientation
+    curvature/adjacency
+    cavity/core relationship
+
+Global information:
+
+    other solid geometry lying along the withdrawal path
+    re-entrant geometry
+    enclosed pockets
+    lips/hooks
+    opposing walls
+    channels
+    ribs
+    bosses
+    geometric occlusion
+
+Local orientation is useful for inexpensive filtering and scoring.
+
+Global obstruction determines whether an actual undercut exists.
+
+Therefore a heuristic may identify:
+
+    POSSIBLE_UNDERCUT
+
+but only geometric validation may establish:
+
+    CONFIRMED_UNDERCUT
+
+6. PROXY UNDERCUTS
+
+Cheap heuristics are permitted and desirable for performance, but they are only candidate generators.
+
+Examples of useful evidence may include:
+
+    unfavorable directional orientation
+    concave/re-entrant topology
+    local geometric relationships
+    accessibility-risk indicators
+    face adjacency
+    curvature
+    projected geometry
+
+These may produce:
+
+    proxy/suspected undercut candidates
+
+They must never automatically become final undercuts.
+
+The conceptual pipeline is:
+
+    CHEAP EVIDENCE
+        ↓
+    POSSIBLE CANDIDATE
+        ↓
+    GEOMETRIC ACCESSIBILITY ANALYSIS
+        ↓
+    BOOLEAN/EXACT VALIDATION WHEN REQUIRED
+        ↓
+    CONFIRMED UNDERCUT
+
+7. CONCAVE GEOMETRY
+
+Concavity is evidence, not proof.
+
+A concave edge or re-entrant region may indicate a possible withdrawal obstruction.
+
+But a concave feature can still be accessible along a particular direction.
+
+Therefore:
+
+    concavity → candidate
+
+not:
+
+    concavity → confirmed undercut
+
+The same applies to any current "core-side + concave-edge" heuristic.
+
+Such a heuristic may remain as a cheap prefilter if useful, but it cannot define the final undercut population.
+
+8. BOOLEAN VALIDATION
+
+Expensive OCC Boolean operations should be used to validate geometrically meaningful candidates.
+
+For a candidate surface/feature and withdrawal direction r:
+
+    construct the appropriate swept/translated representation of the geometry that would occupy the withdrawal path.
+
+Then determine whether the swept geometry intersects retained part geometry in a way representing genuine interference.
+
+The exact implementation may use:
+- swept solids
+- prism extrusion
+- translation
+- intersection
+- common/boolean operations
+- collision testing
+
+but the geometric meaning must remain:
+
+    "Would this feature physically interfere with withdrawal along r?"
+
+The implementation must not confuse:
+- numerical intersection caused by tolerance,
+- coincident/tangent geometry,
+- self-intersection,
+- the originating face itself,
+- local adjacency,
+
+with genuine withdrawal obstruction.
+
+Boolean tolerance and fuzzy tolerance must therefore be handled deliberately.
+
+9. BOOLEAN RESULT SEMANTICS
+
+Boolean processing must produce semantically distinct outcomes.
+
+At minimum:
+
+    CONFIRMED_UNDERCUT
+    NOT_UNDERCUT
+    UNKNOWN / UNVALIDATED
+
+If the implementation additionally needs:
+
+    BOOLEAN_FAILED
+    BOOLEAN_SKIPPED
+
+those are diagnostic states, not automatically geometric states.
+
+Critically:
+
+    BOOLEAN_FAILED != UNDERCUT
+
+and:
+
+    BOOLEAN_SKIPPED != UNDERCUT
+
+A failed or skipped validation may mean:
+
+    "we do not know"
+
+not:
+
+    "the feature is definitely trapped."
+
+The final `undercut_face_ids` or equivalent output must contain only geometry that satisfies the defined confirmation criterion.
+
+Suspected/proxy candidates should remain separately identifiable.
+
+10. ZERO-DRAFT WALLS
+
+A fundamental regression case is a conventional vertical wall.
+
+For example, with:
+
+    d = +Z
+
+a cylindrical or planar vertical wall may have approximately:
+
+    n · d = 0
+
+This means approximately zero draft.
+
+It does NOT mean the wall is an undercut.
+
+If the wall has a clear withdrawal path, it must be classified as:
+
+    zero/low draft
+    but accessible
+    therefore not an undercut
+
+This distinction is mandatory.
+
+11. GENUINE RE-ENTRANT UNDERCUT
+
+A genuine undercut must demonstrate the opposite behavior.
+
+For a proposed withdrawal direction r:
+
+    surface/feature
+        ↓
+    withdrawal path
+        ↓
+    another retained portion of the solid blocks translation
+
+If removing the mold half in direction r would cause geometric collision with the retained part, the feature is an undercut for that mold half.
+
+This should be demonstrable through geometric validation.
+
+12. CORE/CAVITY ASSIGNMENT
+
+Core/cavity classification and undercut detection are related but distinct.
+
+For candidate direction d:
+
+    determine which surfaces are naturally associated with +d
+    determine which surfaces are naturally associated with -d
+
+using the chosen normal/directional convention.
+
+This classification helps determine which mold half owns/release-checks a surface.
+
+But:
+
+    mold-side assignment does not prove release obstruction.
+
+A surface can belong to the cavity/core side and still be accessible.
+
+13. PULL-DIRECTION EVALUATION
+
+For every candidate direction d, compute a complete directional analysis.
+
+Conceptually:
+
+    candidate direction d
+        ↓
+    directional face metrics
+        ↓
+    draft analysis
+        ↓
+    accessibility analysis
+        ↓
+    possible undercut candidates
+        ↓
+    geometric confirmation
+        ↓
+    confirmed undercuts
+        ↓
+    side-action requirements
+        ↓
+    manufacturing score
+
+The direction must be evaluated as a complete physical hypothesis.
+
+Do not choose a direction solely because it minimizes draft error.
+
+Do not choose a direction solely because it minimizes a heuristic undercut count.
+
+14. DIRECTION SEARCH
+
+The search should be hierarchical.
+
+LEVEL 1:
+Evaluate:
+
+    +X
+    -X
+    +Y
+    -Y
+    +Z
+    -Z
+
+These provide the principal manufacturing directions.
+
+LEVEL 2:
+If necessary, evaluate strategically generated diagonal directions.
+
+These can include normalized combinations such as:
+
+    (±1, ±1, 0)
+    (±1, 0, ±1)
+    (0, ±1, ±1)
+    (±1, ±1, ±1)
+
+or equivalent geometrically meaningful candidates.
+
+LEVEL 3:
+If no sufficiently good solution exists, search arbitrary directions over the sphere.
+
+The arbitrary search must be normalized and must provide controlled coverage.
+
+LEVEL 4:
+Perform local refinement around the strongest candidate directions.
+
+The important principle is:
+
+    principal directions first
+    → broader candidates only when justified
+    → arbitrary directions when necessary
+    → local refinement around promising regions
+
+Arbitrary directions are allowed, but they must not cause the optimizer to immediately select a mathematically slightly better but practically undesirable diagonal direction when a principal direction already provides an equivalent or superior manufacturing solution.
+
+15. DIRECTION SCORE
+
+The final score must combine independent manufacturing signals.
+
+Conceptually:
+
+    SCORE(d) =
+        draft_quality(d)
+        + accessibility_quality(d)
+        + confirmed_undercut_penalty(d)
+        + side_action_penalty(d)
+        + interference_penalty(d)
+        + other validated manufacturing penalties
+        + optional preference terms
+
+The exact numerical weights are implementation parameters and must be justified by the intended behavior.
+
+However, the semantics are fixed:
+
+    draft measures draft
+    accessibility measures accessibility
+    confirmed undercuts measure actual withdrawal obstruction
+
+One metric must not silently substitute for another.
+
+16. PRINCIPAL-DIRECTION PREFERENCE
+
+When two directions are effectively equivalent from a manufacturing perspective, prefer the simpler direction.
+
+For example, if:
+
+    +Z
+
+and:
+
+    (0.707, 0, -0.707)
+
+produce essentially equivalent manufacturing outcomes, +Z should normally win because it is simpler, more conventional, and easier to interpret.
+
+An arbitrary direction should win only when it provides a meaningful validated manufacturing improvement.
+
+The optimizer should therefore avoid rewarding tiny numerical improvements enough to override practical direction simplicity.
+
+17. NO "OPTIMIZATION BY ARTIFACT"
+
+The optimizer must not select a direction because the undercut detector is wrong.
+
+This is a critical requirement.
+
+If the undercut detector incorrectly reports:
+
+    8 undercuts
+
+for one direction and:
+
+    1 undercut
+
+for another direction,
+
+the optimizer may select the second direction even though the geometry is actually better in the first direction.
+
+Therefore:
+
+    correctness of undercut detection
+        precedes
+    correctness of direction optimization.
+
+The direction optimizer cannot be trusted until the undercut/accessibility semantics are correct.
+
+18. PART1 REGRESSION
+
+`Part1.stp` is a mandatory regression case.
+
+Its known expected primary pull direction is:
+
+    +Z
+
+The corrected pipeline must therefore identify +Z as the preferred direction under the defined scoring/tie-breaking rules.
+
+A diagonal direction must not replace +Z merely because of an artifact in the heuristic undercut calculation.
+
+This case specifically tests whether:
+
+    ordinary vertical walls
+    draft analysis
+    accessibility
+    undercut classification
+    direction scoring
+
+are correctly separated.
+
+19. PART3 / ARBITRARY-DIRECTION REGRESSION
+
+`Part3.stp` is used to verify that the system is not artificially restricted to principal axes.
+
+If its geometry genuinely favors a non-principal direction, the optimizer must be capable of discovering it.
+
+The system therefore needs both properties:
+
+    principal directions are preferred when adequate
+    arbitrary directions are available when geometrically necessary
+
+These are not contradictory.
+
+20. PARTING LINE
+
+The pull direction should be selected before final parting-line reasoning.
+
+The conceptual relationship is:
+
+    candidate pull direction
+        ↓
+    manufacturability analysis
+        ↓
+    preferred pull direction
+        ↓
+    parting-line/core-cavity reasoning
+        ↓
+    side-action/remaining-undercut analysis
+
+Parting-line analysis must not silently redefine what constitutes an undercut.
+
+21. SIDE ACTIONS
+
+If a confirmed geometric obstruction remains after selecting the best pull direction, classify the affected feature as requiring an additional action/side core where appropriate.
+
+Conceptually:
+
+    confirmed obstruction
+        +
+    cannot be resolved by primary pull direction
+        ↓
+    side action candidate
+
+This is different from:
+
+    bad draft
+        ↓
+    side action
+
+22. PERFORMANCE ARCHITECTURE
+
+The system must remain computationally practical.
+
+Do not perform expensive geometric operations for every:
+
+    face × direction × possible sample
+
+combination unless absolutely necessary.
+
+Use a staged architecture:
+
+    Stage A:
+    cheap directional calculations
+
+    Stage B:
+    cheap candidate generation
+
+    Stage C:
+    accessibility screening
+
+    Stage D:
+    expensive geometric validation only for meaningful candidates
+
+    Stage E:
+    direction scoring
+
+    Stage F:
+    refinement of promising directions
+
+Directional quantities that depend only on:
+
+    face geometry
+    candidate direction
+
+should be cached/reused.
+
+The expensive Boolean/solid operations must never be the only mechanism used for every face in every direction.
+
+23. IMPORTANT: HEURISTIC VS TRUTH
+
+Every output in the pipeline must have a defined epistemic status.
+
+For example:
+
+    heuristic candidate
+        = possible problem
+
+    accessibility risk
+        = geometric evidence of possible obstruction
+
+    Boolean confirmed
+        = validated obstruction
+
+    final undercut
+        = confirmed obstruction satisfying the final reporting criterion
+
+The system must not expose a heuristic as if it were a geometric truth.
+
+24. IDEAL END-TO-END ALGORITHM
+
+For each candidate direction d:
+
+STEP 1:
+Normalize d.
+
+STEP 2:
+For every relevant face, calculate directional quantities such as:
+
+    n · d
+    draft angle
+    directional side
+    preliminary accessibility indicators
+
+STEP 3:
+Compute draft statistics independently.
+
+STEP 4:
+Generate possible undercut/accessibility-risk candidates using inexpensive geometric/topological evidence.
+
+STEP 5:
+For each meaningful candidate, determine actual withdrawal accessibility along the appropriate mold-half direction:
+
+    +d or -d
+
+STEP 6:
+Where accessibility is ambiguous or where a high-confidence obstruction must be established, perform robust OCC geometric validation.
+
+STEP 7:
+Classify each candidate as:
+
+    confirmed obstruction
+    accessible/not undercut
+    unknown/unvalidated
+
+STEP 8:
+Aggregate only confirmed geometric obstructions into the final undercut result.
+
+Keep proxy/suspected/unknown results separate.
+
+STEP 9:
+Calculate side-action requirements from confirmed unresolved withdrawal obstructions.
+
+STEP 10:
+Calculate the manufacturing score for direction d using:
+
+    draft
+    accessibility
+    confirmed undercuts
+    side actions
+    interference/other validated penalties
+
+STEP 11:
+Compare d against all other candidate directions.
+
+STEP 12:
+Use hierarchical expansion and local refinement when necessary.
+
+STEP 13:
+Select the direction with the best validated manufacturing outcome, using practical simplicity/preference as a tie-breaker rather than allowing tiny numerical differences to dominate.
+
+STEP 14:
+Only after the pull direction is established, continue into final parting-line and core/cavity reasoning.
+
+25. FINAL SEMANTIC CONTRACT
+
+The corrected system must obey these relationships:
+
+    bad draft
+        DOES NOT IMPLY
+    undercut
+
+    core/cavity side
+        DOES NOT IMPLY
+    undercut
+
+    concavity
+        DOES NOT IMPLY
+    undercut
+
+    proxy candidate
+        DOES NOT IMPLY
+    confirmed undercut
+
+    Boolean failure
+        DOES NOT IMPLY
+    undercut
+
+    Boolean skip
+        DOES NOT IMPLY
+    undercut
+
+Instead:
+
+    undercut
+        =
+    genuine withdrawal obstruction
+        validated by appropriate geometric reasoning
+
+and:
+
+    optimal pull direction
+        =
+    direction providing the best validated manufacturing outcome
+    under the defined scoring and practical-direction rules.
+
+26. NON-NEGOTIABLE SUCCESS CONDITIONS
+
+The final implementation must satisfy the following conceptual tests:
+
+A. A normal vertical wall with approximately 0° draft must not automatically become an undercut.
+
+B. A concave feature must not automatically become an undercut.
+
+C. A core/cavity-side classification must not automatically become an undercut.
+
+D. A genuine re-entrant feature that physically blocks withdrawal must be detectable.
+
+E. Boolean failures/skips must not silently become confirmed undercuts.
+
+F. Draft analysis must remain independent from undercut confirmation.
+
+G. Accessibility must represent physical withdrawal, not merely normal orientation.
+
+H. Arbitrary pull directions must remain supported.
+
+I. Principal directions must be evaluated first.
+
+J. A practically equivalent simple direction should beat a mathematically marginal arbitrary direction.
+
+K. `Part1.stp` must prefer the known +Z solution.
+
+L. `Part3.stp` must remain capable of producing a genuinely non-principal solution when its geometry actually warrants one.
+
+M. Direction optimization must operate on trustworthy undercut/accessibility results rather than artifacts produced by the undercut detector.
+
+N. The final UI/API must distinguish confirmed geometric results from heuristic/unknown results.
+
+27. MOST IMPORTANT ARCHITECTURAL PRINCIPLE
+
+The entire pipeline should be understood as:
+
+    GEOMETRY
+        ↓
+    DIRECTIONAL ORIENTATION
+        ↓
+    DRAFT ANALYSIS
+
+    GEOMETRY
+        ↓
+    WITHDRAWAL ACCESSIBILITY
+        ↓
+    POSSIBLE OBSTRUCTION
+        ↓
+    GEOMETRIC VALIDATION
+        ↓
+    CONFIRMED UNDERCUT
+
+    DRAFT + ACCESSIBILITY + CONFIRMED UNDERCUTS
+        ↓
+    MANUFACTURING SCORE
+        ↓
+    PULL-DIRECTION SELECTION
+
+The system must NOT become:
+
+    GEOMETRY
+        ↓
+    BAD DRAFT
+        ↓
+    UNDERCUT
+        ↓
+    PULL DIRECTION
+
+That architecture is explicitly rejected.
+```
+
+### The most important thing this prevents
+
+Your current result:
+
+> `(+0.707, 0, -0.707)` → 8 undercuts → 1 major undercut → therefore "best"
+
+may be **internally consistent but geometrically wrong**.
+
+That's the dangerous kind of bug. The optimizer isn't necessarily "bad" by itself. It can be faithfully optimizing **bad evidence**.
+
+The ideal dependency is:
+
+**geometry → accessibility → confirmed undercuts → direction score**
+
+not:
+
+**geometry → draft/heuristic → fake undercuts → direction score**
+
+And that is why I would make **undercut semantics the first thing Claude audits**, before allowing it to touch the direction optimizer.
+
+Also, I would explicitly tell Claude that the `+Z` result for Part1 is a **regression oracle**, not merely an example. If its proposed corrected algorithm cannot explain why the Part1 geometry produces +Z, the plan is not good enough.
+
+One more important point: **don't ask Claude to make the algorithm "match the Bosch answer" by hardcoding +Z for Part1.** That would be garbage engineering. Part1 should emerge as +Z because the geometry and scoring say +Z is the correct manufacturing direction. The known answer is a validation constraint, not an implementation rule.
