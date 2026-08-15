@@ -2,6 +2,86 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-15 — Forensic Fix: Boolean Pool Reduction (Fix D/E) + Timeout Prevention
+
+**Root causes addressed:**
+
+Two blockers diagnosed from prior session logs and real-geometry timing data:
+
+- **Blocker A (timeout T1+T2):** Boolean candidate pool contained ~230 perpendicular-dot faces (`|n·d| ≤ 0.01`) on Part1+Z. ALL proxy undercuts satisfy this (`sin(0.5°) ≈ 0.0087 < 0.01`), so the budget (max_faces=80) was always hit → `boolean_validation_complete=False` → suitability gate always rejected → no early exit. A second timeout (T2) from three "expanded validation" call sites with `boolean_check_all_core_side=True, max_faces=150` always missed the direction cache (different key) → expensive re-run at every stage exit.
+
+- **Blocker B (false-positive green faces):** `_face_access_direction()` returns `±pull_dir` for perpendicular-dot faces, making the swept prism run through adjacent material (wrong direction) rather than testing mold-withdrawal clearance → false-positive interference volume → false confirmed undercuts. Additionally, `no_interference` faces were rendered pale green (`"no_interference"` style key) rather than neutral gray.
+
+**Fix D — Exclude perpendicular-dot faces from Boolean candidate pool (`backend/geometry/undercut_detector.py`):**
+- `check_ids` construction changed from `sorted(set(proxy_undercut_ids) | set(risk_face_ids))` to `sorted((set(proxy_undercut_ids) | set(risk_face_ids)) - set(parting_ids))`.
+- `parting_ids` (perpendicular-dot set, `|n·d| ≤ 0.01`) now excludes faces from Boolean entirely.
+- New field `boolean_volume_by_face: dict[int, float]` added to `UndercutDetectionResult` for future diagnostic use.
+- Removed `boolean_check_all_core_side: bool = False` parameter from `detect_undercuts()` — dead after Fix D since perpendicular faces are excluded definitionally.
+
+**Fix B/C — Eliminate expanded final pass (direction_optimizer + config):**
+- Removed `final_direction_max_boolean_faces: 150` from `DirectionSearchSettings` (`backend/config.py`) and `config.yaml` — dead code after Fix D.
+- Removed `boolean_check_all_core_side` from `DirectionUndercutCacheKey` (frozen dataclass) and from `_direction_cache_key()`, `_lookup_direction_cache()`, `_cached_detect_boolean_undercuts()`.
+- All three final-pass call sites (Stage 1 exit, Stage 2 exit, Stage 3 / final) now use `max_boolean_faces=cfg.boolean_refine_max_faces` (default 80) — same as per-candidate scoring → guaranteed cache hit (zero extra Boolean ops).
+- Comment updated: "Final pass: same params as per-candidate scoring → guaranteed cache hit (zero cost)."
+
+**Fix E — Render no_interference faces as accessible (`backend/api/main.py`):**
+- `elif face_id in no_interference_ids: style_key = "no_interference"` → `style_key = "accessible"`.
+- Boolean-ran-but-zero-volume faces no longer render as pale green; they join the neutral gray accessible tier.
+
+**Logging added:**
+- `undercut_detector.py`: logs candidate pool size, proxy/risk counts, budget limit flag, and validation completeness after Boolean runs.
+- `direction_optimizer.py`: logs per-candidate Boolean direction, candidate total, checked count, validation status, suitability pass/fail, and cache hit.
+
+**Tests (Phase 4):**
+- 8 new passing tests, 0 new failures:
+  - `test_undercut_semantic_contract.py`: 6 new tests (Fix D correctness — perp-dot exclusion; non-perp risk included; proxy+concave excluded; no_interference→accessible rendering; vertical wall not confirmed; pool reduction enables validation_complete naturally).
+  - `test_direction_optimizer.py::TestFinalPassCacheHit`: 2 new tests (final pass uses `max_faces=80` not 150; `final_direction_reused` key present in `to_dict()`).
+- Existing tests: 14 pre-existing failures unchanged (10 in `test_undercut_detector.py` from R1-R5 semantic changes; 4 from OCC/reportlab unavailability in pip environment).
+- Renamed `test_perpendicular_risk_face_excluded_if_also_perpendicular` → `test_proxy_undercut_with_concave_edge_excluded_from_boolean`: original geometry was impossible (core-side requires `n·d < -0.01`; perp-dot requires `|n·d| ≤ 0.01` — disjoint sets). Replaced with correct scenario: proxy undercut (perp-dot by construction) with concave edge.
+
+**Phase 5 (real OCC validation) — completed 2026-08-15:**
+
+*Environment: `.micromamba/root/envs/dfm_agent/bin/python` (pythonocc-core 7.7.2)*
+
+**Part1(original).stp — Phase 0b baseline (UNMODIFIED code):**
+- `candidate_total=66 checked=66 validation_complete=True elapsed=16.0s`
+- `confirmed=10 suspected=11 no_interf=45`
+- All 10 confirmed undercuts were perpendicular-dot false positives (faces 30,31,33,34,35,36,40,41,42,45)
+- All had `draft=0.0°, nd≈0.0000, side=parting, proxy=True, risk=False` — vertical walls at the parting plane, no concave edges (not genuine re-entrant features)
+- Confirmed: `proxy_set.issubset(perp_set)=True` — all 78 proxy undercuts are perpendicular-dot
+
+**Part1(original).stp — Post Fix D (detect_undercuts at +Z only):**
+- `candidate_total=40 checked=40 failed=4 skipped=0 elapsed=9.2s`
+- `confirmed=0 suspected=4 no_interf=36 validation_complete=True`
+- `perp-dot in confirmed: []` ✅ All false positives eliminated (AC6 PASS)
+
+**Part1(original).stp — Full direction optimization (Post Fix D+B+C):**
+- `elapsed=96.3s` — **AC2 FAILS** (target <30s; pre-fix was >240s, improvement is real but target not met)
+- `best_direction=(-0.707,0.000,0.707) stage=2` — **AC1 FAILS** (target z>0.9)
+- `validation_complete=True validation_fallback=False` — AC3 PASS, AC4 PASS
+- Cause of AC1 failure: Fix D removes false-positive confirmed undercuts from diagonal directions. Pre-fix, those diagonals scored poorly due to false undercut counts; post-fix, diagonal (-0.707,0,0.707) wins with 77.1% good draft vs +Z's 28.3%. With 17 genuine confirmed undercuts on the diagonal, the scoring formula weights draft improvement more heavily than undercut count — this is a scoring formula calibration issue, NOT a correctness regression from Fix D.
+- Cause of AC2 failure: Stage 2 has 8 Boolean-validated directions instead of predicted 4 (all diagonal directions with ~22% bad draft pass the 30% threshold). With 13-41 candidates per direction and 5-20s per check, total is ~90s in Stage 2 alone. The candidate pool estimate (15-20) was accurate; the number of Boolean-refined directions was underestimated.
+
+**Part3.stp — Full direction optimization (Post Fix D+B+C):**
+- `elapsed=0.5s stage=1 best_direction=(1.000,0.000,0.000)` — AC8 PASS (runtime), direction norm=1.0 ✅
+- `confirmed=0 suspected=2 no_interf=0 candidate_total=0 validation_complete=True validation_fallback=False`
+- No perpendicular-dot faces in confirmed ✅
+- Stage 1 early exit: +X direction has 0 Boolean candidates (no risk faces or proxy undercuts after perpendicular-dot exclusion) → `validation_complete=True` trivially → immediate early exit
+
+**Genuine undercut preservation:** No perpendicular-dot face appeared in confirmed undercuts on either part after Fix D. The 4 suspected faces on Part1+Z are Boolean-failed (OCC exception), not excluded by Fix D — consistent with plan section §4.6 (risk face coverage for genuine undercuts holds).
+
+**Files changed:**
+- `backend/geometry/undercut_detector.py` — Fix D (perp-dot exclusion, pool logging, `boolean_volume_by_face`, removed `boolean_check_all_core_side`)
+- `backend/geometry/direction_optimizer.py` — Fix B/C (removed cache key field, removed expanded pass, unified max_faces, added logging)
+- `backend/api/main.py` — Fix E (no_interference → accessible style key)
+- `backend/config.py` — removed `final_direction_max_boolean_faces`
+- `config.yaml` — removed `final_direction_max_boolean_faces: 150`
+- `tests/test_undercut_semantic_contract.py` — 6 new tests; 1 test renamed/corrected
+- `tests/test_direction_optimizer.py` — 2 new tests (`TestFinalPassCacheHit`); removed stale `boolean_check_all_core_side` kwarg from 2 existing mocks
+- `tests/test_undercut_detector.py` — 9 existing tests updated to use core-side normals + concave edges (required after Fix D excluded perp-dot faces from Boolean)
+
+---
+
 ### 2026-08-14 — Pull-Direction & Undercut Pipeline Semantic Correction (R1–R5)
 
 **What changed:**

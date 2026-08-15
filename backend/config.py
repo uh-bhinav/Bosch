@@ -111,11 +111,6 @@ class DirectionSearchSettings:
     # (failed/skipped Boolean) do not count.  A cheap-screen-pass that
     # fails this check is NOT accepted; the search falls through.
     suitability_max_confirmed_undercut_pct: float = 10.0  # PROVISIONAL
-    # Expanded Boolean validation for the final selected direction (R2).
-    # Higher budget than per-candidate validation to catch false negatives from
-    # the heuristic candidate generator (proxy + accessibility risk).
-    # This runs ONCE for the winning direction, not for every candidate.
-    final_direction_max_boolean_faces: int = 150  # PROVISIONAL
     # ── Milestone 4: scoring weights ──────────────────────────────────────
     # Default weights are chosen to preserve scoring magnitude and keep
     # backward compat with parts analysed under the pre-M4 formula.

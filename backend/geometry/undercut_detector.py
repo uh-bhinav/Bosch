@@ -30,10 +30,13 @@ Paper alignment
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from backend.config import settings
 from backend.geometry.draft_analyzer import (
@@ -649,6 +652,10 @@ class UndercutDetectionResult:
     # Validation completeness (R4): tracks whether all candidates were checked.
     boolean_candidate_count: int = 0  # total candidates submitted for Boolean
     boolean_validation_complete: bool = False  # True iff all candidates checked
+    # Per-face Boolean interference volume (populated from interference_by_face at return site).
+    # Maps face_id → volume_mm3. Used for the face-level diagnostic script and
+    # external analysis. Empty when boolean_refine=False.
+    boolean_volume_by_face: dict[int, float] = field(default_factory=dict)
 
     @property
     def undercut_area_pct(self) -> float:
@@ -3226,13 +3233,76 @@ def _compute_accessibility_risk(
     return risk_ids, risk_area
 
 
+def _dump_face_diagnostic(
+    part: PartGeometry,
+    metrics: dict[int, FaceDirectionalMetrics],
+    result: "UndercutDetectionResult",
+    label: str,
+    marginal_threshold_deg: float,
+) -> None:
+    """
+    Print a per-face diagnostic table for all faces in confirmed/suspected/no-interference sets.
+
+    Columns: face_id, draft_angle, normal, n·d, mold_side, risk, proxy, perp_dot,
+             boolean_status, volume_mm3.
+
+    - proxy: draft_angle < marginal_threshold_deg (computed from precomputed_metrics)
+    - perp_dot: face in result.parting_face_ids (dot-product classification |n·d| <= 0.01)
+    - risk: face in result.accessibility_risk_face_ids
+    - boolean_status: confirmed / no_interf / failed / skipped / not_checked
+    - volume_mm3: from result.boolean_volume_by_face
+    """
+    proxy_set = {fid for fid, m in metrics.items() if m.draft_angle_deg < marginal_threshold_deg}
+    perp_set = set(result.parting_face_ids)
+    risk_set = set(result.accessibility_risk_face_ids)
+    confirmed_set = set(result.undercut_face_ids)
+    no_interf_set = set(result.boolean_no_interference_face_ids)
+    failed_set = set(result.boolean_failed_face_ids)
+    skipped_set = set(result.boolean_skipped_face_ids)
+    vol_map = result.boolean_volume_by_face
+
+    def _status(fid: int) -> str:
+        if fid in confirmed_set:
+            return "confirmed"
+        if fid in no_interf_set:
+            return "no_interf"
+        if fid in failed_set:
+            return "failed"
+        if fid in skipped_set:
+            return "skipped"
+        return "not_checked"
+
+    all_reported = sorted(confirmed_set | set(result.suspected_undercut_face_ids) | no_interf_set)
+    header = (
+        f"{'face_id':>7} {'draft':>7} {'normal':>24} {'n·d':>8} {'side':>8} "
+        f"{'risk':>5} {'proxy':>5} {'perp':>5} {'status':>12} {'vol_mm3':>12}"
+    )
+    print(f"\n=== FACE DIAGNOSTIC: {label} ===")
+    print(header)
+    print("-" * len(header))
+    for fid in all_reported:
+        face = part.get_face(fid)
+        m = metrics.get(fid)
+        if face is None or m is None:
+            continue
+        n = face.normal
+        vol = vol_map.get(fid, "?")
+        vol_str = f"{vol:.6f}" if isinstance(vol, float) else str(vol)
+        print(
+            f"{fid:>7d} {m.draft_angle_deg:>7.3f} "
+            f"({n[0]:>6.3f},{n[1]:>6.3f},{n[2]:>6.3f}) {m.signed_dot:>8.4f} "
+            f"{m.mold_side:>8} {str(fid in risk_set):>5} {str(fid in proxy_set):>5} "
+            f"{str(fid in perp_set):>5} {_status(fid):>12} {vol_str:>12}"
+        )
+    print()
+
+
 def detect_undercuts(
     part: PartGeometry,
     pull_direction: Vec3,
     mutate: bool = True,
     boolean_refine: bool = True,
     boolean_check_all_faces: bool = False,
-    boolean_check_all_core_side: bool = False,
     max_boolean_faces: int = 120,
     boolean_volume_cache: Optional[BooleanVolumeCache] = None,
     precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]] = None,
@@ -3378,24 +3448,26 @@ def detect_undercuts(
         if boolean_check_all_faces:
             check_ids = [face.face_id for face in part.valid_faces]
         else:
-            # Phase 2 (Change 1): include BOTH proxy candidates AND accessibility
-            # risk faces so well-drafted but geometrically trapped faces are checked.
-            check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))
-            # Phase 5 (Change 7a): for final direction, also check all core-side faces
-            if boolean_check_all_core_side:
-                core_side_ids = [
-                    f.face_id for f in part.valid_faces
-                    if (
-                        precomputed_metrics is not None
-                        and f.face_id in precomputed_metrics
-                        and precomputed_metrics[f.face_id].signed_dot < -parting_dot_threshold
-                    ) or (
-                        precomputed_metrics is None
-                        and f.signed_dot(pull_dir) < -parting_dot_threshold
-                    )
-                ]
-                check_ids = sorted(set(check_ids) | set(core_side_ids))
+            # Perpendicular-dot faces (|n·d| ≤ parting_dot_threshold) are excluded from
+            # Boolean swept-face validation because the current access-direction formulation
+            # (_face_access_direction → ±pull_dir) selects a sweep direction perpendicular
+            # to the face normal for these faces. The offset+sweep+intersect sequence then
+            # produces unreliable (always-positive) results: the swept prism passes through
+            # adjacent part material rather than testing mold-withdrawal clearance.
+            # This is a policy for THIS detector's formulation, not a general property of
+            # surface-accessibility analysis. See plan §4.2 for the full analysis.
+            perpendicular_set = set(parting_ids)
+            check_ids = sorted((set(proxy_undercut_ids) | set(risk_face_ids)) - perpendicular_set)
         boolean_candidate_total = len(check_ids)
+        logger.info(
+            "undercut candidate_pool=%d proxy_count=%d risk_count=%d max_faces=%d "
+            "budget_limited=%s",
+            boolean_candidate_total,
+            len(proxy_undercut_ids),
+            len(risk_face_ids),
+            max_boolean_faces,
+            boolean_candidate_total > max_boolean_faces,
+        )
         check_ids = _rank_boolean_candidate_faces(
             part=part,
             pull_direction=pull_dir,
@@ -3445,6 +3517,13 @@ def detect_undercuts(
 
     boolean_validation_complete = (
         boolean_was_run and (len(boolean_checked) + len(boolean_skipped)) >= boolean_candidate_total
+    )
+    logger.info(
+        "undercut validation_complete=%s checked=%d skipped=%d candidate_total=%d",
+        boolean_validation_complete,
+        len(boolean_checked),
+        len(boolean_skipped),
+        boolean_candidate_total,
     )
 
     valid_ids = {face.face_id for face in part.valid_faces}
@@ -3740,5 +3819,8 @@ def detect_undercuts(
         boolean_no_interference_face_ids=sorted(boolean_no_interference),
         boolean_candidate_count=boolean_candidate_total,
         boolean_validation_complete=boolean_validation_complete,
+        boolean_volume_by_face={
+            fid: metric.volume_mm3 for fid, metric in interference_by_face.items()
+        },
         analysis_time_s=time.perf_counter() - t_start,
     )

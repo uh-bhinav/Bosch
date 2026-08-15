@@ -68,7 +68,6 @@ dfm:
     suitability_max_bad_draft_pct: 30.0
     suitability_max_accessibility_risk_pct: 15.0
     suitability_max_confirmed_undercut_pct: 10.0
-    final_direction_max_boolean_faces: 150
     # Milestone 4: independent scoring weights
     # Cheap stage (draft + accessibility risk, independent signals):
     scoring_bad_draft: 1000.0

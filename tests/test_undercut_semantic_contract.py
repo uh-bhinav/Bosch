@@ -608,3 +608,208 @@ def test_undercut_detection_result_to_dict_includes_new_fields():
     assert "validation_complete" in br
     assert br["validation_complete"] is True
     assert "validation_coverage_pct" in br
+
+
+# ===========================================================================
+# Fix D tests: perpendicular-dot face exclusion from Boolean candidate pool
+# ===========================================================================
+
+def test_perpendicular_dot_faces_excluded_from_boolean_candidates():
+    """
+    A face with |n·d| = 0.005 (proxy undercut due to ~0.29° draft) must NOT
+    appear in boolean_checked_face_ids after Fix D.
+
+    Perpendicular-dot faces are excluded from Boolean swept-face validation
+    because the current _face_access_direction() → ±pull_dir formulation
+    produces unreliable (always-positive) results for these faces.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    # n·d = 0.005 → |n·d| ≤ 0.01 → perpendicular-dot → excluded from Boolean
+    # draft_angle = arcsin(0.005) ≈ 0.29° < 0.5° → proxy undercut candidate
+    # But it's in parting_ids (perp-dot set) → excluded from check_ids
+    face = _make_face(0, (0.005, 0.0, 0.99998749), area=100.0)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
+
+    with patch(
+        "backend.geometry.undercut_detector._OCC_BOOLEAN_AVAILABLE", True
+    ), patch(
+        "backend.geometry.undercut_detector._swept_face_interference_volume",
+        return_value=_make_boolean_metrics(volume_mm3=5.0),
+    ):
+        result = detect_undercuts(
+            part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=True, max_boolean_faces=80
+        )
+
+    assert 0 not in result.boolean_checked_face_ids, (
+        "Perpendicular-dot face (|n·d|=0.005) must NOT be Boolean-checked"
+    )
+
+
+def test_risk_face_not_perpendicular_is_boolean_tested():
+    """
+    A face with n·d = -0.5 and a concave edge is an accessibility risk face
+    (not perpendicular-dot) and must be Boolean-tested.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    # n·d = -0.5 → core-side, |n·d| = 0.5 >> 0.01 → NOT perpendicular-dot
+    # concave edge → accessibility risk
+    face = _make_face(0, (-0.5, 0.0, -0.866), area=100.0)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
+
+    with patch(
+        "backend.geometry.undercut_detector._OCC_BOOLEAN_AVAILABLE", True
+    ), patch(
+        "backend.geometry.undercut_detector._swept_face_interference_volume",
+        return_value=_make_boolean_metrics(volume_mm3=0.0),
+    ):
+        result = detect_undercuts(
+            part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=True, max_boolean_faces=80
+        )
+
+    assert 0 in result.boolean_checked_face_ids, (
+        "Non-perpendicular risk face (n·d=-0.5, concave edge) must be Boolean-checked"
+    )
+
+
+def test_proxy_undercut_with_concave_edge_excluded_from_boolean():
+    """
+    Proxy undercut faces (draft_angle < 0.5° → |n·d| < sin(0.5°) ≈ 0.0087 ≤ 0.01)
+    are always perpendicular-dot. Fix D excludes them from Boolean candidates.
+    Even if the face also has a concave edge, the perpendicular-dot exclusion
+    takes precedence: it must NOT be Boolean-checked.
+
+    Note: a perpendicular-dot face (|n·d| ≤ 0.01) cannot simultaneously be a
+    core-side risk face (requires n·d < -0.01) — these sets are disjoint by
+    construction of the thresholds. The exclusion matters for proxy undercuts,
+    which are always in the perp-dot set and were previously the main source of
+    the bloated Boolean candidate pool (~230 faces on Part1+Z).
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    # n=(0.999987, 0.0, 0.005) with pull=(0,0,1):
+    #   n·d = 0.005, |n·d| = 0.005 ≤ 0.01 → perpendicular-dot
+    #   draft_angle = asin(|n·d|) = asin(0.005) ≈ 0.29° < 0.5° → proxy undercut
+    #   concave edge → would be a candidate if not excluded
+    face = _make_face(0, (0.999987, 0.0, 0.005), area=100.0)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
+
+    with patch(
+        "backend.geometry.undercut_detector._OCC_BOOLEAN_AVAILABLE", True
+    ), patch(
+        "backend.geometry.undercut_detector._swept_face_interference_volume",
+        return_value=_make_boolean_metrics(volume_mm3=5.0),
+    ):
+        result = detect_undercuts(
+            part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=True, max_boolean_faces=80
+        )
+
+    assert 0 not in result.boolean_checked_face_ids, (
+        "Proxy undercut (perpendicular-dot, |n·d|=0.005) must NOT be Boolean-checked, "
+        "even with a concave edge (perpendicular-dot exclusion takes precedence)"
+    )
+
+
+def test_no_interference_rendered_as_accessible():
+    """
+    API-level: no_interference faces (Boolean ran, volume=0) must be rendered
+    as 'accessible' (neutral gray), NOT as 'no_interference' (pale green).
+    Fix E suppresses the visually confusing green rendering.
+    """
+    from backend.geometry.undercut_detector import UndercutDetectionResult
+    from backend.api.main import _undercut_mesh_visual_payload
+
+    class MockMesh:
+        face_ids = [0, 1, 2]
+
+    # Face 1 is no_interference (Boolean ran, volume=0)
+    result = UndercutDetectionResult(
+        pull_direction=(0.0, 0.0, 1.0),
+        method="test",
+        undercut_face_ids=[],
+        accessible_face_ids=[0, 2],
+        parting_face_ids=[],
+        skipped_face_ids=[],
+        boolean_no_interference_face_ids=[1],
+        boolean_candidate_count=1,
+        boolean_validation_complete=True,
+    )
+
+    payload = _undercut_mesh_visual_payload(
+        mesh=MockMesh(),
+        result=result,
+    )
+
+    classifications = payload["undercut_classification"]
+    # Face index 1 (face_id=1) should be "accessible" not "no_interference"
+    assert classifications[1] == "accessible", (
+        "no_interference face must render as 'accessible' (Fix E), not 'no_interference'"
+    )
+
+
+def test_vertical_wall_not_confirmed_undercut():
+    """
+    A perpendicular-dot face (vertical wall, n·d≈0) excluded from Boolean candidates
+    must NOT appear in undercut_face_ids. Without Boolean confirmation, there is
+    no confirmed undercut regardless of draft angle.
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    # Vertical wall: n=(1,0,0), pull=(0,0,1) → n·d=0, draft=0° → perpendicular-dot
+    # With only convex edges: convexity-suppressed → not even a suspected undercut
+    face = _make_face(0, (1.0, 0.0, 0.0), area=100.0)
+    edge = _make_edge(0, [0], convexity="convex")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
+
+    with patch(
+        "backend.geometry.undercut_detector._OCC_BOOLEAN_AVAILABLE", True
+    ):
+        result = detect_undercuts(
+            part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=True, max_boolean_faces=80
+        )
+
+    assert 0 not in result.undercut_face_ids, (
+        "Perpendicular-dot face excluded from Boolean must NOT be a confirmed undercut"
+    )
+    assert 0 not in result.boolean_checked_face_ids, (
+        "Perpendicular-dot face must NOT have been Boolean-checked"
+    )
+
+
+def test_pool_reduction_enables_validation_complete():
+    """
+    When the Boolean candidate pool contains only non-perpendicular risk faces
+    and the pool size is ≤ max_boolean_faces, validation_complete must be True.
+
+    This verifies the plan's core prediction: after Fix D, validation_complete
+    is achievable naturally (by pool reduction, NOT by redefining completeness).
+    """
+    from backend.geometry.undercut_detector import detect_undercuts
+
+    # 20 core-side + concave-edge faces, well within max_boolean_faces=80
+    faces = [_make_face(i, (0.0, 0.0, -1.0), area=100.0) for i in range(20)]
+    edges = [_make_edge(i, [i], convexity="concave") for i in range(20)]
+    face_to_edges = {i: [i] for i in range(20)}
+    part = _make_part(faces, edges=edges, face_to_edges=face_to_edges)
+
+    with patch(
+        "backend.geometry.undercut_detector._OCC_BOOLEAN_AVAILABLE", True
+    ), patch(
+        "backend.geometry.undercut_detector._swept_face_interference_volume",
+        return_value=_make_boolean_metrics(volume_mm3=0.0),
+    ):
+        result = detect_undercuts(
+            part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=True, max_boolean_faces=80
+        )
+
+    assert result.boolean_candidate_count == 20, (
+        f"Expected 20 candidates, got {result.boolean_candidate_count}"
+    )
+    assert result.boolean_validation_complete is True, (
+        "All 20 candidates fit within budget of 80 → validation must be complete "
+        "(natural pool reduction, NOT redefined semantics)"
+    )

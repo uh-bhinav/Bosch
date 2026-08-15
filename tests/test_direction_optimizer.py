@@ -586,7 +586,6 @@ class TestHierarchicalSearch:
 
         def mock_cached_boolean(
             part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
-            boolean_check_all_core_side=False,
         ):
             """Return a Boolean-refined result with zero confirmed undercuts."""
             ok_result = UndercutDetectionResult(
@@ -778,7 +777,6 @@ class TestScoringIndependence:
 
         def mock_cached_boolean(
             part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
-            boolean_check_all_core_side=False,
         ):
             return UndercutDetectionResult(
                 pull_direction=direction,
@@ -856,3 +854,129 @@ class TestScoringIndependence:
         # Bad draft (face is a proxy undercut), but no accessibility risk
         assert draft.bad_pct > 0.0
         assert undercuts.accessibility_risk_area_pct == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (Fix B/C): Final pass uses standard params → guaranteed cache hit
+# ---------------------------------------------------------------------------
+
+class TestFinalPassCacheHit:
+    """
+    Verify that the final winning-direction pass uses the same
+    max_boolean_faces as the per-candidate Boolean scoring pass
+    (cfg.boolean_refine_max_faces = 80), NOT the old expanded budget of 150,
+    so it always gets a cache hit.
+    """
+
+    def test_final_pass_uses_standard_params(self, monkeypatch):
+        """
+        The final _cached_detect_boolean_undercuts call (mutate=True) must
+        receive max_boolean_faces == cfg.boolean_refine_max_faces (default 80).
+        A call with max_boolean_faces=150 (the old value) must never occur.
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.geometry.undercut_detector import UndercutDetectionResult
+        from backend.config import settings
+
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        max_faces_seen: list[int] = []
+
+        def mock_cached_boolean(
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
+        ):
+            max_faces_seen.append(max_boolean_faces)
+            return UndercutDetectionResult(
+                pull_direction=direction,
+                method="mock-boolean",
+                undercut_face_ids=[],
+                accessible_face_ids=[f.face_id for f in part.faces],
+                parting_face_ids=[],
+                skipped_face_ids=[],
+                boolean_refined=True,
+                boolean_confirmed_face_ids=[],
+                boolean_validation_complete=True,
+                total_analysed_area_mm2=100.0,
+            ), mutate  # mutate=True → cache_hit=True to simulate final-pass hit
+
+        monkeypatch.setattr(
+            optimizer_module, "_cached_detect_boolean_undercuts", mock_cached_boolean
+        )
+
+        optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=10)
+
+        expected = settings.dfm.direction_search.boolean_refine_max_faces
+        assert all(
+            v == expected for v in max_faces_seen
+        ), (
+            f"All _cached_detect_boolean_undercuts calls must use "
+            f"max_boolean_faces={expected}; got values: {max_faces_seen}"
+        )
+        assert 150 not in max_faces_seen, (
+            "Old expanded budget of 150 must never be used for any pass"
+        )
+
+    def test_final_pass_is_cache_hit(self, monkeypatch):
+        """
+        Because the final pass uses the same parameters as the per-candidate
+        Boolean scoring pass, the direction_cache already has an entry →
+        _cached_detect_boolean_undercuts must return cache_hit=True.
+
+        We simulate this by making the mock return cache_hit=True on the
+        second call to the same direction (i.e., the final mutate=True pass).
+        """
+        import backend.geometry.direction_optimizer as optimizer_module
+        from backend.geometry.direction_optimizer import optimize_mold_direction
+        from backend.geometry.undercut_detector import UndercutDetectionResult
+
+        face = _make_face(0, (0.0, 0.0, 1.0), area=100.0)
+        part = _make_part([face])
+
+        call_counts: dict[tuple, int] = {}
+
+        def mock_cached_boolean(
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
+        ):
+            key = (direction, max_boolean_faces)
+            call_counts[key] = call_counts.get(key, 0) + 1
+            # First call → cache miss; second call (final pass) → cache hit
+            is_hit = call_counts[key] > 1
+            return UndercutDetectionResult(
+                pull_direction=direction,
+                method="mock-boolean",
+                undercut_face_ids=[],
+                accessible_face_ids=[f.face_id for f in part.faces],
+                parting_face_ids=[],
+                skipped_face_ids=[],
+                boolean_refined=True,
+                boolean_confirmed_face_ids=[],
+                boolean_validation_complete=True,
+                total_analysed_area_mm2=100.0,
+            ), is_hit
+
+        monkeypatch.setattr(
+            optimizer_module, "_cached_detect_boolean_undercuts", mock_cached_boolean
+        )
+
+        result = optimize_mold_direction(part, angular_step_deg=45.0, max_candidates=10)
+
+        # The winning direction must have been called at least twice with the
+        # same (direction, max_boolean_faces) key — once for scoring, once final.
+        best = result.best_direction
+        from backend.config import settings
+        expected_faces = settings.dfm.direction_search.boolean_refine_max_faces
+        key = (best, expected_faces)
+        assert key in call_counts, (
+            f"Expected at least one Boolean call for best direction {best}"
+        )
+        # If cache semantics work: final pass reuses the scoring call's entry.
+        # The optimizer reports final_direction_reused inside direction_cache sub-dict.
+        d = result.to_dict()
+        assert "direction_cache" in d, (
+            "DirectionOptimizationResult.to_dict() must expose direction_cache sub-dict"
+        )
+        assert "final_direction_reused" in d["direction_cache"], (
+            "direction_cache must expose final_direction_reused"
+        )

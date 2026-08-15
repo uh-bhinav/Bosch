@@ -414,7 +414,7 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
         elif face_id in suspected_ids:
             style_key = "suspected_undercut"
         elif face_id in no_interference_ids:
-            style_key = "no_interference"
+            style_key = "accessible"
         elif face_id in parting_ids or face_id in accessible_ids:
             style_key = "parting" if face_id in parting_ids else "accessible"
         else:

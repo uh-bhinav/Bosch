@@ -369,11 +369,17 @@ def test_boolean_confirmed_faces_become_feature_evidence(monkeypatch):
     import backend.geometry.undercut_detector as detector
     from backend.geometry.undercut_detector import detect_undercuts
 
+    # Use core-side normals (n·d = -1.0) so faces are NOT in perpendicular-dot set.
+    # Add concave edges so they appear in accessibility_risk_face_ids (required for Boolean).
     faces = [
-        _make_face(0, (1.0, 0.0, 0.0), area=50.0),
-        _make_face(1, (1.0, 0.0, 0.0), area=50.0),
+        _make_face(0, (0.0, 0.0, -1.0), area=50.0),
+        _make_face(1, (0.0, 0.0, -1.0), area=50.0),
     ]
-    part = _make_part(faces, adjacency={0: [1], 1: [0]})
+    edges = [
+        _make_edge(0, [0], convexity="concave"),
+        _make_edge(1, [1], convexity="concave"),
+    ]
+    part = _make_part(faces, adjacency={0: [1], 1: [0]}, edges=edges, face_to_edges={0: [0], 1: [1]})
 
     monkeypatch.setattr(detector, "_OCC_BOOLEAN_AVAILABLE", True)
     monkeypatch.setattr(detector, "_swept_face_interference_volume", lambda *args: 25.0)
@@ -405,8 +411,11 @@ def test_boolean_intersection_shape_is_attached_to_confirmed_feature(monkeypatch
     )
 
     shape = MagicMock(name="boolean_intersection_shape")
-    face = _make_face(0, (1.0, 0.0, 0.0), area=50.0)
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0), area=50.0)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
 
     def return_metrics(*args):
         return BooleanInterferenceMetrics(
@@ -463,11 +472,17 @@ def test_detector_groups_disconnected_nearby_boolean_regions(monkeypatch):
         detect_undercuts,
     )
 
+    # Use core-side normals (n·d = -1.0) so faces are NOT in perpendicular-dot set.
+    # Add concave edges so they appear in accessibility_risk_face_ids (required for Boolean).
     faces = [
-        _make_face(0, (1.0, 0.0, 0.0), area=50.0),
-        _make_face(1, (1.0, 0.0, 0.0), area=50.0),
+        _make_face(0, (0.0, 0.0, -1.0), area=50.0),
+        _make_face(1, (0.0, 0.0, -1.0), area=50.0),
     ]
-    part = _make_part(faces, adjacency={0: [], 1: []})
+    edges = [
+        _make_edge(0, [0], convexity="concave"),
+        _make_edge(1, [1], convexity="concave"),
+    ]
+    part = _make_part(faces, adjacency={0: [], 1: []}, edges=edges, face_to_edges={0: [0], 1: [1]})
 
     def return_metrics(part, face, direction):
         if face.face_id == 0:
@@ -527,11 +542,17 @@ def test_detector_marks_nested_boolean_regions_as_interacting(monkeypatch):
         detect_undercuts,
     )
 
+    # Use core-side normals (n·d = -1.0) so faces are NOT in perpendicular-dot set.
+    # Add concave edges so they appear in accessibility_risk_face_ids (required for Boolean).
     faces = [
-        _make_face(0, (1.0, 0.0, 0.0), area=100.0),
-        _make_face(1, (1.0, 0.0, 0.0), area=100.0),
+        _make_face(0, (0.0, 0.0, -1.0), area=100.0),
+        _make_face(1, (0.0, 0.0, -1.0), area=100.0),
     ]
-    part = _make_part(faces, adjacency={0: [], 1: []})
+    edges = [
+        _make_edge(0, [0], convexity="concave"),
+        _make_edge(1, [1], convexity="concave"),
+    ]
+    part = _make_part(faces, adjacency={0: [], 1: []}, edges=edges, face_to_edges={0: [0], 1: [1]})
 
     def return_metrics(_part, face, _pull_direction):
         if face.face_id == 0:
@@ -660,11 +681,17 @@ def test_boolean_candidate_faces_are_ranked_before_limit(monkeypatch):
     from backend.geometry.undercut_detector import detect_undercuts
 
     checked: list[int] = []
+    # Use core-side normals (n·d = -1.0) so faces are NOT in perpendicular-dot set.
+    # Add concave edges so they appear in accessibility_risk_face_ids (required for Boolean).
     faces = [
-        _make_face(0, (1.0, 0.0, 0.0), area=10.0),
-        _make_face(1, (1.0, 0.0, 0.0), area=500.0),
+        _make_face(0, (0.0, 0.0, -1.0), area=10.0),
+        _make_face(1, (0.0, 0.0, -1.0), area=500.0),
     ]
-    part = _make_part(faces)
+    edges = [
+        _make_edge(0, [0], convexity="concave"),
+        _make_edge(1, [1], convexity="concave"),
+    ]
+    part = _make_part(faces, edges=edges, face_to_edges={0: [0], 1: [1]})
 
     def record_boolean(part, face, direction):
         checked.append(face.face_id)
@@ -722,10 +749,17 @@ def test_boolean_feature_ranking_affects_faces_checked_under_small_budget(monkey
     from backend.geometry.undercut_detector import detect_undercuts
 
     checked: list[int] = []
+    # Use core-side normals (n·d = -1.0) so faces are NOT in perpendicular-dot set.
+    # Add concave edges so they appear in accessibility_risk_face_ids (required for Boolean).
     faces = [
-        _make_face(0, (1.0, 0.0, 0.0), area=1000.0),
-        _make_face(1, (1.0, 0.0, 0.0), area=900.0),
-        _make_face(2, (1.0, 0.0, 0.0), area=100.0),
+        _make_face(0, (0.0, 0.0, -1.0), area=1000.0),
+        _make_face(1, (0.0, 0.0, -1.0), area=900.0),
+        _make_face(2, (0.0, 0.0, -1.0), area=100.0),
+    ]
+    edges = [
+        _make_edge(0, [0], convexity="concave"),
+        _make_edge(1, [1], convexity="concave"),
+        _make_edge(2, [2], convexity="concave"),
     ]
     part = _make_part(
         faces,
@@ -734,6 +768,8 @@ def test_boolean_feature_ranking_affects_faces_checked_under_small_budget(monkey
             1: [0],
             2: [],
         },
+        edges=edges,
+        face_to_edges={0: [0], 1: [1], 2: [2]},
     )
 
     def record_boolean(part, face, direction):
@@ -760,8 +796,11 @@ def test_boolean_metrics_cache_reuses_previous_result(monkeypatch):
     from backend.geometry.undercut_detector import detect_undercuts
 
     calls = 0
-    face = _make_face(0, (1.0, 0.0, 0.0))
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0))
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
     cache = {}
 
     def count_boolean(*args):
@@ -797,8 +836,11 @@ def test_boolean_failure_retain_proxy_with_reason(monkeypatch):
     import backend.geometry.undercut_detector as detector
     from backend.geometry.undercut_detector import detect_undercuts
 
-    face = _make_face(0, (1.0, 0.0, 0.0))
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0))
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
 
     def fail_boolean(*args):
         raise RuntimeError("mock Boolean failure")
@@ -840,8 +882,11 @@ def test_sliver_faces_are_skipped_but_proxy_retained(monkeypatch):
     from backend.geometry.undercut_detector import detect_undercuts
 
     calls = 0
-    face = _make_face(0, (1.0, 0.0, 0.0), area=1e-8)
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0), area=1e-8)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
 
     def should_not_run(*args):
         nonlocal calls
@@ -1017,8 +1062,11 @@ def test_boolean_success_without_interference_is_high_reliability(monkeypatch):
     import backend.geometry.undercut_detector as detector
     from backend.geometry.undercut_detector import detect_undercuts
 
-    face = _make_face(0, (1.0, 0.0, 0.0))
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0))
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
 
     monkeypatch.setattr(detector, "_OCC_BOOLEAN_AVAILABLE", True)
     monkeypatch.setattr(detector, "_swept_face_interference_volume", lambda *args: 0.0)
@@ -1043,8 +1091,11 @@ def test_boolean_reliability_reports_sliver_skip_proxy_retention(monkeypatch):
     import backend.geometry.undercut_detector as detector
     from backend.geometry.undercut_detector import detect_undercuts
 
-    face = _make_face(0, (1.0, 0.0, 0.0), area=1e-8)
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0), area=1e-8)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
 
     monkeypatch.setattr(detector, "_OCC_BOOLEAN_AVAILABLE", True)
 
@@ -1612,8 +1663,11 @@ def test_detector_uses_boolean_geometry_for_feature_release_and_depth(monkeypatc
         detect_undercuts,
     )
 
-    face = _make_face(0, (0.0, 1.0, 0.0), area=100.0)
-    part = _make_part([face])
+    # Use core-side normal (n·d = -1.0) so face is NOT in perpendicular-dot set.
+    # Add concave edge so face appears in accessibility_risk_face_ids (required for Boolean).
+    face = _make_face(0, (0.0, 0.0, -1.0), area=100.0)
+    edge = _make_edge(0, [0], convexity="concave")
+    part = _make_part([face], edges=[edge], face_to_edges={0: [0]})
     shape = MagicMock(name="boolean_intersection_shape")
 
     def return_metrics(*args):
