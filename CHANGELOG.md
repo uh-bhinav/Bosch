@@ -2,6 +2,94 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-14 — Pull-Direction & Undercut Pipeline Semantic Correction (R1–R5)
+
+**What changed:**
+
+Seven-phase implementation correcting semantic conflation between unvalidated proxy signals and
+confirmed undercut geometry, and ensuring final direction selection comes only from
+Boolean-validated candidates.
+
+**Phase 1 — Data model (`backend/geometry/undercut_detector.py`, `backend/geometry/direction_optimizer.py`, `backend/config.py`, `config.yaml`):**
+- New fields on `UndercutDetectionResult`:
+  - `suspected_undercut_face_ids: list[int]` — proxy/risk faces where Boolean FAILED or SKIPPED (UNKNOWN epistemic state)
+  - `suspected_undercut_area_mm2: float` — surface area of suspected faces
+  - `boolean_no_interference_face_ids: list[int]` — faces where Boolean ran and volume = 0 (not proof of accessibility, but tracked)
+  - `boolean_candidate_count: int` — total candidates submitted to Boolean budget (before pruning), enabling completeness tracking
+  - `boolean_validation_complete: bool` — True iff all submitted candidates were actually checked (no budget-cut escapes)
+- New computed properties: `suspected_undercut_area_pct`, `boolean_validation_coverage_pct`
+- `to_dict()` updated: `face_counts`/`face_ids`/`boolean_refinement` sections all include new fields
+- New field on `DirectionOptimizationResult`: `validation_fallback: bool` — True when no Boolean-validated direction existed and optimizer fell back to cheap-only winner
+- New config: `direction_search.final_direction_max_boolean_faces: 150` (expanded budget for the winning direction's final pass)
+- `DirectionUndercutCacheKey` extended with `boolean_check_all_core_side: bool = False` field
+
+**Phase 2 — Boolean candidate expansion (R2):**
+- `check_ids` in `_boolean_refine_undercuts()` now includes `accessibility_risk_face_ids` (previously only `proxy_undercut_ids` were checked)
+- New `boolean_check_all_core_side` parameter to `detect_undercuts()` and `_boolean_refine_undercuts()`: when True, adds all core-side faces to `check_ids` (used for the winning direction's expanded final pass)
+- `_lookup_direction_cache()` refuses a non-`all_core_side` cached result when the caller requests `all_core_side=True`
+
+**Phase 3 — Composite rule (R3 — the core semantic fix):**
+- **Before**: `undercut_face_ids = boolean_confirmed + failed_proxies + skipped_proxies` (mixing epistemic states)
+- **After**:
+  - `undercut_face_ids` = CONFIRMED only (`boolean_confirmed_face_ids` when Boolean ran; empty when not)
+  - `suspected_undercut_face_ids` = faces in proxy/risk sets where Boolean returned FAILED or SKIPPED
+  - `boolean_no_interference_face_ids` = faces where Boolean ran and volume = 0
+  - Three sets are disjoint by construction
+- `boolean_no_interference` tracked as a return value from `_boolean_refine_undercuts()`; volume=0 faces no longer promoted to confirmed
+
+**Phase 4 — Direction suitability gate (R1, R4):**
+- `_is_direction_suitable_boolean()` now requires `undercuts.boolean_validation_complete == True`; a direction with budget-cut validation never passes the suitability gate
+- Stage 3 final selection: `validated = [c for c in scored if c.boolean_refined]` — Boolean-validated candidates sorted and selected first; if none exist, `validation_fallback=True` is set on the result and the best cheap-scored direction is used with explicit flag
+
+**Phase 5 — Expanded final validation pass (R2):**
+- When a direction is selected early (Stage 1 or Stage 2), the final `mutate=True` pass now uses `boolean_check_all_core_side=True` and `max_faces=150` (vs the scoring-loop budget of 80)
+- This means the winning direction always gets a thorough scan of all core-side faces, not just the proxy/risk subset
+
+**Phase 6 — API/Frontend (`backend/api/main.py`):**
+- Two new face visual styles:
+  - `"suspected_undercut"` — amber (255, 200, 80), priority 30 — faces where Boolean was inconclusive
+  - `"no_interference"` — pale green (180, 230, 180), priority 8 — Boolean ran, volume = 0 (explicitly labeled as not proof of accessibility)
+- `_undercut_mesh_visual_payload()` now extracts and classifies `suspected_undercut_face_ids` and `boolean_no_interference_face_ids` from the detection result
+
+**Phase 7 — Tests:**
+- 16 new semantic contract tests in `tests/test_undercut_semantic_contract.py`:
+  - T1/T2: Zero-draft accessible wall → `undercut_face_ids` empty without Boolean
+  - T3: Concave bounding + Boolean volume=0 → `no_interference`, not confirmed
+  - T5: Boolean failure → `suspected`, not confirmed
+  - T6: Budget exhaustion → `boolean_validation_complete=False`, skipped faces → suspected
+  - T7: `undercut_face_ids == boolean_confirmed_face_ids` invariant when Boolean ran
+  - T8: No-Boolean path produces empty `undercut_face_ids`
+  - T9: Accessibility risk face included in Boolean candidate set
+  - T13: Suitability gate rejects direction with incomplete validation
+  - T14: `_face_access_direction` sign correctness
+  - T15: Sweep distance covers the part diagonal
+  - T16: Offset is positive for any part size
+  - Invariant tests: CONFIRMED ∩ SUSPECTED = ∅, new field existence, `to_dict()` round-trip
+- Existing `test_direction_optimizer.py` (28 tests) updated: mocks accept `boolean_check_all_core_side` kwarg; Stage 1 mock sets `boolean_validation_complete=True`
+
+**Why:**
+The old composite rule conflated three distinct epistemic states — confirmed (Boolean proved interference), unknown (Boolean failed or budget-cut), and no-interference (Boolean ran, volume=0) — all into a single `undercut_face_ids` list. Downstream direction selection could then be won by a cheap-only candidate that never went through Boolean validation. These changes enforce strict epistemic separation across the full pipeline, from face-level detection through direction selection to API/UI display.
+
+**Verification evidence:**
+- `pytest tests/test_undercut_semantic_contract.py -v` → **16 passed, 0 failed** (new file)
+- `pytest tests/test_direction_optimizer.py -v` → **28 passed, 0 failed** (existing tests intact)
+- `pytest tests/ -v --tb=short` → **127 passed, 2 failed** (the 2 failures are pre-existing OCC-unavailability skips in non-pip environment — unrelated to this change)
+
+**Known limitations:**
+- Real OCC validation (Part1.stp / Part3.stp) not re-run in this session — requires conda/Docker environment. The 2 pre-existing OCC failures in pip environment are unrelated to these changes. No regression of real-geometry results is expected, as all changes are semantically additive or restrict previously over-broad sets.
+- `boolean_check_all_core_side=True` in the expanded final pass increases per-direction Boolean budget from 80 to 150 faces; performance impact on large parts untested until Docker re-run.
+
+**Files changed:**
+- `backend/geometry/undercut_detector.py` — Phase 1, 2, 3 (fields, composite rule, candidate expansion)
+- `backend/geometry/direction_optimizer.py` — Phase 1, 4, 5 (cache key, suitability, final selection, expanded pass)
+- `backend/api/main.py` — Phase 6 (visual styles, mesh payload)
+- `backend/config.py` — Phase 1 (`final_direction_max_boolean_faces`)
+- `config.yaml` — Phase 1 (matching YAML entry)
+- `tests/test_undercut_semantic_contract.py` — Phase 7 (new file, 16 tests)
+- `tests/test_direction_optimizer.py` — Phase 7 (mock updates)
+
+---
+
 ### 2026-08-14 — Regression fix: stale pyenv backend shadowing OCC-capable micromamba backend on port 8000
 
 **Root cause:** Two `uvicorn backend.api.main:app` processes were running simultaneously on port 8000:

@@ -106,6 +106,16 @@ UNDERCUT_FACE_VISUAL_STYLES = {
         "rgb": _rgb_byte_triplet(255, 165, 50),
         "priority": 43,
     },
+    "suspected_undercut": {
+        "label": "Suspected undercut (Boolean inconclusive — failed or budget-skipped)",
+        "rgb": _rgb_byte_triplet(255, 200, 80),
+        "priority": 30,
+    },
+    "no_interference": {
+        "label": "No interference detected (Boolean ran, volume = 0; not proof of accessibility)",
+        "rgb": _rgb_byte_triplet(180, 230, 180),
+        "priority": 8,
+    },
     "proxy_undercut": {
         "label": "Proxy undercut evidence",
         "rgb": _rgb_byte_triplet(255, 230, 150),
@@ -363,6 +373,10 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
     undercut_ids = _as_int_set(_undercut_result_value(result, "undercut_face_ids", []))
     parting_ids = _as_int_set(_undercut_result_value(result, "parting_face_ids", []))
     accessible_ids = _as_int_set(_undercut_result_value(result, "accessible_face_ids", []))
+    suspected_ids = _as_int_set(_undercut_result_value(result, "suspected_undercut_face_ids", []))
+    no_interference_ids = _as_int_set(
+        getattr(result, "boolean_no_interference_face_ids", []) or []
+    )
     confirmed_ids = _undercut_confirmed_face_ids(result)
     feature_by_face: dict[int, object] = {}
     feature_ids_by_face: dict[int, list[int]] = {}
@@ -394,7 +408,13 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
             feature = feature_by_face.get(face_id)
             style_key = _confirmed_undercut_style_key(feature)
         elif face_id in undercut_ids:
+            # undercut_face_ids now contains confirmed-only; this branch handles
+            # any confirmed face not yet in confirmed_ids (defensive fallback)
             style_key = "proxy_undercut"
+        elif face_id in suspected_ids:
+            style_key = "suspected_undercut"
+        elif face_id in no_interference_ids:
+            style_key = "no_interference"
         elif face_id in parting_ids or face_id in accessible_ids:
             style_key = "parting" if face_id in parting_ids else "accessible"
         else:

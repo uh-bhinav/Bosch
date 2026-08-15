@@ -1590,6 +1590,7 @@ def _show_mesh_plotly(
     fig.update_layout(
         height=720,
         margin=dict(l=0, r=0, t=0, b=0),
+        uirevision="stable",
         scene=dict(
             aspectmode="data",
             bgcolor="#f6f7f9",
@@ -4468,11 +4469,7 @@ with center:
                     region_meshes=viewer_regions,
                     region_opacity=region_opacity,
                     show_region_edges=show_region_edges,
-                    viewer_key=(
-                        f"undercuts-{selected_part}-{len(viewer_regions)}-"
-                        f"{region_opacity:.2f}-{show_region_edges}-"
-                        f"important-{high_confidence_only}-proxy-{show_proxy_undercut_faces}"
-                    ),
+                    viewer_key=f"undercuts-{selected_part}",
                 )
                 if not shown:
                     st.json({
@@ -4720,12 +4717,7 @@ with center:
                     region_meshes=viewer_regions,
                     region_opacity=region_opacity,
                     show_region_edges=show_region_edges,
-                    viewer_key=(
-                        f"direction-{selected_part}-{viewer_suffix}-"
-                        f"{len(viewer_regions or [])}-{region_opacity:.2f}-"
-                        f"{show_region_edges}-important-{important_undercuts_only}-"
-                        f"proxy-{show_proxy_undercut_faces}"
-                    ),
+                    viewer_key=f"direction-{selected_part}-{viewer_suffix}",
                 )
                 if not shown:
                     st.json({
@@ -5021,11 +5013,7 @@ with center:
                     color_key="parting_rgb",
                     line_paths=line_paths,
                     marker_points=conflict_markers,
-                    viewer_key=(
-                        f"parting-line-{selected_part}-"
-                        f"raw-{show_raw_parting_line}-refined-{show_refined_parting_line}-"
-                        f"{len(line_paths)}-markers-{len(conflict_markers)}"
-                    ),
+                    viewer_key=f"parting-line-{selected_part}",
                 )
                 if not shown:
                     _render_summary_grid([
@@ -5216,7 +5204,7 @@ with center:
                     _mesh_payload_v2,
                     color_key="__none__",
                     line_paths=line_paths_v2,
-                    viewer_key=f"parting-line-v2-{selected_part}-{outcome}-{len(line_paths_v2)}",
+                    viewer_key=f"parting-line-v2-{selected_part}",
                 )
                 if not shown_v2:
                     _render_summary_grid([

@@ -60,6 +60,7 @@ class DirectionUndercutCacheKey:
     boolean_refine: bool
     boolean_check_all_faces: bool
     max_boolean_faces: int
+    boolean_check_all_core_side: bool = False
 
 
 DirectionUndercutCache = dict[DirectionUndercutCacheKey, UndercutDetectionResult]
@@ -195,6 +196,10 @@ class DirectionOptimizationResult:
     boolean_volume_cache_entries: int = 0
     # Milestone 3: which search stage found the winner (1=principal, 2=diagonal, 3=sphere)
     search_stage_reached: int = 3
+    # R1: True if the final direction came from the cheap-only pool (no Boolean-validated
+    # candidate was available). False means the direction was selected from the
+    # Boolean-validated pool — the preferred outcome.
+    validation_fallback: bool = False
 
     def to_dict(self, include_all_candidates: bool = True) -> dict:
         cache_lookups = self.direction_cache_hits + self.direction_cache_misses
@@ -208,6 +213,7 @@ class DirectionOptimizationResult:
             "initial_label": self.initial_label,
             "method": self.method,
             "search_stage_reached": self.search_stage_reached,
+            "validation_fallback": self.validation_fallback,
             "analysis_time_s": round(self.analysis_time_s, 4),
             "boolean_refined_candidate_count": self.boolean_refined_candidate_count,
             "boolean_pruned_candidate_count": self.boolean_pruned_candidate_count,
@@ -300,6 +306,7 @@ def _direction_cache_key(
     boolean_refine: bool,
     boolean_check_all_faces: bool,
     max_boolean_faces: int,
+    boolean_check_all_core_side: bool = False,
 ) -> DirectionUndercutCacheKey:
     unit = normalize3(direction)
     return DirectionUndercutCacheKey(
@@ -310,6 +317,7 @@ def _direction_cache_key(
         boolean_refine=bool(boolean_refine),
         boolean_check_all_faces=bool(boolean_check_all_faces),
         max_boolean_faces=int(max_boolean_faces),
+        boolean_check_all_core_side=bool(boolean_check_all_core_side),
     )
 
 
@@ -339,6 +347,8 @@ def _lookup_direction_cache(
         if not _same_direction_cache_scope(cached_key, requested_key):
             continue
         if requested_key.boolean_check_all_faces and not cached_key.boolean_check_all_faces:
+            continue
+        if requested_key.boolean_check_all_core_side and not cached_key.boolean_check_all_core_side:
             continue
         if cached_key.max_boolean_faces < requested_key.max_boolean_faces:
             continue
@@ -394,6 +404,7 @@ def _cached_detect_boolean_undercuts(
     boolean_volume_cache: BooleanVolumeCache,
     mutate: bool,
     max_boolean_faces: int,
+    boolean_check_all_core_side: bool = False,
 ) -> tuple[UndercutDetectionResult, bool]:
     """
     Run or reuse Boolean-refined undercut detection for one pull direction.
@@ -407,6 +418,7 @@ def _cached_detect_boolean_undercuts(
         boolean_refine=True,
         boolean_check_all_faces=False,
         max_boolean_faces=max_boolean_faces,
+        boolean_check_all_core_side=boolean_check_all_core_side,
     )
     cached = _lookup_direction_cache(direction_cache, key)
     if cached is not None:
@@ -421,6 +433,7 @@ def _cached_detect_boolean_undercuts(
         boolean_refine=True,
         max_boolean_faces=max_boolean_faces,
         boolean_volume_cache=boolean_volume_cache,
+        boolean_check_all_core_side=boolean_check_all_core_side,
     )
     direction_cache[key] = result
     return result, False
@@ -960,6 +973,12 @@ def _is_direction_suitable_boolean(
     """
     if not undercuts.boolean_refined:
         return False
+    # R4: Do not accept a direction with incomplete Boolean validation.
+    # Incomplete validation means some candidates were skipped due to budget
+    # or area thresholds — the actual undercut count may be higher.
+    # "0 confirmed undercuts with 40 unvalidated candidates" is NOT acceptable.
+    if not undercuts.boolean_validation_complete:
+        return False
     total_area = max(undercuts.total_analysed_area_mm2, 1.0)
     confirmed_area = sum(
         f.area for fid in undercuts.boolean_confirmed_face_ids
@@ -1134,13 +1153,15 @@ def optimize_mold_direction(
                     analysis_pass="optimal",
                     mutate=True,
                 )
+                # R2: expanded validation for final direction
                 optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
                     part=part,
                     direction=best_direction,
                     direction_cache=direction_undercut_cache,
                     boolean_volume_cache=boolean_volume_cache,
                     mutate=True,
-                    max_boolean_faces=cfg.boolean_refine_max_faces,
+                    max_boolean_faces=cfg.final_direction_max_boolean_faces,
+                    boolean_check_all_core_side=True,
                 )
                 if cache_hit:
                     direction_cache_hits += 1
@@ -1172,6 +1193,7 @@ def optimize_mold_direction(
                     direction_cache_final_reused=cache_hit,
                     boolean_volume_cache_entries=len(boolean_volume_cache),
                     search_stage_reached=search_stage_reached,
+                    validation_fallback=False,
                     analysis_time_s=time.perf_counter() - t_start,
                 )
             # Stage 1 cheap-passes exist but all failed Boolean: fall through to Stage 2
@@ -1204,13 +1226,15 @@ def optimize_mold_direction(
                     analysis_pass="optimal",
                     mutate=True,
                 )
+                # R2: expanded validation for final direction
                 optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
                     part=part,
                     direction=best_direction,
                     direction_cache=direction_undercut_cache,
                     boolean_volume_cache=boolean_volume_cache,
                     mutate=True,
-                    max_boolean_faces=cfg.boolean_refine_max_faces,
+                    max_boolean_faces=cfg.final_direction_max_boolean_faces,
+                    boolean_check_all_core_side=True,
                 )
                 if cache_hit:
                     direction_cache_hits += 1
@@ -1242,6 +1266,7 @@ def optimize_mold_direction(
                     direction_cache_final_reused=cache_hit,
                     boolean_volume_cache_entries=len(boolean_volume_cache),
                     search_stage_reached=search_stage_reached,
+                    validation_fallback=False,
                     analysis_time_s=time.perf_counter() - t_start,
                 )
             # Stage 2 cheap-passes exist but all failed Boolean: fall through to Stage 3
@@ -1311,9 +1336,25 @@ def optimize_mold_direction(
         )
 
     scored = [refined_by_label.get(candidate.label, candidate) for candidate in scored]
+
+    # R1: Final direction must come from Boolean-validated pool.
+    # Cheap scores are for screening/ranking only — they cannot determine the
+    # final result because their undercut evidence is unvalidated.
+    validated = [c for c in scored if c.boolean_refined]
+    validation_fallback = False
+    if validated:
+        validated.sort(key=lambda c: c.score)
+        best_direction = validated[0].direction
+        best_score = validated[0].score
+    else:
+        # Fallback: no validated candidate exists (all Boolean failed, or OCC
+        # unavailable). Use cheap-best but flag as unvalidated.
+        scored.sort(key=lambda c: c.score)
+        best_direction = scored[0].direction
+        best_score = scored[0].score
+        validation_fallback = True
+
     scored.sort(key=lambda c: c.score)
-    best_direction = scored[0].direction
-    best_score = scored[0].score
     optimal = analyze_draft(
         part=part,
         pull_direction=best_direction,
@@ -1321,13 +1362,17 @@ def optimize_mold_direction(
         analysis_pass="optimal",
         mutate=True,
     )
+    # R2: For the final direction, use expanded validation — all core-side faces
+    # are checked, not just proxy candidates and accessibility risk. This runs
+    # ONCE for the winning direction and uses a higher budget.
     optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
         part=part,
         direction=best_direction,
         direction_cache=direction_undercut_cache,
         boolean_volume_cache=boolean_volume_cache,
         mutate=True,
-        max_boolean_faces=cfg.boolean_refine_max_faces,
+        max_boolean_faces=cfg.final_direction_max_boolean_faces,
+        boolean_check_all_core_side=True,
     )
     if cache_hit:
         direction_cache_hits += 1
@@ -1367,6 +1412,7 @@ def optimize_mold_direction(
         direction_cache_final_reused=final_direction_cache_reused,
         boolean_volume_cache_entries=len(boolean_volume_cache),
         search_stage_reached=search_stage_reached,
+        validation_fallback=validation_fallback,
         analysis_time_s=time.perf_counter() - t_start,
     )
 

@@ -585,7 +585,8 @@ class TestHierarchicalSearch:
         part = _make_part([face])
 
         def mock_cached_boolean(
-            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
+            boolean_check_all_core_side=False,
         ):
             """Return a Boolean-refined result with zero confirmed undercuts."""
             ok_result = UndercutDetectionResult(
@@ -597,6 +598,7 @@ class TestHierarchicalSearch:
                 skipped_face_ids=[],
                 boolean_refined=True,
                 boolean_confirmed_face_ids=[],
+                boolean_validation_complete=True,
                 total_analysed_area_mm2=100.0,
             )
             return ok_result, False
@@ -775,19 +777,22 @@ class TestScoringIndependence:
         part = _make_part([face])
 
         def mock_cached_boolean(
-            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces
+            part, direction, direction_cache, boolean_volume_cache, mutate, max_boolean_faces,
+            boolean_check_all_core_side=False,
         ):
             return UndercutDetectionResult(
                 pull_direction=direction,
                 method="mock-boolean",
-                undercut_face_ids=[0],          # proxy says face 0 is undercut
+                undercut_face_ids=[],            # new contract: confirmed only
+                suspected_undercut_face_ids=[0], # face 0 is suspected (proxy, not confirmed)
                 accessible_face_ids=[],
                 parting_face_ids=[],
                 skipped_face_ids=[],
                 boolean_refined=True,
                 boolean_confirmed_face_ids=[],   # Boolean says: NO confirmed undercuts
+                boolean_validation_complete=True,
                 total_analysed_area_mm2=100.0,
-                undercut_area_mm2=100.0,
+                undercut_area_mm2=0.0,
             ), False
 
         monkeypatch.setattr(

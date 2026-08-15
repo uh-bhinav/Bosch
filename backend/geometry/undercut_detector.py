@@ -637,6 +637,18 @@ class UndercutDetectionResult:
     accessibility_risk_face_ids: list[int] = field(default_factory=list)
     accessibility_risk_area_mm2: float = 0.0
     analysis_time_s: float = 0.0
+    # Epistemic separation (R3, R4, R5):
+    # suspected_undercut_face_ids — candidates where Boolean was inconclusive
+    # (OCC exception or budget exhaustion). NOT confirmed undercuts.
+    suspected_undercut_face_ids: list[int] = field(default_factory=list)
+    suspected_undercut_area_mm2: float = 0.0
+    # boolean_no_interference_face_ids — Boolean completed with volume = 0.
+    # This means no measurable interference was detected along the sweep path,
+    # but does NOT prove full physical accessibility. See Section 6A of the plan.
+    boolean_no_interference_face_ids: list[int] = field(default_factory=list)
+    # Validation completeness (R4): tracks whether all candidates were checked.
+    boolean_candidate_count: int = 0  # total candidates submitted for Boolean
+    boolean_validation_complete: bool = False  # True iff all candidates checked
 
     @property
     def undercut_area_pct(self) -> float:
@@ -670,6 +682,19 @@ class UndercutDetectionResult:
             return 0.0
         return 100.0 * self.accessibility_risk_area_mm2 / self.total_analysed_area_mm2
 
+    @property
+    def suspected_undercut_area_pct(self) -> float:
+        if self.total_analysed_area_mm2 <= 0:
+            return 0.0
+        return 100.0 * self.suspected_undercut_area_mm2 / self.total_analysed_area_mm2
+
+    @property
+    def boolean_validation_coverage_pct(self) -> float:
+        """Fraction of boolean candidates that were actually checked."""
+        if self.boolean_candidate_count <= 0:
+            return 100.0 if not self.boolean_refined else 0.0
+        return 100.0 * len(self.boolean_checked_face_ids) / self.boolean_candidate_count
+
     def to_dict(self) -> dict:
         return {
             "pull_direction": [round(v, 6) for v in self.pull_direction],
@@ -678,6 +703,7 @@ class UndercutDetectionResult:
             "has_critical_undercut": self.has_critical_undercut,
             "face_counts": {
                 "undercut": len(self.undercut_face_ids),
+                "suspected_undercut": len(self.suspected_undercut_face_ids),
                 "accessible": len(self.accessible_face_ids),
                 "parting": len(self.parting_face_ids),
                 "skipped": len(self.skipped_face_ids),
@@ -685,6 +711,7 @@ class UndercutDetectionResult:
             },
             "face_ids": {
                 "undercut": self.undercut_face_ids,
+                "suspected_undercut": self.suspected_undercut_face_ids,
                 "accessible": self.accessible_face_ids,
                 "parting": self.parting_face_ids,
                 "skipped": self.skipped_face_ids,
@@ -704,6 +731,7 @@ class UndercutDetectionResult:
                 "enabled": self.boolean_refined,
                 "checked_face_ids": self.boolean_checked_face_ids,
                 "confirmed_face_ids": self.boolean_confirmed_face_ids,
+                "no_interference_face_ids": self.boolean_no_interference_face_ids,
                 "failed_face_ids": self.boolean_failed_face_ids,
                 "failure_reasons": self.boolean_failure_reasons,
                 "failure_details": self.boolean_failure_details,
@@ -711,8 +739,12 @@ class UndercutDetectionResult:
                 "skip_reasons": self.boolean_skip_reasons,
                 "checked_count": len(self.boolean_checked_face_ids),
                 "confirmed_count": len(self.boolean_confirmed_face_ids),
+                "no_interference_count": len(self.boolean_no_interference_face_ids),
                 "failed_count": len(self.boolean_failed_face_ids),
                 "skipped_count": len(self.boolean_skipped_face_ids),
+                "candidate_count": self.boolean_candidate_count,
+                "validation_complete": self.boolean_validation_complete,
+                "validation_coverage_pct": round(self.boolean_validation_coverage_pct, 2),
                 "interference_volume_mm3": round(self.interference_volume_mm3, 6),
                 "boolean_depth_proxy_mm": round(self.boolean_depth_proxy_mm, 4),
                 "boolean_depth_method": self.boolean_depth_method,
@@ -2900,6 +2932,7 @@ def _boolean_refine_undercuts(
     int,
     int,
     float,
+    list[int],
 ]:
     """
     Run swept-face Boolean checks for candidate faces.
@@ -2907,7 +2940,11 @@ def _boolean_refine_undercuts(
     Returns:
         confirmed_ids, volume_by_face, checked_ids, failed_ids,
         failure_reasons, failure_details, skipped_ids, skip_reasons,
-        cache_hits, cache_misses, boolean_time_s
+        cache_hits, cache_misses, boolean_time_s, no_interference_ids
+
+    no_interference_ids: faces where Boolean completed successfully with
+    volume = 0 (no interference detected). This does NOT prove full
+    physical accessibility — see Section 6A of the plan.
     """
     cache = volume_cache if volume_cache is not None else {}
     confirmed: set[int] = set()
@@ -2918,6 +2955,7 @@ def _boolean_refine_undercuts(
     failure_details: dict[int, BooleanFailureInfo] = {}
     skipped: list[int] = []
     skip_reasons: dict[int, str] = {}
+    no_interference: list[int] = []
     cache_hits = 0
     cache_misses = 0
     boolean_time_s = 0.0
@@ -2974,6 +3012,10 @@ def _boolean_refine_undercuts(
         metrics_by_face[face_id] = metrics
         if metrics.volume_mm3 > volume_tolerance:
             confirmed.add(face_id)
+        else:
+            # Volume = 0: no interference detected along this sweep path.
+            # NOT proof of full physical accessibility — see Section 6A.
+            no_interference.append(face_id)
 
     return (
         confirmed,
@@ -2987,6 +3029,7 @@ def _boolean_refine_undercuts(
         cache_hits,
         cache_misses,
         boolean_time_s,
+        no_interference,
     )
 
 
@@ -3189,6 +3232,7 @@ def detect_undercuts(
     mutate: bool = True,
     boolean_refine: bool = True,
     boolean_check_all_faces: bool = False,
+    boolean_check_all_core_side: bool = False,
     max_boolean_faces: int = 120,
     boolean_volume_cache: Optional[BooleanVolumeCache] = None,
     precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]] = None,
@@ -3324,15 +3368,34 @@ def detect_undercuts(
     boolean_failure_details: dict[int, BooleanFailureInfo] = {}
     boolean_skipped: list[int] = []
     boolean_skip_reasons: dict[int, str] = {}
+    boolean_no_interference: list[int] = []
     interference_by_face: dict[int, BooleanInterferenceMetrics] = {}
     boolean_cache_hits = 0
     boolean_cache_misses = 0
     boolean_time_s = 0.0
     boolean_was_run = bool(boolean_refine and _OCC_BOOLEAN_AVAILABLE)
     if boolean_was_run:
-        check_ids = [
-            face.face_id for face in part.valid_faces
-        ] if boolean_check_all_faces else list(proxy_undercut_ids)
+        if boolean_check_all_faces:
+            check_ids = [face.face_id for face in part.valid_faces]
+        else:
+            # Phase 2 (Change 1): include BOTH proxy candidates AND accessibility
+            # risk faces so well-drafted but geometrically trapped faces are checked.
+            check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))
+            # Phase 5 (Change 7a): for final direction, also check all core-side faces
+            if boolean_check_all_core_side:
+                core_side_ids = [
+                    f.face_id for f in part.valid_faces
+                    if (
+                        precomputed_metrics is not None
+                        and f.face_id in precomputed_metrics
+                        and precomputed_metrics[f.face_id].signed_dot < -parting_dot_threshold
+                    ) or (
+                        precomputed_metrics is None
+                        and f.signed_dot(pull_dir) < -parting_dot_threshold
+                    )
+                ]
+                check_ids = sorted(set(check_ids) | set(core_side_ids))
+        boolean_candidate_total = len(check_ids)
         check_ids = _rank_boolean_candidate_faces(
             part=part,
             pull_direction=pull_dir,
@@ -3351,6 +3414,7 @@ def detect_undercuts(
             boolean_cache_hits,
             boolean_cache_misses,
             boolean_time_s,
+            boolean_no_interference,
         ) = (
             _boolean_refine_undercuts(
                 part=part,
@@ -3360,22 +3424,36 @@ def detect_undercuts(
                 volume_cache=boolean_volume_cache,
             )
         )
-
-    if boolean_was_run and boolean_checked:
-        # Keep Boolean-confirmed faces.  If OCC failed on a proxy face, keep the
-        # proxy classification instead of silently dropping a possible issue.
-        # Sliver faces skipped before Boolean are also retained when the proxy
-        # marked them suspicious; they are too small for reliable swept Booleans.
-        undercut_id_set = set(boolean_confirmed)
-        undercut_id_set.update(fid for fid in proxy_undercut_ids if fid in boolean_failed)
-        undercut_id_set.update(fid for fid in proxy_undercut_ids if fid in boolean_skipped)
-        undercut_ids = sorted(undercut_id_set)
     else:
-        undercut_ids = sorted(proxy_undercut_ids)
+        boolean_candidate_total = 0
+
+    boolean_skipped_set = set(boolean_skipped)
+
+    # Phase 3 (Change 3): Semantic separation — CONFIRMED ≠ SUSPECTED ≠ UNKNOWN
+    # undercut_face_ids = CONFIRMED only (Boolean-validated geometric obstruction)
+    # suspected_undercut_face_ids = FAILED + SKIPPED candidates (inconclusive)
+    if boolean_was_run and boolean_checked:
+        undercut_ids = sorted(boolean_confirmed)
+        suspected_ids = sorted(
+            fid for fid in (set(proxy_undercut_ids) | set(risk_face_ids))
+            if fid in boolean_failed or fid in boolean_skipped_set
+        )
+    else:
+        # No Boolean ran: nothing is confirmed; all candidates are suspected
+        undercut_ids = []
+        suspected_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))
+
+    boolean_validation_complete = (
+        boolean_was_run and (len(boolean_checked) + len(boolean_skipped)) >= boolean_candidate_total
+    )
 
     valid_ids = {face.face_id for face in part.valid_faces}
-    accessible_ids = sorted(valid_ids - set(undercut_ids))
+    # accessible = everything that is not a confirmed undercut and not suspected
+    accessible_ids = sorted(
+        valid_ids - set(undercut_ids) - set(suspected_ids)
+    )
     undercut_area = sum((part.get_face(fid).area if part.get_face(fid) is not None else 0.0) for fid in undercut_ids)
+    suspected_area = sum((part.get_face(fid).area if part.get_face(fid) is not None else 0.0) for fid in suspected_ids)
 
     if mutate:
         undercut_set = set(undercut_ids)
@@ -3395,7 +3473,7 @@ def detect_undercuts(
 
     features: list[UndercutFeature] = []
     boolean_failed_set = set(boolean_failed)
-    boolean_skipped_set = set(boolean_skipped)
+    # boolean_skipped_set already assigned above
     grouping_result = _group_undercut_faces_with_boolean_proximity(
         part=part,
         face_ids=undercut_ids,
@@ -3657,5 +3735,10 @@ def detect_undercuts(
         boolean_reliability=boolean_reliability,
         accessibility_risk_face_ids=sorted(risk_face_ids),
         accessibility_risk_area_mm2=risk_area_mm2,
+        suspected_undercut_face_ids=sorted(suspected_ids),
+        suspected_undercut_area_mm2=suspected_area,
+        boolean_no_interference_face_ids=sorted(boolean_no_interference),
+        boolean_candidate_count=boolean_candidate_total,
+        boolean_validation_complete=boolean_validation_complete,
         analysis_time_s=time.perf_counter() - t_start,
     )
