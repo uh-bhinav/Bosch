@@ -24,9 +24,16 @@ References: ``docs/PARTING_LINE_ALGORITHM_PLAN.md`` §6.3, §7, §8.4, §9.2, H0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+from backend.geometry.parting_line_v2.contracts import DelegatedSecondaryAction
 from backend.models.geometry_models import Vec3
+
+if TYPE_CHECKING:
+    # regions.py imports FROM this module (PartingLoopCandidate, etc.), so a
+    # real runtime import here would be circular. Type-checking only; never
+    # executed. See PartingLoopCandidate.regions below.
+    from backend.geometry.parting_line_v2.regions import RegionClassification
 
 __all__ = [
     "EdgeBacking",
@@ -36,6 +43,7 @@ __all__ = [
     "CurveSegment",
     "OnSurfaceReport",
     "SideActionReferral",
+    "CorePinInterface",
     "FeasibilityReport",
     "CandidateScore",
     "PartingLoopCandidate",
@@ -275,6 +283,40 @@ class SideActionReferral:
         }
 
 
+@dataclass(frozen=True)
+class CorePinInterface:
+    """
+    Diagnostic/reporting record: a coaxial face was treated as a core-pin
+    tooling split during H3 evaluation (2026-08-15 design).
+
+    This is PURE REPORTING METADATA. It is never read by any gate (H0-H7),
+    by ``ranking.score_candidate``, by ``UndercutInput``, or by
+    ``SideActionReferral`` construction — the only consumer is result
+    serialization (API payload / frontend). It says only "this candidate
+    used a tooling-assigned split on this face at this parameter"; it makes
+    no claim about undercuts, orientation, or secondary mechanisms.
+
+    Critically, this does NOT correspond to a curve in ``.segments``/
+    ``.loops`` — the real parting line Γ is exactly the candidate's real
+    B-Rep boundary, unchanged. See ``docs/DECISIONS_AND_ALGORITHMS.md``
+    D-043 for why a second geometric curve on the coaxial face was
+    deliberately rejected in favor of this non-geometric representation.
+    """
+
+    face_id: int
+    split_param: float
+    axis_direction: Vec3
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "face_id": self.face_id,
+            "split_param": round(self.split_param, 6),
+            "axis_direction": [round(c, 6) for c in self.axis_direction],
+            "reason": self.reason,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Hard feasibility filter
 # ---------------------------------------------------------------------------
@@ -299,6 +341,18 @@ class FeasibilityReport:
     ``referral`` is set (and ``failed_gate == "H5"``) when the candidate was
     routed to side-action analysis rather than rejected outright. Callers MUST
     distinguish these: a referral is a finding, not a failure.
+
+    ``validated_delegations`` (D-044) lists the ``DelegatedSecondaryAction``
+    records that passed ``regions.validate_delegation`` for THIS candidate
+    and THIS primary pull direction, and were therefore excluded from H4's
+    orientation-area sums. Populated starting at H4 and carried through every
+    later gate outcome (including a still-failing H5/H6/H7 or the final
+    pass), so a report can always show what was delegated even when the
+    candidate does not ultimately pass. **This list proves only that each
+    entry passed structural validation — never that the secondary mechanism
+    has been geometrically proven to release the delegated geometry.** See
+    ``DelegatedSecondaryAction.evidence.geometric_verification``, which
+    stays ``"unverified"`` regardless.
     """
 
     passed: bool
@@ -307,6 +361,7 @@ class FeasibilityReport:
     measurements: dict[str, float] = field(default_factory=dict)
     on_surface: OnSurfaceReport | None = None
     referral: SideActionReferral | None = None
+    validated_delegations: tuple[DelegatedSecondaryAction, ...] = ()
 
     @property
     def requires_side_action(self) -> bool:
@@ -329,6 +384,7 @@ class FeasibilityReport:
             "measurements": {k: v for k, v in sorted(self.measurements.items())},
             "on_surface": self.on_surface.to_dict() if self.on_surface else None,
             "referral": self.referral.to_dict() if self.referral else None,
+            "validated_delegations": [d.to_dict() for d in self.validated_delegations],
         }
 
 
@@ -452,6 +508,29 @@ class PartingLoopCandidate:
     loops: tuple[tuple[Vec3, ...], ...] = ()
     feasibility: FeasibilityReport | None = None
     score: CandidateScore | None = None
+    #: Non-geometric H3 partition metadata (2026-08-15 design, D-043):
+    #: ``(face_id, split_param)`` pairs for coaxial core-pin faces that are
+    #: graph bridges for THIS candidate's real boundary. Consumed only by
+    #: ``separate_surface`` during H3 evaluation — never contributes a curve
+    #: to ``segments``/``loops``, never read by H4, H5, or ranking. A tuple,
+    #: not a dict, to keep this frozen dataclass genuinely immutable/hashable
+    #: like every other field here.
+    tooling_split_face_ids: tuple[tuple[int, float], ...] = ()
+    #: Reporting-only counterpart to ``tooling_split_face_ids`` — one entry
+    #: per face actually used. See ``CorePinInterface``'s docstring: never
+    #: read by any gate or by ranking.
+    core_pin_interfaces: tuple[CorePinInterface, ...] = ()
+    #: Diagnostic/observability only (plan Phase 3A). ``evaluate_gates``
+    #: computes a ``RegionClassification`` for every candidate that reaches
+    #: H3=2, regardless of whether it later fails H4/H5/H6/H7 — this field
+    #: is where the engine retains that already-computed data for candidates
+    #: worth inspecting (the selected candidate, and the best-ranked
+    #: rejected H3-valid candidate), so the API/frontend can explain WHY a
+    #: direction produced a degenerate or genuine split even when nothing
+    #: was ultimately feasible. Populated by ``engine.py`` after ranking;
+    #: never read by any gate, by ranking, or by candidate selection itself
+    #: — attaching it here never changes which candidate is `selected`.
+    regions: "RegionClassification | None" = None
 
     def __post_init__(self) -> None:
         if not self.loops:
@@ -483,6 +562,12 @@ class PartingLoopCandidate:
             "points": [[round(c, 6) for c in p] for p in self.points],
             "feasibility": self.feasibility.to_dict() if self.feasibility else None,
             "score": self.score.to_dict() if self.score else None,
+            "tooling_split_face_ids": [
+                {"face_id": fid, "split_param": round(param, 6)}
+                for fid, param in self.tooling_split_face_ids
+            ],
+            "core_pin_interfaces": [c.to_dict() for c in self.core_pin_interfaces],
+            "regions": self.regions.to_dict() if self.regions else None,
         }
 
 

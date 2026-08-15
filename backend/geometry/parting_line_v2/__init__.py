@@ -28,6 +28,11 @@ from __future__ import annotations
 
 from backend.geometry.parting_line_v2.contracts import (
     ContractViolation,
+    CorePinEligibility,
+    CorePinFaceRef,
+    DelegatedSecondaryAction,
+    DelegationEligibility,
+    DelegationEvidence,
     PartingSurfaceProvider,
     PullDirectionInput,
     SplitTool,
@@ -44,6 +49,7 @@ from backend.geometry.parting_line_v2.timing import (
 from backend.geometry.parting_line_v2.types import (
     HARD_GATES,
     CandidateScore,
+    CorePinInterface,
     CurveSegment,
     EdgeBacking,
     EnumerationBounds,
@@ -61,6 +67,11 @@ from backend.geometry.parting_line_v2.types import (
 __all__ = [
     # contracts
     "ContractViolation",
+    "CorePinEligibility",
+    "CorePinFaceRef",
+    "DelegatedSecondaryAction",
+    "DelegationEligibility",
+    "DelegationEvidence",
     "PartingSurfaceProvider",
     "PullDirectionInput",
     "SplitTool",
@@ -75,6 +86,7 @@ __all__ = [
     # types
     "HARD_GATES",
     "CandidateScore",
+    "CorePinInterface",
     "CurveSegment",
     "EdgeBacking",
     "EnumerationBounds",

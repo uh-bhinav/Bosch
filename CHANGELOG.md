@@ -2,6 +2,131 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-15 — D-044: secondary-action delegation implemented — H4 can now exclude explicitly authorized, independently validated secondary-mechanism geometry from its primary rigid-body orientation test
+
+**What changed:**
+- New authorization/validation contract in `contracts.py`: `DelegationEvidence`
+  (`source`, `note`, `geometric_verification` — only legal value today is
+  `"unverified"`), `DelegatedSecondaryAction` (`face_ids`,
+  `movement_direction`, `movement_type` [advisory only], `evidence`),
+  `DelegationEligibility` (boolean + reason, no confidence score, per plan
+  §12.7's existing ban).
+- New `regions.validate_delegation(part, candidate, delegation,
+  primary_pull_direction, cfg) -> DelegationEligibility`: hard requirements
+  (provenance present, valid unit movement direction, meaningfully
+  non-parallel to the primary pull via new `cfg.delegation_max_parallel_cos`,
+  disjoint from the candidate's real loop faces) plus one structural sanity
+  check (connected face set) — deliberately no face-count/area threshold.
+  Passing proves only structural self-consistency, never physical release.
+- `gates.py`: `evaluate_gates` gains an additive `delegations` parameter
+  (default empty, inert). H4's per-region area/violation-area sums now
+  subtract only the validated, region-scoped delegated face ids from BOTH
+  numerator and denominator. `FeasibilityReport.validated_delegations`
+  (new field) is threaded through every H4-and-later gate outcome, so a
+  report can show what was delegated even on a still-failing candidate.
+- `engine.py`: `analyse_parting_line` gains `delegations`, threaded through
+  all three `evaluate_gates` call sites (Round 1, Round 1.5 core-pin
+  closure, Round 2 unions).
+- New config key `delegation_max_parallel_cos` (0.99) in
+  `config.yaml`/`backend/config.py`.
+- New `tests/test_parting_line_v2_delegation.py` (16 tests): every frozen
+  case from the design contract, including a genuine discovery made while
+  writing them — a single delegation record spanning Part3's ENTIRE rib
+  lattice (both mirror stacks) was correctly REJECTED by the connectedness
+  check, because the two stacks are not adjacent to each other. Splitting
+  into two per-stack records (each independently connected) both validate.
+- Verification: full existing suite (152 tests, including D-043's core-pin
+  suite) re-run and passes unchanged; new suite (16 tests) passes; real
+  end-to-end run on Part3 +Z (`core_pin_face_refs=(face 35,)`,
+  `delegations=(stack1, stack2)`): candidate 110 (the real,
+  Round-1-discovered `z=4.0` boundary) drops from `h4=7.56%` (undelegated)
+  to `h4=0.499%` (34 faces delegated) and **passes** — `outcome="feasible"`,
+  this candidate selected. The other two real core-pin candidates
+  (`z=1.0`, `z=31.43`) receive the identical delegation and remain
+  correctly rejected at H4 (23.8%, 12.6%) — nothing was tuned or
+  additionally masked to force a result.
+- `docs/DECISIONS_AND_ALGORITHMS.md` D-044 added. `STATUS.md`/`TODO.md`
+  updated.
+- **Explicitly out of scope, unchanged and verified unchanged**: H5 (still
+  checks `undercuts.undercut_face_ids & loop_face_ids`, independent of
+  delegation status — verified directly with a real undercut-on-loop
+  scenario), `detect_undercuts` (both paths re-measured, identical output),
+  ranking (`score_candidate` reads no delegation field — verified via an
+  A/B run on Part1's golden candidate with an irrelevant-but-valid
+  delegation attached, identical score), Type 1/Type 2, X/Y direction
+  investigation, and any geometric release/sweep verification (not
+  built, not designed — `geometric_verification="unverified"` remains the
+  explicit, honest representation of that limitation).
+
+### 2026-08-15 — D-043: core-pin / tooling-split mechanism implemented — a coaxial through-bore can now participate in H3 without adding a curve to the real parting line
+
+**What changed:**
+- New non-geometric H3 partition metadata:
+  `PartingLoopCandidate.tooling_split_face_ids: tuple[tuple[int, float], ...]`
+  and reporting-only `.core_pin_interfaces: tuple[CorePinInterface, ...]`
+  (`types.py`). Deliberately NOT a new `SegmentBacking`/`CurveSegment` kind
+  — a `ToolingBacking` design was built, stress-tested, then rejected after
+  tracing the full `.segments`/`.loops` consumer lifecycle (`ranking.py`'s
+  coverage/turning/length measures read `.loops` directly regardless of
+  backing kind; plan §9.5 documents that field as the real, to-be-
+  manufactured parting line).
+- New upstream authorization contract `CorePinFaceRef` and result type
+  `CorePinEligibility` (`contracts.py`), mirroring `UndercutInput`'s
+  adapter/validation pattern.
+- `regions.py`: `separate_surface` gained an additive
+  `tooling_split_face_ids` parameter (axial-position split instead of
+  sign-of-g, needed because a coaxial face has `g ≡ 0` everywhere and
+  sign-of-g cannot distinguish its two ends — verified directly: naively
+  reusing the existing `split_face_ids` mechanism collapses both ends onto
+  the same node). New `find_bridge_faces` (iterative Tarjan articulation-
+  point localization — pure topology, not a validity claim),
+  `check_core_pin_eligibility` (5-condition independent geometric gate:
+  cylindrical, axis-aligned, uniformly zero-draft over the WHOLE face via a
+  new dedicated `core_pin_uniform_g_max` config key — never H4's
+  `orientation_epsilon`/`orientation_violation_max` — exactly 2 neighbours,
+  split_param inside the face's own extent), and
+  `resolve_primary_split_param` (single canonical source of the split
+  location, threaded by value into every consumer to prevent the class of
+  cross-code-path disagreement chased earlier in this project).
+- `engine.py`: new "Round 1.5" in `analyse_parting_line` (new
+  `core_pin_face_refs` parameter, default `()`) — localizes bridge faces,
+  intersects with authorization, gates on eligibility, and only then
+  constructs the tooling metadata and re-evaluates. No face is ever tried
+  merely because it is authorized or merely because it is a topological
+  bridge; both plus eligibility are required together, every time.
+- `gates.py`: single-line change threading
+  `candidate.tooling_split_face_ids` into the existing `separate_surface`
+  call.
+- New config keys `core_pin_uniform_g_max` (1e-6) and
+  `core_pin_axis_angle_tol` (1e-6) in `config.yaml`/`backend/config.py`.
+- New `tests/test_parting_line_v2_core_pin.py` (13 tests): reproduces the
+  validated topology experiment exactly (H3 1→2, component sizes 282/133,
+  bore's two ends on opposite sides); proves the rib lattice fails
+  eligibility on the exactly-2-neighbours criterion (not g-uniformity, which
+  it also individually satisfies); proves a legitimate topological bridge
+  (face 37) that fails eligibility cannot rescue H3 through the guarded
+  pipeline, and separately demonstrates why eligibility must gate BEFORE
+  `separate_surface` is ever called (bypassing it can produce a spurious
+  `component_count==2` via a degenerate isolated node); full engine-level
+  integration on the real Part3 pipeline; confirms Part1's mandatory +Z
+  regression and every existing candidate is byte-identical when
+  `core_pin_face_refs` is empty (the default).
+- Verification: full existing suite (139 tests across
+  `test_parting_line_v2_level0/level1/contracts.py`) re-run and passes
+  unchanged; new suite (13 tests) passes; end-to-end production run
+  (`analyse_parting_line(Part3, +Z, core_pin_face_refs=(face 35,))`) closes
+  3 independently Round-1-discovered candidates via the mechanism (real
+  boundaries at z=1.0, z=4.0, z≈31.43), all separately and correctly
+  rejected at H4 — the pre-existing orientation-consistency gap this
+  milestone deliberately does not touch.
+- `docs/DECISIONS_AND_ALGORITHMS.md` D-043 added (full derivation,
+  including the rejected `ToolingBacking` alternative and why). `STATUS.md`
+  and `TODO.md` updated.
+- **Explicitly out of scope, unchanged**: H4, H5, ranking weights, undercut
+  detection, side-action classification, Type 1/Type 2 forensic threads,
+  X/Y direction investigation. The mechanism only lets the bore
+  *participate* in H3 — it does not make any Z candidate pass overall.
+
 ### 2026-08-13 — D-037: fresh independent separation test confirms H3 correctness; self-corrected false discrepancy; alternative-loop search negative
 
 **What changed:**

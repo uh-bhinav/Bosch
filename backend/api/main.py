@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import math
 from pathlib import Path
@@ -18,6 +19,11 @@ from backend.geometry.draft_analyzer import analyze_draft
 from backend.geometry.direction_optimizer import optimize_mold_direction
 from backend.geometry.parting_line import detect_parting_line_candidates
 from backend.geometry.parting_line_v2 import PullDirectionInput, UndercutInput
+from backend.geometry.parting_line_v2.contracts import (
+    CorePinFaceRef,
+    DelegatedSecondaryAction,
+    DelegationEvidence,
+)
 from backend.geometry.parting_line_v2.engine import analyse_parting_line
 from backend.geometry.step_loader import STEPLoadError, load_step_cached
 from backend.geometry.undercut_detector import detect_undercuts
@@ -932,6 +938,92 @@ def part_parting_line(
         _raise_step_error(exc, operation)
 
 
+def _parse_core_pin_face_refs(raw: str | None) -> tuple[CorePinFaceRef, ...]:
+    """
+    Parse the optional ``core_pin_face_refs`` JSON query parameter (plan
+    D-043). ``None``/omitted -> ``()`` -- byte-identical to every call site
+    before this parameter existed, since Round 1.5 never engages on an
+    empty tuple. Raises ``ValueError`` on malformed input, caught by the
+    caller's existing structured-error handling.
+    """
+    if raw is None:
+        return ()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"core_pin_face_refs is not valid JSON: {exc}") from exc
+    if not isinstance(items, list):
+        raise ValueError("core_pin_face_refs must be a JSON array.")
+
+    refs = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"core_pin_face_refs[{i}] must be an object.")
+        try:
+            face_id = int(item["face_id"])
+            axis = item["axis_direction"]
+            reason = str(item["reason"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"core_pin_face_refs[{i}] must have face_id (int), "
+                f"axis_direction ([x,y,z]), and reason (str): {exc}"
+            ) from exc
+        if not (isinstance(axis, list) and len(axis) == 3):
+            raise ValueError(f"core_pin_face_refs[{i}].axis_direction must be a 3-element array.")
+        refs.append(CorePinFaceRef(face_id, (float(axis[0]), float(axis[1]), float(axis[2])), reason))
+    return tuple(refs)
+
+
+def _parse_delegations(raw: str | None) -> tuple[DelegatedSecondaryAction, ...]:
+    """
+    Parse the optional ``delegations`` JSON query parameter (plan D-044).
+    ``None``/omitted -> ``()`` -- byte-identical to every call site before
+    this parameter existed, since H4 never excludes any face on an empty
+    tuple. ``geometric_verification`` is deliberately NOT an accepted input
+    field: every record is constructed through ``DelegationEvidence``'s own
+    default, so the API has no way to report anything other than
+    ``"unverified"`` regardless of what the caller sends. Raises
+    ``ValueError`` on malformed input, caught by the caller's existing
+    structured-error handling.
+    """
+    if raw is None:
+        return ()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"delegations is not valid JSON: {exc}") from exc
+    if not isinstance(items, list):
+        raise ValueError("delegations must be a JSON array.")
+
+    delegations = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"delegations[{i}] must be an object.")
+        try:
+            face_ids = frozenset(int(f) for f in item["face_ids"])
+            direction = item["movement_direction"]
+            movement_type = str(item["movement_type"])
+            source = str(item["source"])
+            note = str(item["note"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"delegations[{i}] must have face_ids ([int,...]), "
+                f"movement_direction ([x,y,z]), movement_type (str), "
+                f"source (str), and note (str): {exc}"
+            ) from exc
+        if not (isinstance(direction, list) and len(direction) == 3):
+            raise ValueError(f"delegations[{i}].movement_direction must be a 3-element array.")
+        if not face_ids:
+            raise ValueError(f"delegations[{i}].face_ids must not be empty.")
+        delegations.append(DelegatedSecondaryAction(
+            face_ids=face_ids,
+            movement_direction=(float(direction[0]), float(direction[1]), float(direction[2])),
+            movement_type=movement_type,
+            evidence=DelegationEvidence(source=source, note=note),
+        ))
+    return tuple(delegations)
+
+
 @app.get("/parts/{filename}/parting-line-v2")
 def part_parting_line_v2(
     filename: str,
@@ -941,6 +1033,21 @@ def part_parting_line_v2(
     include_mesh: bool = Query(default=True),
     include_mesh_geometry: bool = Query(default=True),
     mesh_deflection: float = Query(default=0.5, gt=0.0),
+    core_pin_face_refs: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-043): [{"face_id": int, '
+                     '"axis_direction": [x,y,z], "reason": str}]. Omit for '
+                     "today's default behaviour (Round 1.5 never engages).",
+    ),
+    delegations: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-044): [{"face_ids": [int,...], '
+                     '"movement_direction": [x,y,z], "movement_type": str, '
+                     '"source": str, "note": str}]. Omit for today\'s default '
+                     "behaviour (H4 never excludes any face). "
+                     '"geometric_verification" is never accepted -- it always '
+                     'reports "unverified".',
+    ),
 ):
     """
     Run the EXPERIMENTAL, in-development v2 parting-line engine (Track A/B ->
@@ -954,6 +1061,12 @@ def part_parting_line_v2(
     preserves that at the API boundary too, so a caller wanting to inspect
     the optimizer's suggested vector must copy the numbers in manually, the
     same way they would for any other externally-supplied direction.
+
+    `core_pin_face_refs`/`delegations` are optional, explicitly-authorized
+    inputs threaded straight through to `analyse_parting_line` (plan
+    D-043/D-044) -- this endpoint performs no discovery or inference of its
+    own. Omitting either preserves this endpoint's exact pre-existing
+    behaviour, since both default to `()` at the engine layer too.
 
     Level 0-2 only: no parting-surface generation, no core/cavity SOLID
     split at this level (see docs/IMPLEMENTATION_STATUS.md). When a
@@ -971,10 +1084,17 @@ def part_parting_line_v2(
             raise ValueError("Pull direction vector must be nonzero.")
         direction = (dx / magnitude, dy / magnitude, dz / magnitude)
 
+        parsed_core_pin_face_refs = _parse_core_pin_face_refs(core_pin_face_refs)
+        parsed_delegations = _parse_delegations(delegations)
+
         part = load_step_cached(path)
         pull = PullDirectionInput(direction, "manual")
         cfg = settings.dfm.parting_line_v2
-        result = analyse_parting_line(part, pull, undercuts=UndercutInput.empty(), cfg=cfg)
+        result = analyse_parting_line(
+            part, pull, undercuts=UndercutInput.empty(), cfg=cfg,
+            core_pin_face_refs=parsed_core_pin_face_refs,
+            delegations=parsed_delegations,
+        )
 
         payload: dict[str, Any] = result.to_dict()
         payload["engine"] = "parting_line_v2"
@@ -983,6 +1103,14 @@ def part_parting_line_v2(
             "generation or core/cavity SOLID split at this level -- see "
             "docs/IMPLEMENTATION_STATUS.md for the authoritative capability list."
         )
+
+        # Independent, read-only undercut detection for DISPLAY only -- this
+        # is never passed into analyse_parting_line above (which still gets
+        # UndercutInput.empty(), preserving the exact H4/H5 behaviour already
+        # verified for candidate 110). Matches D-044's own frozen invariant
+        # that undercut detection stays independent of everything else.
+        undercut_result = detect_undercuts(part, direction, mutate=False, boolean_refine=False)
+        payload["undercuts"] = undercut_result.to_dict()
 
         if result.selected is not None:
             payload["parting_line_path"] = {
@@ -994,7 +1122,53 @@ def part_parting_line_v2(
 
         if include_mesh:
             mesh = build_display_mesh(part, linear_deflection=mesh_deflection)
-            payload["display_mesh"] = mesh.to_payload(include_geometry=include_mesh_geometry)
+            mesh_payload = mesh.to_payload(include_geometry=include_mesh_geometry)
+
+            mesh_payload.update(_undercut_mesh_visual_payload(undercut_result, mesh))
+
+            # Core/cavity tint -- only meaningful once a candidate is
+            # selected (RegionClassification is only computed for the
+            # passing candidate, see PartingLineV2Result.regions).
+            if result.regions is not None:
+                cavity_ids = result.regions.cavity_face_ids
+                core_ids = result.regions.core_face_ids
+                mesh_payload["pv2_region_rgb"] = [
+                    [0.35, 0.65, 0.95] if fid in cavity_ids
+                    else [0.95, 0.55, 0.20] if fid in core_ids
+                    else [0.55, 0.55, 0.55]
+                    for fid in mesh.face_ids
+                ]
+
+            # Core-pin interface highlight (D-043) -- metadata annotation
+            # only; never a curve, never mixed into the Γ overlay itself.
+            if result.selected is not None and result.selected.core_pin_interfaces:
+                core_pin_ids = {i.face_id for i in result.selected.core_pin_interfaces}
+                mesh_payload["pv2_core_pin_rgb"] = [
+                    [0.85, 0.15, 0.85] if fid in core_pin_ids else [0.55, 0.55, 0.55]
+                    for fid in mesh.face_ids
+                ]
+
+            # Validated delegation groups (D-044) -- each authorized,
+            # structurally-validated group gets its own colour so mirror
+            # groups stay visually distinct, never merged.
+            if result.selected is not None and result.selected.feasibility is not None:
+                validated = result.selected.feasibility.validated_delegations
+                if validated:
+                    palette = [
+                        [0.95, 0.75, 0.10], [0.10, 0.75, 0.95],
+                        [0.75, 0.10, 0.95], [0.10, 0.95, 0.45],
+                    ]
+                    face_to_group: dict[int, int] = {}
+                    for group_index, delegation in enumerate(validated):
+                        for fid in delegation.face_ids:
+                            face_to_group[fid] = group_index
+                    mesh_payload["pv2_delegation_rgb"] = [
+                        palette[face_to_group[fid] % len(palette)]
+                        if fid in face_to_group else [0.55, 0.55, 0.55]
+                        for fid in mesh.face_ids
+                    ]
+
+            payload["display_mesh"] = mesh_payload
 
         return payload
     except ImportError as exc:

@@ -34,12 +34,13 @@ import math
 from dataclasses import dataclass
 
 from backend.geometry.parting_line_v2 import measures
-from backend.geometry.parting_line_v2.contracts import UndercutInput
+from backend.geometry.parting_line_v2.contracts import DelegatedSecondaryAction, UndercutInput
 from backend.geometry.parting_line_v2.regions import (
     RegionClassification,
     SeparationResult,
     classify_regions,
     separate_surface,
+    validate_delegation,
 )
 from backend.geometry.parting_line_v2.types import (
     CurveSegment,
@@ -272,18 +273,38 @@ def evaluate_gates(
     cfg: object,
     bbox_diagonal_mm: float,
     part_projected_area_mm2: float,
+    delegations: tuple[DelegatedSecondaryAction, ...] = (),
 ) -> GateOutcome:
-    """Run H0-H7 in order, cheapest-first except H0. Returns on first failure."""
+    """
+    Run H0-H7 in order, cheapest-first except H0. Returns on first failure.
+
+    ``delegations`` (D-044, default empty -- inert unless explicitly
+    supplied, matching every existing caller): candidate
+    ``DelegatedSecondaryAction`` records, each independently re-validated
+    against THIS candidate and THIS ``pull_direction`` via
+    ``regions.validate_delegation`` before H4 runs. Only records that pass
+    contribute face ids H4 excludes from its region area/violation-area
+    sums -- H4 never reads a delegation's ``movement_type``, ``evidence``,
+    or provenance, only the validated face-id set. Passing validation is
+    NOT a geometric release proof; see ``DelegationEligibility``'s and
+    ``DelegatedSecondaryAction.evidence.geometric_verification``'s
+    docstrings.
+    """
     measurements: dict[str, float] = {}
     points = candidate.points
     loop_edge_ids = frozenset(
         s.backing.edge_id for s in candidate.segments if isinstance(s.backing, EdgeBacking)
     )
+    # Populated just before H4 runs; every FeasibilityReport constructed at
+    # H4 or later carries whatever was validated by that point (empty before
+    # H4, since delegation is meaningless without a passed H3 region split).
+    validated_delegations: tuple[DelegatedSecondaryAction, ...] = ()
 
     def reject(gate, reason: str, referral: SideActionReferral | None = None) -> GateOutcome:
         return GateOutcome(FeasibilityReport(
             passed=False, failed_gate=gate, reason=reason,
             measurements=measurements, on_surface=on_surface, referral=referral,
+            validated_delegations=validated_delegations,
         ))
 
     # --- H0 -----------------------------------------------------------------
@@ -343,6 +364,10 @@ def evaluate_gates(
         part, loop_edge_ids,
         split_face_ids=split_face_ids, pull_direction=pull_direction,
         loop_edge_intervals=loop_edge_intervals,
+        # Non-geometric H3 partition metadata (plan D-043) -- never a curve
+        # in candidate.segments/.loops. See PartingLoopCandidate's field
+        # docstring and regions.separate_surface's "Tooling splits" section.
+        tooling_split_face_ids=dict(candidate.tooling_split_face_ids),
     )
     measurements["h3_region_count"] = float(separation.component_count)
     measurements["h3_split_face_count"] = float(len(split_face_ids))
@@ -366,36 +391,55 @@ def evaluate_gates(
         for face_id in part.edge_to_faces.get(edge_id, ())
     )
     regions = classify_regions(
-        part, separation, pull_direction, loop_face_ids=loop_face_ids, cfg=cfg
+        part, separation, pull_direction, loop_face_ids=loop_face_ids, cfg=cfg,
+        tooling_split_face_ids=dict(candidate.tooling_split_face_ids),
     )
 
     # --- H4 orientation consistency -----------------------------------------
+    # D-044: delegations are (re-)validated HERE, per candidate and per
+    # pull_direction, never trusted from an earlier call. Only entries that
+    # pass contribute face ids to exclude, and only H4's decision logic ever
+    # reads that face-id set -- movement_type/evidence/source/verification
+    # are reporting metadata, consumed nowhere in this block.
+    validated_delegations = tuple(
+        d for d in delegations if validate_delegation(part, candidate, d, pull_direction, cfg).eligible
+    )
+    delegated_face_ids = frozenset(fid for d in validated_delegations for fid in d.face_ids)
+
     faces_by_id = {f.face_id: f for f in part.faces}
     g_by_id = {c.face_id: c.mean_g for c in regions.faces}
     worst_violation = 0.0
     for label, component in (
         ("cavity", regions.cavity_face_ids), ("core", regions.core_face_ids)
     ):
-        area = sum(faces_by_id[f].area for f in component if f in faces_by_id)
+        # Region-aware: only THIS region's own intersection with the
+        # validated delegated set is removed -- a face delegated for one
+        # candidate's cavity is never subtracted from an unrelated region.
+        evaluated = frozenset(component) - delegated_face_ids
+        area = sum(faces_by_id[f].area for f in evaluated if f in faces_by_id)
         if area <= 0:
             continue
         sign = 1.0 if label == "cavity" else -1.0
         violating = sum(
-            faces_by_id[f].area for f in component
+            faces_by_id[f].area for f in evaluated
             if f in g_by_id and sign * g_by_id[f] < -cfg.orientation_epsilon
         )
         worst_violation = max(worst_violation, violating / area)
     measurements["h4_orientation_violation_fraction"] = worst_violation
+    measurements["h4_delegated_face_count"] = float(len(delegated_face_ids))
     if worst_violation > cfg.orientation_violation_max:
         return GateOutcome(
             FeasibilityReport(
                 passed=False, failed_gate="H4",
                 reason=(
-                    f"{worst_violation * 100:.1f}% of one region's area faces the wrong "
-                    f"way (limit {cfg.orientation_violation_max * 100:.1f}%); the two "
-                    "sides are not separately mold-accessible."
+                    f"{worst_violation * 100:.1f}% of one region's remaining "
+                    "primary-moving area faces the wrong way (limit "
+                    f"{cfg.orientation_violation_max * 100:.1f}%); the two sides are not "
+                    "separately mold-accessible, even after excluding "
+                    f"{len(delegated_face_ids)} validated delegated face(s)."
                 ),
                 measurements=measurements, on_surface=on_surface,
+                validated_delegations=validated_delegations,
             ),
             separation=separation, regions=regions,
         )
@@ -427,6 +471,7 @@ def evaluate_gates(
                 passed=False, failed_gate="H5",
                 reason="requires_side_action",
                 measurements=measurements, on_surface=on_surface, referral=referral,
+                validated_delegations=validated_delegations,
             ),
             separation=separation, regions=regions,
         )
@@ -451,6 +496,7 @@ def evaluate_gates(
                     f"{distinct} distinct point(s) (min 4)."
                 ),
                 measurements=measurements, on_surface=on_surface,
+                validated_delegations=validated_delegations,
             ),
             separation=separation, regions=regions,
         )
@@ -469,6 +515,7 @@ def evaluate_gates(
                     "this is a heuristic, not a geometric invalidity."
                 ),
                 measurements=measurements, on_surface=on_surface,
+                validated_delegations=validated_delegations,
             ),
             separation=separation, regions=regions,
         )
@@ -476,6 +523,7 @@ def evaluate_gates(
     return GateOutcome(
         FeasibilityReport(
             passed=True, measurements=measurements, on_surface=on_surface,
+            validated_delegations=validated_delegations,
         ),
         separation=separation, regions=regions,
     )

@@ -291,6 +291,29 @@ class PartingLineV2Settings:
     #: reported coverage value and the H7 threshold comparison.
     face_sample_grid: int = 11
 
+    # --- core-pin / tooling-split eligibility (2026-08-15) ---
+    #: Dedicated, strict, per-point uniform-draft tolerance for core-pin
+    #: eligibility. Deliberately separate from ``orientation_epsilon`` (H4's
+    #: area-fraction slack) and ``silhouette_epsilon`` (Track B's band width)
+    #: so an edit to either for its own reason cannot silently change which
+    #: faces are eligible for a tooling-assigned split. Tight because a
+    #: genuinely coaxial face has g = 0 analytically everywhere; 1e-6 only
+    #: excludes faces that are merely close to coaxial.
+    core_pin_uniform_g_max: float = 1e-6
+    #: How close to exactly parallel/antiparallel a candidate cylinder's axis
+    #: must be to the pull direction to count as coaxial:
+    #: ``|cos(angle)| > 1 - core_pin_axis_angle_tol``.
+    core_pin_axis_angle_tol: float = 1e-6
+
+    # --- secondary-action delegation eligibility (D-044) ---
+    #: A delegation's claimed movement direction must differ meaningfully
+    #: from the primary pull direction (a SANITY tolerance for an engineer's
+    #: asserted direction, deliberately looser than ``core_pin_axis_angle_tol``,
+    #: which checks a mathematically exact cylinder axis).
+    #: ``|cos(angle)| <= this`` to be accepted; 0.99 ~ requires at least
+    #: ~8.1 degrees of separation from parallel/antiparallel.
+    delegation_max_parallel_cos: float = 0.99
+
 
 @dataclass(frozen=True)
 class PartingLineSettings:

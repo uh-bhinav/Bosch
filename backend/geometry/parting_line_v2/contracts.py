@@ -37,6 +37,13 @@ __all__ = [
     "PullDirectionInput",
     "UndercutFeatureRef",
     "UndercutInput",
+    "CorePinFaceRef",
+    "CorePinEligibility",
+    "DelegationEvidence",
+    "DelegatedSecondaryAction",
+    "DelegationEligibility",
+    "GEOMETRIC_VERIFICATION_UNVERIFIED",
+    "DELEGATION_SOURCE_MANUAL_ENGINEERING",
     "SplitTool",
     "PartingSurfaceProvider",
     "ContractViolation",
@@ -283,6 +290,152 @@ class UndercutInput:
             "feature_count": len(self.features),
             "features": [f.to_dict() for f in self.features],
         }
+
+
+# ---------------------------------------------------------------------------
+# Upstream contract — core-pin/tooling-split authorization (2026-08-15, D-043)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CorePinFaceRef:
+    """
+    One face EXPLICITLY authorized as a possible core-pin/tooling-split
+    candidate.
+
+    This is an AUTHORIZATION list, not a discovery mechanism. A face's
+    presence here is necessary but never sufficient for it to be used: it
+    must ALSO be independently identified as the actual graph bridge for a
+    specific candidate's real boundary (``regions._find_bridge_faces``) AND
+    pass the geometric eligibility predicate
+    (``regions.check_core_pin_eligibility``). No face is ever tried merely
+    because it is authorized, and no face is ever used merely because it is
+    geometrically eligible in principle — both conditions, plus the causal
+    bridge fact, are required together.
+    """
+
+    face_id: int
+    axis_direction: Vec3
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "face_id": self.face_id,
+            "axis_direction": [round(c, 6) for c in self.axis_direction],
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class CorePinEligibility:
+    """Result of the geometric eligibility predicate for one face."""
+
+    face_id: int
+    eligible: bool
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {"face_id": self.face_id, "eligible": self.eligible, "reason": self.reason}
+
+
+# ---------------------------------------------------------------------------
+# Upstream contract — secondary-action delegation (frozen semantics, see
+# docs/DECISIONS_AND_ALGORITHMS.md D-044)
+# ---------------------------------------------------------------------------
+
+#: The only legal value today. Not a placeholder to be silently relaxed --
+#: upgrading this requires a real geometric release/sweep verification
+#: mechanism to actually exist, which it does not (D-042 already documented
+#: why the one candidate mechanism, Boolean sweep, is unreliable for exactly
+#: this class of geometry).
+GEOMETRIC_VERIFICATION_UNVERIFIED = "unverified"
+
+#: The only legal source today. A future dedicated entrapment detector is a
+#: future PRODUCER of this same contract -- not designed or built here.
+DELEGATION_SOURCE_MANUAL_ENGINEERING = "manual_engineering"
+
+
+@dataclass(frozen=True)
+class DelegationEvidence:
+    """
+    Provenance for a ``DelegatedSecondaryAction`` claim.
+
+    ``geometric_verification`` exists specifically so a passing validation
+    result never silently implies more than it proves. Its only legal value
+    today is ``"unverified"`` -- an explicit admission, not a placeholder.
+    """
+
+    source: str
+    note: str
+    geometric_verification: str = GEOMETRIC_VERIFICATION_UNVERIFIED
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source,
+            "note": self.note,
+            "geometric_verification": self.geometric_verification,
+        }
+
+
+@dataclass(frozen=True)
+class DelegatedSecondaryAction:
+    """
+    An EXPLICITLY AUTHORIZED claim that a face set is intentionally not
+    expected to release with the primary mould movement -- it is handled by
+    an independent secondary mechanism instead (D-044).
+
+    This is an authorization, not a discovery mechanism, exactly like
+    ``CorePinFaceRef``: a face's presence here is necessary but never
+    sufficient for H4 to exclude it. It must also pass
+    ``regions.validate_delegation`` for the SPECIFIC candidate and primary
+    pull direction being evaluated.
+
+    ``movement_type`` is advisory metadata only, supplied by whoever
+    authorized this claim -- nothing in H4's decision logic reads it, and
+    the system itself never infers or asserts a tooling mechanism (per
+    ``.claude/rules/honesty-and-scope.md``: side_core.py answers only what
+    volume must retract, never which mechanism).
+
+    There is deliberately no ``affected_region`` field -- which primary
+    region (cavity/core) these faces would fall under is a property of a
+    SPECIFIC candidate's actual H3 result, never pre-declared here. There is
+    deliberately no confidence/readiness field (plan §12.7's ban, already
+    enforced elsewhere in this package) -- ``evidence.geometric_verification``
+    is a categorical admission of what has and has not been checked, never a
+    score.
+    """
+
+    face_ids: frozenset[int]
+    movement_direction: Vec3
+    movement_type: str
+    evidence: DelegationEvidence
+
+    def to_dict(self) -> dict:
+        return {
+            "face_ids": sorted(self.face_ids),
+            "movement_direction": [round(c, 6) for c in self.movement_direction],
+            "movement_type": self.movement_type,
+            "evidence": self.evidence.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class DelegationEligibility:
+    """
+    Result of ``regions.validate_delegation`` for one delegation record,
+    against one specific candidate and primary pull direction.
+
+    ``eligible=True`` means only: "this explicitly authorized secondary-
+    action claim is structurally self-consistent for this candidate." It
+    does NOT mean the secondary mechanism has been geometrically proven to
+    release the geometry -- see ``DelegationEvidence.geometric_verification``,
+    which stays ``"unverified"`` regardless of this result.
+    """
+
+    eligible: bool
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {"eligible": self.eligible, "reason": self.reason}
 
 
 def _opt_vec3(value: object) -> Vec3 | None:

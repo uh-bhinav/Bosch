@@ -454,6 +454,95 @@ instead of inferring one from final pass/fail.
       methodology in P3.3 (prior D-026 enumeration work stands,
       un-contradicted but also not independently re-verified here).
 
+### ✅ Core-pin / tooling-split mechanism (D-043, 2026-08-15) — implemented, verified, scoped
+
+- [x] Full lifecycle trace of `PartingLoopCandidate.segments`/`.loops`
+      (generation, assembly, `loop_edge_ids`/`loop_face_ids` derivation,
+      ranking, H0-H5 consumption) before writing any code — established a
+      `ToolingBacking` `CurveSegment` design would corrupt `ranking.py`'s
+      coverage/turning/length measures and violate plan §9.5; rejected in
+      favor of non-geometric H3 partition metadata.
+- [x] `types.py`: `CorePinInterface`, `PartingLoopCandidate.
+      tooling_split_face_ids`/`.core_pin_interfaces` (both default empty).
+- [x] `contracts.py`: `CorePinFaceRef`, `CorePinEligibility`.
+- [x] `regions.py`: `separate_surface`'s additive `tooling_split_face_ids`
+      branch (axial-position split, verified necessary since sign-of-g
+      cannot distinguish a coaxial face's two ends), `find_bridge_faces`
+      (deterministic articulation-point localization, topology only),
+      `check_core_pin_eligibility` (5-condition independent gate, dedicated
+      `core_pin_uniform_g_max`/`core_pin_axis_angle_tol` config keys),
+      `resolve_primary_split_param` (single canonical split-location
+      source).
+- [x] `gates.py`: single-line wiring into the existing `separate_surface`
+      call.
+- [x] `engine.py`: Round 1.5 in `analyse_parting_line` (new
+      `core_pin_face_refs` parameter, default empty — inert unless
+      explicitly authorized).
+- [x] `tests/test_parting_line_v2_core_pin.py` — 13 tests, full positive/
+      negative/causality/regression matrix, all passing.
+- [x] Full existing suite (139 tests) re-verified byte-identical.
+- [x] End-to-end real-pipeline confirmation on Part3 +Z: closes 3
+      independently-discovered candidates (z=1.0, z=4.0, z≈31.43), all
+      separately rejected at H4 (untouched by this milestone).
+- [x] **H4/H5 secondary-action-exemption gap — CLOSED by D-044 (2026-08-15)**:
+      a region containing confirmed, explicitly-authorized, independently-
+      validated side-action geometry can now be exempted from H4's area
+      calculation via `DelegatedSecondaryAction`/`validate_delegation`. See
+      the D-044 section below.
+- [ ] Not done: authorizing `core_pin_face_refs` from a real upstream
+      adapter (e.g. auto-detecting coaxial candidate faces from
+      `PartGeometry` rather than requiring the caller to list them
+      explicitly) — current design requires explicit authorization, by
+      design, per D-043's alternatives-rejected section.
+- [ ] Not done: wiring `core_pin_face_refs` into `backend/api/main.py`'s
+      `/parting-line-v2` endpoint — currently only reachable via direct
+      `analyse_parting_line()` calls; the API passes none, so behaviour
+      there is unchanged (verified).
+
+### ✅ Secondary-action delegation (D-044, 2026-08-15) — implemented, verified, scoped
+
+- [x] `contracts.py`: `DelegationEvidence`, `DelegatedSecondaryAction`,
+      `DelegationEligibility` — frozen fields exactly as specified, no
+      confidence/readiness score, no `affected_region` (derived per-
+      candidate from H3 instead).
+- [x] `regions.py`: `validate_delegation` — hard requirements (provenance,
+      valid non-parallel unit direction, disjoint from Γ) + structural
+      sanity (connected face set) — no face-count/area threshold.
+- [x] `gates.py`: H4's region-aware, delegation-scoped area/violation-area
+      exclusion; `FeasibilityReport.validated_delegations` threaded
+      through every H4-and-later outcome.
+- [x] `engine.py`: `delegations` parameter, threaded through all three
+      `evaluate_gates` call sites, default empty (inert).
+- [x] `tests/test_parting_line_v2_delegation.py` — 16 tests, full frozen
+      case matrix, all passing.
+- [x] Full existing suite (152 tests) re-verified byte-identical.
+- [x] End-to-end real-pipeline confirmation on Part3 +Z: candidate 110
+      (`z=4.0`) passes H4 after 2 validated per-stack delegations
+      (34 faces, 7.56%→0.499%); the other two real core-pin candidates
+      receive the identical delegation and remain correctly rejected —
+      confirms nothing was tuned or additionally masked to force a result.
+- [x] H5, `detect_undercuts`, and ranking independently re-verified
+      unaffected by delegation (dedicated regression tests, not just
+      assumed from code inspection).
+- [ ] **Not done, explicitly out of scope (Gap A, still open)**: automated
+      detection of radial/diametral entrapment. Both `detect_undercuts`
+      paths (fast-proxy and Boolean-refined) were re-confirmed this
+      session to find nothing for Part3's rib lattice — `manual_engineering`
+      remains the only working `DelegationEvidence.source` until a
+      dedicated entrapment detector is designed and built (not started).
+- [ ] Not done: any geometric release/sweep/interference verification —
+      `geometric_verification="unverified"` remains the only legal value;
+      D-042 already showed the one candidate mechanism (Boolean sweep) is
+      unreliable for this class of geometry, and no replacement has been
+      designed.
+- [ ] Not done: face-count/area threshold for `validate_delegation` —
+      deliberately deferred per explicit instruction; add only if a
+      concrete degenerate case demonstrates the existing structural checks
+      are insufficient.
+- [ ] Not done: wiring `delegations` into `backend/api/main.py`'s
+      `/parting-line-v2` endpoint — same status as `core_pin_face_refs`,
+      currently only reachable via direct `analyse_parting_line()` calls.
+
 ### ⬜ P4 — Core/cavity integration (NEXT — but see the P3.1 diagnosis first)
 ### ⬜ P5 — Visualization + migrate consumers off `readiness`/`confidence`
 ### ⬜ P6 — A/B cutover (flip default to v2 only if it wins or ties everywhere)

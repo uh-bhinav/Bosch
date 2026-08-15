@@ -36,14 +36,23 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Iterator
 
-from backend.geometry.parting_line_v2.types import FaceClassification
+from backend.geometry.parting_line_v2.contracts import (
+    CorePinEligibility,
+    DelegatedSecondaryAction,
+    DelegationEligibility,
+)
+from backend.geometry.parting_line_v2.types import EdgeBacking, FaceClassification, PartingLoopCandidate
 from backend.models.geometry_models import PartGeometry, Vec3, dot3
 
 try:
     from OCC.Core.BRep import BRep_Tool
-    from OCC.Core.BRepAdaptor import BRepAdaptor_Curve
+    from OCC.Core.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+    from OCC.Core.BRepBndLib import brepbndlib
     from OCC.Core.BRepTools import breptools
+    from OCC.Core.Bnd import Bnd_Box
+    from OCC.Core.GeomAbs import GeomAbs_Cylinder
     from OCC.Core.GeomLProp import GeomLProp_SLProps
 
     from backend.geometry.step_loader import _face_normal_at_uv
@@ -53,7 +62,11 @@ except Exception:  # pragma: no cover
     _OCC_AVAILABLE = False
 
 
-__all__ = ["SeparationResult", "separate_surface", "classify_regions", "mean_abs_g"]
+__all__ = [
+    "SeparationResult", "separate_surface", "classify_regions", "mean_abs_g",
+    "check_core_pin_eligibility", "find_bridge_faces", "resolve_primary_split_param",
+    "validate_delegation",
+]
 
 
 def mean_abs_g(face: object, pull_direction: Vec3, grid: int) -> float:
@@ -202,11 +215,127 @@ def _g_at_edge_on_face(
     return dot3(normal, pull_direction) if normal is not None else None
 
 
+def _axial_position_at_edge(edge_occ: object, pull_direction: Vec3) -> float | None:
+    """Projection of an edge's midpoint onto the pull axis."""
+    if not _OCC_AVAILABLE:
+        return None
+    try:
+        adaptor = BRepAdaptor_Curve(edge_occ)
+        t_mid = 0.5 * (adaptor.FirstParameter() + adaptor.LastParameter())
+        p = adaptor.Value(t_mid)
+        return dot3((p.X(), p.Y(), p.Z()), pull_direction)
+    except Exception:
+        return None
+
+
+def _tooling_split_positive_share(
+    face: object, pull_direction: Vec3, split_param: float, grid: int
+) -> float:
+    """
+    Area-weighted fraction of ``face`` whose axial position (projected onto
+    ``pull_direction``) is ``>= split_param`` (plan Phase 3A, D-043 area
+    reporting fix).
+
+    A coaxial tooling-split face has ``g ~ 0`` everywhere on its own
+    surface — that is the entire reason D-043 exists (``_g_at_edge_on_face``
+    cannot distinguish its two ends either). So unlike a genuine Track-B
+    split face, ``mean_g``'s sign/magnitude carries no information about
+    where the split actually falls; this samples the face's own AXIAL
+    POSITION instead, using the exact same area-weighted ``M x M`` Jacobian
+    quadrature as ``mean_abs_g``.
+    """
+    if not _OCC_AVAILABLE or grid < 2:
+        return 0.5
+    try:
+        surface = BRep_Tool.Surface(face.occ_face)
+        u_min, u_max, v_min, v_max = breptools.UVBounds(face.occ_face)
+    except Exception:
+        return 0.5
+    if not all(math.isfinite(x) for x in (u_min, u_max, v_min, v_max)):
+        return 0.5
+
+    positive_weight = 0.0
+    total_weight = 0.0
+    for i in range(grid):
+        for j in range(grid):
+            u = u_min + (u_max - u_min) * (i + 0.5) / grid
+            v = v_min + (v_max - v_min) * (j + 0.5) / grid
+            try:
+                props = GeomLProp_SLProps(surface, u, v, 1, 1e-9)
+                point = props.Value()
+                du, dv = props.D1U(), props.D1V()
+                jacobian = math.sqrt(
+                    (du.Y() * dv.Z() - du.Z() * dv.Y()) ** 2
+                    + (du.Z() * dv.X() - du.X() * dv.Z()) ** 2
+                    + (du.X() * dv.Y() - du.Y() * dv.X()) ** 2
+                )
+            except Exception:
+                continue
+            if jacobian <= 0.0:
+                continue
+            axial = dot3((point.X(), point.Y(), point.Z()), pull_direction)
+            if axial >= split_param:
+                positive_weight += jacobian
+            total_weight += jacobian
+    return positive_weight / total_weight if total_weight > 0 else 0.5
+
+
+def _tooling_split_cavity_share(
+    part: PartGeometry,
+    face_id: int,
+    split_param: float,
+    pull_direction: Vec3,
+    cavity_component: frozenset[int],
+    core_component: frozenset[int],
+    grid: int,
+) -> float | None:
+    """
+    Fraction of a tooling-split face's area to attribute to the CAVITY side
+    (plan Phase 3A).
+
+    ``SeparationResult.components`` stores plain face-id sets, not
+    ``(face_id, side)`` pairs, so which axial side of a split face ended up
+    in which region is not directly recorded. This recovers it read-only,
+    without touching H3/``separate_surface``: find one neighbouring face
+    that is NOT itself tooling-split (so its region membership is
+    unambiguous), read the shared edge's axial position exactly the way
+    ``separate_surface`` itself decided that neighbour's side, and use that
+    single reference to map "axial >= split_param" to whichever region the
+    neighbour is actually in. Returns ``None`` if no usable reference edge
+    exists, so the caller can fall back to the previous behaviour.
+    """
+    faces_by_id = {f.face_id: f for f in part.faces}
+    edges_by_id = {e.edge_id: e for e in part.edges}
+    face = faces_by_id.get(face_id)
+    if face is None:
+        return None
+
+    for edge_id in part.face_to_edges.get(face_id, []):
+        neighbours = [fid for fid in part.edge_to_faces.get(edge_id, []) if fid != face_id]
+        if not neighbours:
+            continue
+        neighbour_id = neighbours[0]
+        if neighbour_id not in cavity_component and neighbour_id not in core_component:
+            continue
+        edge = edges_by_id.get(edge_id)
+        if edge is None:
+            continue
+        axial = _axial_position_at_edge(edge.occ_edge, pull_direction)
+        if axial is None:
+            continue
+        neighbour_in_cavity = neighbour_id in cavity_component
+        positive_side_is_cavity = (axial >= split_param) == neighbour_in_cavity
+        positive_share = _tooling_split_positive_share(face, pull_direction, split_param, grid)
+        return positive_share if positive_side_is_cavity else (1.0 - positive_share)
+    return None
+
+
 def separate_surface(
     part: PartGeometry,
     loop_edge_ids: frozenset[int],
     *,
     split_face_ids: frozenset[int] = frozenset(),
+    tooling_split_face_ids: dict[int, float] | None = None,
     pull_direction: Vec3 | None = None,
     loop_edge_intervals: dict[int, list[tuple[float, float]]] | None = None,
 ) -> SeparationResult:
@@ -238,21 +367,42 @@ def separate_surface(
     would under-count. Building the full UV partition is only worth it if a
     real part is ever measured to need it.
 
+    **Tooling splits (2026-08-15, D-043).** Faces in ``tooling_split_face_ids``
+    (a ``face_id -> split_param`` map, disjoint from ``split_face_ids`` by
+    construction) are ALSO split into two nodes, but by comparing each
+    neighbouring edge's own axial position (projected onto ``pull_direction``)
+    against ``split_param`` — never by sign of ``g``. This exists because a
+    face exactly coaxial with the pull direction has ``g ≡ 0`` everywhere, so
+    ``_g_at_edge_on_face`` cannot distinguish its two ends (both edges would
+    evaluate to ~0.0 and collapse onto the same node) — the mechanism a
+    Track-B split face uses does not apply here. See
+    ``docs/DECISIONS_AND_ALGORITHMS.md`` D-043 for the full derivation and the
+    validated proof this branch does not change behaviour when
+    ``tooling_split_face_ids`` is empty (the default, and every caller before
+    this milestone).
+
     ==================  ==========================================
     ``count == 2``      PASS — the two components are cavity/core
     ``count == 1``      REJECT — the loop does not separate the part
     ``count > 2``       REJECT — the loop over-partitions
     ==================  ==========================================
     """
+    tooling = tooling_split_face_ids or {}
+    assert split_face_ids.isdisjoint(tooling), (
+        "a face may not use both split_face_ids (sign-of-g) and "
+        "tooling_split_face_ids (axial-parameter) at once"
+    )
+
     usable = {f.face_id for f in part.faces if f.normal_valid}
     skipped = frozenset(f.face_id for f in part.faces if not f.normal_valid)
     faces_by_id = {f.face_id: f for f in part.faces}
     edges_by_id = {e.edge_id: e for e in part.edges}
     split = split_face_ids & usable
+    tooling_ids = set(tooling.keys()) & usable
 
     def node_of(face_id: int, side: float | None) -> tuple[int, int]:
         """(face_id, side) where side is 0 for unsplit, +1/-1 for a split face."""
-        if face_id not in split:
+        if face_id not in split and face_id not in tooling_ids:
             return (face_id, 0)
         return (face_id, 1 if (side is not None and side >= 0.0) else -1)
 
@@ -267,7 +417,7 @@ def separate_surface(
 
     nodes: set[tuple[int, int]] = set()
     for face_id in usable:
-        if face_id in split:
+        if face_id in split or face_id in tooling_ids:
             nodes.add((face_id, 1))
             nodes.add((face_id, -1))
         else:
@@ -300,11 +450,17 @@ def separate_surface(
                         faces_by_id[a].occ_face, edge.occ_edge, pull_direction,
                         free_parameter,
                     )
+                elif a in tooling_ids:
+                    pos = _axial_position_at_edge(edge.occ_edge, pull_direction)
+                    side_a = None if pos is None else (pos - tooling[a])
                 if b in split:
                     side_b = _g_at_edge_on_face(
                         faces_by_id[b].occ_face, edge.occ_edge, pull_direction,
                         free_parameter,
                     )
+                elif b in tooling_ids:
+                    pos = _axial_position_at_edge(edge.occ_edge, pull_direction)
+                    side_b = None if pos is None else (pos - tooling[b])
             node_a, node_b = node_of(a, side_a), node_of(b, side_b)
             adjacency[node_a].add(node_b)
             adjacency[node_b].add(node_a)
@@ -334,6 +490,400 @@ def separate_surface(
     )
 
 
+# ---------------------------------------------------------------------------
+# Core-pin / tooling-split mechanism (2026-08-15, plan D-043)
+#
+# Two INDEPENDENT questions, kept structurally separate per the design:
+#   1. `find_bridge_faces`            -- WHICH face(s), if any, are the
+#                                         graph-theoretic cause of an H3
+#                                         under-separation. Pure topology,
+#                                         localization only, NOT a validity
+#                                         test.
+#   2. `check_core_pin_eligibility`   -- is a SPECIFIC face actually a
+#                                         legitimate core-pin surface. The
+#                                         independent geometric/manufacturing
+#                                         gate, always run, never skipped.
+# `resolve_primary_split_param` is the single canonical source of "where
+# does this candidate's real boundary sit" -- every consumer of a split
+# parameter must receive this same computed value, never resample it.
+# ---------------------------------------------------------------------------
+
+def _plain_face_adjacency(part: PartGeometry, loop_edge_ids: frozenset[int]) -> dict[int, set[int]]:
+    """
+    The plain (no split/tooling faces) face-adjacency graph, built by the
+    SAME edge-cutting rule ``separate_surface`` uses for an unsplit graph:
+    an edge counts as cut iff it is in ``loop_edge_ids``; two usable faces
+    sharing any OTHER edge stay adjacent. Factored out so bridge
+    localization can never silently diverge from what H3 itself computes.
+    """
+    usable = {f.face_id for f in part.faces if f.normal_valid}
+    adjacency: dict[int, set[int]] = {fid: set() for fid in usable}
+    for edge_id, face_ids in part.edge_to_faces.items():
+        if len(face_ids) != 2 or edge_id in loop_edge_ids:
+            continue
+        a, b = face_ids
+        if a not in usable or b not in usable:
+            continue
+        adjacency[a].add(b)
+        adjacency[b].add(a)
+    return adjacency
+
+
+def _components(adjacency: dict[int, set[int]], exclude: int | None = None) -> list[frozenset[int]]:
+    """Connected components of ``adjacency``, optionally with one node removed."""
+    remaining = set(adjacency.keys())
+    if exclude is not None:
+        remaining.discard(exclude)
+    seen: set[int] = set()
+    components: list[frozenset[int]] = []
+    for start in sorted(remaining):
+        if start in seen:
+            continue
+        stack, group = [start], set()
+        seen.add(start)
+        while stack:
+            node = stack.pop()
+            group.add(node)
+            for neighbour in adjacency.get(node, ()):
+                if neighbour == exclude or neighbour in seen:
+                    continue
+                seen.add(neighbour)
+                stack.append(neighbour)
+        components.append(frozenset(group))
+    return components
+
+
+def _articulation_points(adjacency: dict[int, set[int]]) -> set[int]:
+    """
+    Iterative Tarjan low-link articulation-point algorithm (recursion-free,
+    so it is safe on a part with hundreds of faces). Standard algorithm,
+    unmodified: a node is an articulation point if removing it increases the
+    number of connected components of its own connected subgraph.
+    """
+    disc: dict[int, int] = {}
+    low: dict[int, int] = {}
+    parent: dict[int, int | None] = {}
+    ap: set[int] = set()
+    timer = 0
+
+    for root in sorted(adjacency):
+        if root in disc:
+            continue
+        parent[root] = None
+        disc[root] = low[root] = timer
+        timer += 1
+        root_children = 0
+        stack: list[tuple[int, Iterator[int]]] = [(root, iter(sorted(adjacency[root])))]
+        while stack:
+            u, it = stack[-1]
+            advanced = False
+            for v in it:
+                if v not in disc:
+                    parent[v] = u
+                    disc[v] = low[v] = timer
+                    timer += 1
+                    if u == root:
+                        root_children += 1
+                    stack.append((v, iter(sorted(adjacency[v]))))
+                    advanced = True
+                    break
+                elif v != parent.get(u):
+                    low[u] = min(low[u], disc[v])
+            if not advanced:
+                stack.pop()
+                if stack:
+                    p = stack[-1][0]
+                    low[p] = min(low[p], low[u])
+                    if p != root and low[u] >= disc[p]:
+                        ap.add(p)
+        if root_children > 1:
+            ap.add(root)
+
+    return ap
+
+
+def find_bridge_faces(part: PartGeometry, loop_edge_ids: frozenset[int]) -> frozenset[int]:
+    """
+    Deterministic, candidate-LOCALIZATION-only bridge identification (plan
+    D-043). Answers exactly one question: "if this specific face were split
+    into two nodes here, would the plain edge-cut graph resolve to exactly
+    two clean components, with the face's own neighbours dividing
+    one-to-each-side." Pure topology — no geometric/manufacturing judgement
+    is made here.
+
+    **This is not proof that a face is valid for tooling splitting.** A face
+    returned here may still fail ``check_core_pin_eligibility`` (wrong
+    surface type, non-uniform g, etc.), and eligibility must always run
+    afterward on any face this function returns — never skipped, and never
+    used as a reason to widen the search to other faces.
+
+    Returns an empty set whenever there is nothing to localize: the plain
+    graph already separates (H3 would pass without any tooling mechanism),
+    already over-partitions, or no single face's removal cleanly produces
+    exactly two components with a clean one-to-each-side neighbour split.
+    """
+    adjacency = _plain_face_adjacency(part, loop_edge_ids)
+    if not adjacency or len(_components(adjacency)) != 1:
+        return frozenset()
+
+    bridges: set[int] = set()
+    for face_id in _articulation_points(adjacency):
+        parts_without = _components(adjacency, exclude=face_id)
+        if len(parts_without) != 2:
+            continue
+        neighbours = adjacency.get(face_id, set())
+        side0 = {n for n in neighbours if n in parts_without[0]}
+        side1 = {n for n in neighbours if n in parts_without[1]}
+        if side0 and side1 and not (side0 & side1) and (side0 | side1) == neighbours:
+            bridges.add(face_id)
+    return frozenset(bridges)
+
+
+def resolve_primary_split_param(
+    part: PartGeometry, loop_edge_ids: frozenset[int], pull_direction: Vec3, *, tol: float = 1e-6,
+) -> float:
+    """
+    THE single canonical source of "where does this candidate's real
+    boundary sit" along the pull axis (plan D-043). Every consumer —
+    ``check_core_pin_eligibility``, ``PartingLoopCandidate.
+    tooling_split_face_ids``, ``CorePinInterface``, and the
+    ``tooling_split_face_ids`` argument to ``separate_surface`` — must
+    receive this EXACT value, never an independently resampled one. This
+    guards against the class of defect already chased once in this project
+    (two code paths silently disagreeing on "the same" geometric value at
+    the sub-millimetre level).
+
+    Raises ``ValueError`` if the boundary's edges do not agree on a single
+    axial position within ``tol`` — such a boundary is not a candidate for
+    core-pin closure at all, and that must fail loudly rather than average
+    over a real disagreement.
+    """
+    edges_by_id = {e.edge_id: e for e in part.edges}
+    positions: list[float] = []
+    for edge_id in loop_edge_ids:
+        edge = edges_by_id.get(edge_id)
+        if edge is None:
+            continue
+        pos = _axial_position_at_edge(edge.occ_edge, pull_direction)
+        if pos is not None:
+            positions.append(pos)
+    if not positions:
+        raise ValueError("no real boundary edge with a resolvable axial position")
+    lo, hi = min(positions), max(positions)
+    if hi - lo > tol:
+        raise ValueError(
+            f"real boundary is not at a single consistent axial position: spread "
+            f"{hi - lo:.9g} exceeds tolerance {tol:.3g} (min={lo!r}, max={hi!r})"
+        )
+    return sum(positions) / len(positions)
+
+
+def check_core_pin_eligibility(
+    part: PartGeometry, face_id: int, pull_direction: Vec3, cfg: object, split_param: float,
+) -> CorePinEligibility:
+    """
+    The independent geometric/manufacturing gate (plan D-043). ``
+    find_bridge_faces`` only says WHICH face is causally implicated in an H3
+    failure; it makes no claim about whether that face is a legitimate
+    core-pin surface. This is that separate check, and it must always run —
+    even on a face ``find_bridge_faces`` returned.
+
+    Five conditions, ALL required:
+      (a) cylindrical surface;
+      (b) cylinder axis parallel/antiparallel to the pull direction
+          (``cfg.core_pin_axis_angle_tol``);
+      (c) uniformly near-zero ``g`` (per-point, ``cfg.core_pin_uniform_g_max``
+          — deliberately NOT H4's ``orientation_epsilon``/
+          ``orientation_violation_max``, an area-fraction slack meant for a
+          different purpose) over the ENTIRE face;
+      (d) exactly two distinct neighbouring faces — a clean through-passage.
+          This is what actually excludes an ordinary rib-lattice cylinder
+          segment: such a face independently satisfies (a)-(c) (it is also
+          exactly coaxial with uniform g on its own sub-face), but is always
+          sandwiched among 4+ neighbours, never exactly 2;
+      (e) ``split_param`` strictly inside this face's own longitudinal
+          extent — a face entirely on one side of the candidate split needs
+          no tooling treatment at all.
+    """
+    faces_by_id = {f.face_id: f for f in part.faces}
+    face = faces_by_id.get(face_id)
+    if face is None:
+        return CorePinEligibility(face_id, False, f"face {face_id} does not exist on this part")
+    if not _OCC_AVAILABLE:
+        return CorePinEligibility(face_id, False, "OCC not available")
+
+    surf = BRepAdaptor_Surface(face.occ_face)
+    if surf.GetType() != GeomAbs_Cylinder:
+        return CorePinEligibility(
+            face_id, False, f"surface type is not Cylinder (type={surf.GetType()})"
+        )
+
+    axis_angle_tol = getattr(cfg, "core_pin_axis_angle_tol", 1e-6)
+    cyl = surf.Cylinder()
+    axis_dir = cyl.Axis().Direction()
+    axis_vec = (axis_dir.X(), axis_dir.Y(), axis_dir.Z())
+    cos_angle = abs(dot3(axis_vec, pull_direction))
+    if cos_angle < 1.0 - axis_angle_tol:
+        return CorePinEligibility(
+            face_id, False,
+            f"axis not parallel/antiparallel to pull direction (|cos|={cos_angle:.9f})",
+        )
+
+    eps_uniform = getattr(cfg, "core_pin_uniform_g_max", 1e-6)
+    grid = getattr(cfg, "face_sample_grid", 11)
+    mean_g, min_g, max_g, _ = _sample_face_g(face, pull_direction, grid)
+    if max(abs(min_g), abs(max_g)) > eps_uniform:
+        return CorePinEligibility(
+            face_id, False,
+            f"not uniformly zero-draft (min_g={min_g:.6g}, max_g={max_g:.6g}, "
+            f"limit={eps_uniform:.3g})",
+        )
+
+    neighbours = set(part.face_adjacency.get(face_id, []))
+    if len(neighbours) != 2:
+        return CorePinEligibility(
+            face_id, False,
+            f"has {len(neighbours)} distinct neighbouring face(s), require exactly 2: "
+            f"{sorted(neighbours)}",
+        )
+
+    box = Bnd_Box()
+    brepbndlib.Add(face.occ_face, box)
+    xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
+    corners = [(x, y, z) for x in (xmin, xmax) for y in (ymin, ymax) for z in (zmin, zmax)]
+    projections = [dot3(c, pull_direction) for c in corners]
+    face_lo, face_hi = min(projections), max(projections)
+    if not (face_lo < split_param < face_hi):
+        return CorePinEligibility(
+            face_id, False,
+            f"split_param={split_param:.6g} not strictly inside face's longitudinal "
+            f"extent [{face_lo:.6g}, {face_hi:.6g}]",
+        )
+
+    return CorePinEligibility(
+        face_id, True,
+        f"eligible: cylinder, axis-aligned (|cos|={cos_angle:.9f}), uniform g "
+        f"(max|g|={max(abs(min_g), abs(max_g)):.3g}), exactly 2 neighbours {sorted(neighbours)}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Secondary-action delegation (D-044, frozen semantics)
+#
+# `validate_delegation` proves ONLY: "this explicitly authorized secondary-
+# action claim is structurally self-consistent for this candidate." It is
+# NOT, and must never be read as, a geometric release/sweep verification --
+# no such mechanism exists in this codebase (D-042 documents why the one
+# candidate approach, Boolean sweep, is unreliable for exactly this class of
+# geometry). `DelegationEvidence.geometric_verification` stays "unverified"
+# regardless of this function's result.
+# ---------------------------------------------------------------------------
+
+def _is_connected_subgraph(face_ids: frozenset[int], face_adjacency: dict) -> bool:
+    """
+    True iff `face_ids`, restricted to edges BETWEEN members of `face_ids`,
+    forms one connected component. This proves only that the claimed set is
+    not an arbitrary disconnected collection -- it does NOT prove one
+    physical secondary movement is mechanically sufficient to release it
+    (a connected group can still require multiple independent movements).
+    """
+    if not face_ids:
+        return False
+    start = next(iter(face_ids))
+    seen = {start}
+    stack = [start]
+    while stack:
+        node = stack.pop()
+        for neighbour in face_adjacency.get(node, ()):
+            if neighbour in face_ids and neighbour not in seen:
+                seen.add(neighbour)
+                stack.append(neighbour)
+    return seen == set(face_ids)
+
+
+def validate_delegation(
+    part: PartGeometry,
+    candidate: PartingLoopCandidate,
+    delegation: DelegatedSecondaryAction,
+    primary_pull_direction: Vec3,
+    cfg: object,
+) -> DelegationEligibility:
+    """
+    Hard contract validation, then structural sanity -- both required,
+    neither sufficient on its own, and passing both is NOT a claim that the
+    secondary mechanism has been geometrically proven to release the
+    delegated faces (D-044).
+
+    Hard requirements (fail -> reject, delegation entirely unused):
+      - `delegation.evidence.source` non-empty
+      - `delegation.evidence.note` non-empty
+      - `delegation.face_ids` non-empty and every id exists on `part`
+      - `movement_direction` is a valid unit vector
+      - `movement_direction` is meaningfully non-parallel to
+        `primary_pull_direction` (`cfg.delegation_max_parallel_cos`)
+      - `delegation.face_ids` does not intersect this candidate's
+        `loop_face_ids` (derived from `candidate.segments`, same
+        `EdgeBacking`-only rule `gates.py` itself uses)
+
+    Structural sanity (fail -> reject; pass -> NOT proof of feasibility):
+      - `delegation.face_ids` forms one connected component of
+        `part.face_adjacency`
+
+    Deliberately absent: any face-count or area threshold (small,
+    legitimate side-action features must remain representable), and any
+    geometric release/sweep/interference test (not available in this
+    codebase today -- see module docstring above).
+    """
+    if not delegation.evidence.source:
+        return DelegationEligibility(False, "evidence.source is empty")
+    if not delegation.evidence.note:
+        return DelegationEligibility(False, "evidence.note is empty")
+
+    if not delegation.face_ids:
+        return DelegationEligibility(False, "face_ids is empty")
+    known_face_ids = {f.face_id for f in part.faces}
+    unknown = delegation.face_ids - known_face_ids
+    if unknown:
+        return DelegationEligibility(False, f"face_ids reference unknown faces: {sorted(unknown)}")
+
+    direction = delegation.movement_direction
+    magnitude = math.sqrt(sum(c * c for c in direction))
+    if abs(magnitude - 1.0) > 1e-6:
+        return DelegationEligibility(False, f"movement_direction is not a unit vector (|v|={magnitude:.6g})")
+
+    cos_angle = abs(dot3(direction, primary_pull_direction))
+    max_parallel_cos = getattr(cfg, "delegation_max_parallel_cos", 0.99)
+    if cos_angle > max_parallel_cos:
+        return DelegationEligibility(
+            False,
+            f"movement_direction is not meaningfully distinct from the primary pull "
+            f"direction (|cos|={cos_angle:.6f}, limit {max_parallel_cos:.6f})",
+        )
+
+    loop_edge_ids = frozenset(
+        s.backing.edge_id for s in candidate.segments if isinstance(s.backing, EdgeBacking)
+    )
+    loop_face_ids = frozenset(
+        face_id for edge_id in loop_edge_ids for face_id in part.edge_to_faces.get(edge_id, ())
+    )
+    overlap = delegation.face_ids & loop_face_ids
+    if overlap:
+        return DelegationEligibility(
+            False, f"delegated faces intersect the primary parting line: {sorted(overlap)}"
+        )
+
+    if not _is_connected_subgraph(delegation.face_ids, part.face_adjacency):
+        return DelegationEligibility(
+            False, "delegated face set is not one connected feature (structural sanity check)"
+        )
+
+    return DelegationEligibility(
+        True,
+        "structurally self-consistent: authorized, non-parallel movement, disjoint from "
+        "the primary loop, connected face set. NOT a proof of physical release.",
+    )
+
+
 @dataclass(frozen=True)
 class RegionClassification:
     """Cavity/core assignment derived from H3's two regions (plan §9)."""
@@ -352,6 +902,46 @@ class RegionClassification:
     def ambiguous_area_fraction(self) -> float:
         return self.ambiguous_area_mm2 / self.total_area_mm2 if self.total_area_mm2 > 0 else 0.0
 
+    # -----------------------------------------------------------------------
+    # Region-balance / meaningfulness signal (plan Phase 3A).
+    #
+    # Purely diagnostic — derived from areas `classify_regions` already
+    # computes, nothing new is measured. NOT a feasibility gate: H3/H4 never
+    # read these, and a small `smaller_region_area_fraction` does not by
+    # itself make a candidate invalid (Part3 +Z candidate 110's core is only
+    # ~39.8% of confident area by a handful of faces yet is a real,
+    # physically coherent feature; +X/+Y's degenerate cores are under 1-6%).
+    # Deliberately NO "meaningful"/"degenerate" label: the investigation
+    # that motivated this only has three data points (one genuine, two
+    # degenerate) — not enough to defend a specific cutoff, and inventing
+    # one here would be exactly the arbitrary threshold this phase was
+    # explicitly told not to add. Callers get the raw numbers and judge.
+    # -----------------------------------------------------------------------
+
+    @property
+    def confident_area_mm2(self) -> float:
+        """Cavity + core area — the part of the surface NOT left ambiguous."""
+        return self.cavity_area_mm2 + self.core_area_mm2
+
+    @property
+    def cavity_area_fraction_of_confident(self) -> float:
+        confident = self.confident_area_mm2
+        return self.cavity_area_mm2 / confident if confident > 0 else 0.0
+
+    @property
+    def core_area_fraction_of_confident(self) -> float:
+        confident = self.confident_area_mm2
+        return self.core_area_mm2 / confident if confident > 0 else 0.0
+
+    @property
+    def smaller_region_area_fraction(self) -> float:
+        """min(cavity, core) as a fraction of confident area — the signal
+        that actually distinguishes a real second mold half from a
+        degenerate sliver, unlike face COUNT (see module docstring context
+        in D-043/Phase 3 investigation: a 5-face region can be 40% of area;
+        a 24-face region can be 6%)."""
+        return min(self.cavity_area_fraction_of_confident, self.core_area_fraction_of_confident)
+
     def to_dict(self) -> dict:
         return {
             "cavity_face_count": len(self.cavity_face_ids),
@@ -361,6 +951,10 @@ class RegionClassification:
             "ambiguous_area_mm2": round(self.ambiguous_area_mm2, 3),
             "total_area_mm2": round(self.total_area_mm2, 3),
             "ambiguous_area_fraction": round(self.ambiguous_area_fraction, 6),
+            "confident_area_mm2": round(self.confident_area_mm2, 3),
+            "cavity_area_fraction_of_confident": round(self.cavity_area_fraction_of_confident, 6),
+            "core_area_fraction_of_confident": round(self.core_area_fraction_of_confident, 6),
+            "smaller_region_area_fraction": round(self.smaller_region_area_fraction, 6),
             "inconsistent_face_ids": list(self.inconsistent_face_ids),
             "faces": [f.to_dict() for f in self.faces],
             "warnings": list(self.warnings),
@@ -410,6 +1004,7 @@ def classify_regions(
     *,
     loop_face_ids: frozenset[int],
     cfg: object,
+    tooling_split_face_ids: dict[int, float] | None = None,
 ) -> RegionClassification:
     """
     Assign H3's two regions to cavity and core, and classify every face.
@@ -427,8 +1022,17 @@ def classify_regions(
         touch ``Γ`` — its side is genuinely undetermined, and saying so is
         more useful than guessing.
     ``split``
-        cannot occur at Level 0 (loops run along edges, so no face is cut).
-        The label exists for P2, where Track B's curves do cut faces.
+        cannot occur at Level 0 (loops run along edges, so no face is cut) —
+        UNLESS the face is a coaxial D-043 tooling split (2026-08-15,
+        plan Phase 3A), which reuses this same label since it is likewise a
+        single face genuinely belonging to both regions. ``tooling_split_face_ids``
+        is optional and defaults to empty, matching every pre-existing call
+        site — passing it changes ONLY the reported cavity/core area split
+        for those specific faces (via real axial geometry, not the ``mean_g``
+        fallback below, which is ~0 everywhere on a coaxial face by
+        construction and so carries no side information for them); it never
+        changes which faces land in which region, and never runs for a
+        genuine Track-B split face.
     """
     faces_by_id = {f.face_id: f for f in part.faces}
     epsilon = cfg.silhouette_epsilon
@@ -475,10 +1079,22 @@ def classify_regions(
             # sides. Report BOTH sub-areas rather than forcing one label — this
             # is exactly the case v1's single UV-centroid normal gets wrong,
             # and it matters most on the large curved flanks where it happens.
-            positive = max(0.0, mean_g)
-            negative = max(0.0, -mean_g)
-            total = positive + negative
-            share = positive / total if total > 0 else 0.5
+            tooling_share = None
+            if tooling_split_face_ids and face_id in tooling_split_face_ids:
+                tooling_share = _tooling_split_cavity_share(
+                    part, face_id, tooling_split_face_ids[face_id], pull_direction,
+                    cavity_component, core_component, grid,
+                )
+            if tooling_share is not None:
+                share = tooling_share
+            else:
+                # Genuine Track-B split face (or a tooling-split face whose
+                # neighbours were all themselves ambiguous — falls back to
+                # the previous behaviour rather than guessing further).
+                positive = max(0.0, mean_g)
+                negative = max(0.0, -mean_g)
+                total = positive + negative
+                share = positive / total if total > 0 else 0.5
             classification = FaceClassification(
                 face_id=face_id, label="split",
                 cavity_area_mm2=face.area * share,

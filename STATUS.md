@@ -1,6 +1,6 @@
 # Project Status — DfM Agent
 
-> **Last updated**: 2026-08-13
+> **Last updated**: 2026-08-15
 > **Update this file after every change session.**
 >
 > **Master plan**: `docs/ARCHITECTURE_ROADMAP.md` — phased specification with
@@ -10,6 +10,58 @@
 > `docs/RECOVERY_PLAN.md`.
 
 ## Headline
+
+**D-044 — Secondary-action delegation implemented (2026-08-15).** H4 tests
+whether the geometry expected to move with the primary mould direction is
+orientation-consistent — not whether the whole part has zero undercuts. An
+explicitly authorized `DelegatedSecondaryAction` (face ids + movement
+direction + evidence) is independently re-validated per candidate and per
+pull direction (`regions.validate_delegation`): provenance present, valid
+non-parallel movement direction, disjoint from the candidate's real
+parting line, and — the one structural sanity check — a connected face
+set. Passing proves only structural self-consistency; `evidence.
+geometric_verification` stays `"unverified"`, the only legal value, since
+no geometric release/sweep verification exists in this codebase (D-042
+already showed the one candidate mechanism is unreliable for this class of
+geometry). A genuine discovery surfaced *while writing the tests*, not
+hypothesized in advance: authoring ONE delegation record spanning Part3's
+entire rib lattice (both mirror stacks) was correctly REJECTED by the
+connectedness check, because the two stacks are not adjacent to each
+other — splitting into two per-stack records, each independently
+connected, both validate. End-to-end on the real, unforced production
+pipeline: `analyse_parting_line(Part3, +Z, core_pin_face_refs=(bore,),
+delegations=(stack1, stack2))` — the real Round-1-discovered `z=4.0`
+candidate drops from `h4=7.56%` to `h4=0.499%` (34 faces delegated) and
+**passes**, while the other two real core-pin candidates (`z=1.0`,
+`z=31.43`) receive the identical delegation and remain correctly rejected
+at H4 — nothing tuned or additionally masked. H5, `detect_undercuts`, and
+ranking all independently re-verified unaffected. Full existing suite (152
+tests) re-verified byte-identical; 16 new tests cover the complete frozen
+case matrix. Full detail: D-044.
+
+**D-043 — Core-pin / tooling-split mechanism implemented (2026-08-15).** A
+face exactly coaxial with the pull direction (e.g. Part3's central bore,
+`g ≡ 0` across its entire length) has no B-Rep boundary or Track-B crossing
+anywhere between its two ends, so no candidate loop could previously be
+closed by cutting through it — every Z-primary candidate was structurally
+forced to the part's extremities (base flange or top cap). Implemented as
+non-geometric H3 partition metadata (`PartingLoopCandidate.
+tooling_split_face_ids`), deliberately NOT a new curve on the real parting
+line — a `ToolingBacking` segment design was built, stress-tested, and
+rejected after tracing `ranking.py`'s coverage/length measures and plan
+§9.5's "real parting line" invariant. Bridge localization (deterministic
+articulation-point analysis) is kept strictly separate from the independent
+geometric eligibility gate (cylindrical, axis-aligned, uniformly zero-draft
+over the WHOLE face via a dedicated config key never shared with H4,
+exactly 2 neighbours) — verified this excludes the alternating-radius rib
+lattice on the neighbour-count criterion specifically, not on g-uniformity,
+which those faces also individually satisfy. Full existing test suite (139
+tests) re-verified byte-identical with the new mechanism unused (default);
+13 new tests cover the positive/negative/causality matrix. End-to-end on
+the real production pipeline: closes 3 independently-discovered Part3 +Z
+candidates via the tooling split, all still separately and correctly
+rejected at H4 (the pre-existing orientation-consistency gap, deliberately
+untouched by this milestone). Full detail: D-043.
 
 **P3.11 — Fresh independent separation test confirms H3 correctness on
 every candidate examined; self-corrected a false discrepancy mid-

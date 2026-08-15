@@ -1467,6 +1467,10 @@ def _show_mesh(
             )
         plotter.add_axes()
         plotter.camera_position = "iso"
+        plotter.reset_camera()
+        # Slight zoom-out so the complete part sits comfortably inside the
+        # frame with margin, rather than touching the edges or clipping.
+        plotter.camera.zoom(0.85)
         _show_mesh_offscreen(
             plotter,
             key=viewer_key or (
@@ -1558,13 +1562,29 @@ def _show_mesh_plotly(
         points = line_path.get("points", [])
         if len(points) < 2:
             continue
+        line_x = [float(p[0]) for p in points]
+        line_y = [float(p[1]) for p in points]
+        line_z = [float(p[2]) for p in points]
+        line_width = float(line_path.get("width", 6))
+        # Dark outline trace drawn first, bright core trace on top -- makes
+        # the line read clearly against any mesh/overlay colour underneath,
+        # not just a single thin stroke that can blend into the part.
+        if line_width > 6:
+            traces.append(
+                go.Scatter3d(
+                    x=line_x, y=line_y, z=line_z,
+                    mode="lines",
+                    line=dict(color="#ffffff", width=line_width * 1.7),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name=f"{line_path.get('label', 'parting-line')} (outline)",
+                )
+            )
         traces.append(
             go.Scatter3d(
-                x=[float(p[0]) for p in points],
-                y=[float(p[1]) for p in points],
-                z=[float(p[2]) for p in points],
+                x=line_x, y=line_y, z=line_z,
                 mode="lines",
-                line=dict(color=str(line_path.get("hex", "#00b8ff")), width=6),
+                line=dict(color=str(line_path.get("hex", "#00b8ff")), width=line_width),
                 name=str(line_path.get("label", "parting-line")),
             )
         )
@@ -1596,8 +1616,13 @@ def _show_mesh_plotly(
             xaxis=dict(visible=False),
             yaxis=dict(visible=False),
             zaxis=dict(visible=False),
+            # Pulled back slightly from Plotly's default (1.25,1.25,1.25) so
+            # the full part sits comfortably inside the frame with a margin,
+            # rather than touching the edges or being auto-clipped.
+            camera=dict(eye=dict(x=1.65, y=1.65, z=1.35)),
         ),
         showlegend=True,
+        legend=dict(bgcolor="rgba(255,255,255,0.75)"),
     )
     chart_key = viewer_key or f"dfm-mesh-{color_key}-{len(faces_payload)}"
     st.plotly_chart(
@@ -5094,15 +5119,38 @@ with center:
                 st.json(parting)
 
     with parting_v2_tab:
-        st.subheader("Parting Line v2 (experimental)")
+        st.subheader("Parting Line v2 (experimental) — engineering / debug view")
         st.info(
             "Clean-room Level 0-2 engine (Track A/B -> stitching -> graph -> "
             "2-core -> candidate generation -> H0-H7 -> ranking). Not the "
             "default engine yet -- see docs/IMPLEMENTATION_STATUS.md. "
             "Direction is always manually supplied here: this engine never "
-            "calls the direction optimizer. Copy in a vector from the "
-            "Direction tab if you want to inspect its suggestion, but note "
-            "that suggestion is not validated evidence for v2."
+            "calls the direction optimizer. Every number below comes "
+            "directly from the API response -- nothing on this tab is "
+            "pre-computed or hardcoded in the frontend."
+        )
+
+        PV2_DIRECTION_PRESETS = {
+            "+X": (1.0, 0.0, 0.0), "-X": (-1.0, 0.0, 0.0),
+            "+Y": (0.0, 1.0, 0.0), "-Y": (0.0, -1.0, 0.0),
+            "+Z": (0.0, 0.0, 1.0), "-Z": (0.0, 0.0, -1.0),
+        }
+
+        def _pv2_apply_preset() -> None:
+            preset = st.session_state.get("pv2_direction_preset")
+            if preset in PV2_DIRECTION_PRESETS:
+                dx, dy, dz = PV2_DIRECTION_PRESETS[preset]
+                st.session_state["pv2_dx"] = dx
+                st.session_state["pv2_dy"] = dy
+                st.session_state["pv2_dz"] = dz
+
+        st.radio(
+            "Pull direction",
+            list(PV2_DIRECTION_PRESETS.keys()) + ["Custom / manual override"],
+            index=4,  # "+Z", matching the dx/dy/dz defaults below on first load
+            key="pv2_direction_preset",
+            horizontal=True,
+            on_change=_pv2_apply_preset,
         )
 
         dcol1, dcol2, dcol3 = st.columns(3)
@@ -5113,84 +5161,474 @@ with center:
         with dcol3:
             pv2_dz = st.number_input("dz", value=1.0, step=0.1, format="%.4f", key="pv2_dz")
 
+        st.markdown("#### ⚙️ Manually Authorized Engineering Input")
+        st.caption(
+            "Core-pin interfaces and secondary-action groups are ENGINEER-SUPPLIED "
+            "authorizations, never discovered or inferred by the algorithm. Leave "
+            "both empty to run with no authorization at all (today's default)."
+        )
+        mcol1, mcol2 = st.columns([2, 1])
+        with mcol1:
+            if st.button("Load Part3 +Z reference example (candidate 110)", key="pv2_load_example"):
+                st.session_state["pv2_core_pin_json"] = json.dumps([
+                    {"face_id": 35, "axis_direction": [0.0, 0.0, 1.0],
+                     "reason": "straight coaxial through-bore"},
+                ], indent=2)
+                st.session_state["pv2_delegations_json"] = json.dumps([
+                    {"face_ids": list(range(0, 17)), "movement_direction": [1.0, 0.0, 0.0],
+                     "movement_type": "radial_slide", "source": "manual_engineering",
+                     "note": "original rib stack, radial outward +X"},
+                    {"face_ids": list(range(18, 35)), "movement_direction": [-1.0, 0.0, 0.0],
+                     "movement_type": "radial_slide", "source": "manual_engineering",
+                     "note": "mirror rib stack, radial outward -X"},
+                ], indent=2)
+                st.info(
+                    "Example filled in (Part3, +Z only). Nothing has run yet -- "
+                    "select +Z above, then click \"Run v2 analysis\"."
+                )
+        with mcol2:
+            if st.button("Clear authorization", key="pv2_clear_authorization"):
+                st.session_state["pv2_core_pin_json"] = "[]"
+                st.session_state["pv2_delegations_json"] = "[]"
+
+        pv2_core_pin_json_text = st.session_state.get("pv2_core_pin_json", "[]")
+        pv2_delegations_json_text = st.session_state.get("pv2_delegations_json", "[]")
+
+        def _pv2_count_preview(raw_json: str) -> int | None:
+            try:
+                parsed = json.loads(raw_json or "[]")
+                return len(parsed) if isinstance(parsed, list) else None
+            except json.JSONDecodeError:
+                return None
+
+        n_core_pin_preview = _pv2_count_preview(pv2_core_pin_json_text)
+        n_delegations_preview = _pv2_count_preview(pv2_delegations_json_text)
+        if (n_core_pin_preview or 0) > 0 or (n_delegations_preview or 0) > 0:
+            st.markdown(
+                f"<div class='dfm-status-row'>"
+                f"<span class='dfm-chip dfm-chip-current'>⚙ {n_core_pin_preview or 0} core-pin authorization(s)</span>"
+                f"<span class='dfm-chip dfm-chip-current'>⚙ {n_delegations_preview or 0} secondary-action group(s) authorized</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.caption("No manual authorization currently set — the pipeline will run with its default (empty) inputs.")
+
+        dev_mode = st.checkbox(
+            "Advanced / Developer Mode — edit raw JSON authorization",
+            value=False, key="pv2_dev_mode",
+        )
+        if dev_mode:
+            pv2_core_pin_json_text = st.text_area(
+                "Core-pin face authorizations (JSON array)",
+                value=pv2_core_pin_json_text,
+                key="pv2_core_pin_json", height=100,
+            )
+            pv2_delegations_json_text = st.text_area(
+                "Secondary-action delegations (JSON array)",
+                value=pv2_delegations_json_text,
+                key="pv2_delegations_json", height=140,
+            )
+
         if st.button("Run v2 analysis", key="pv2_run_button"):
             if abs(pv2_dx) + abs(pv2_dy) + abs(pv2_dz) < 1e-9:
                 st.error("Direction vector must be nonzero.")
             else:
-                with st.spinner("Running Track A/B -> graph -> H0-H7 (v2)..."):
-                    try:
-                        pv2_response = requests.get(
-                            f"{BACKEND_URL}/parts/{selected_part}/parting-line-v2",
-                            params={"dx": pv2_dx, "dy": pv2_dy, "dz": pv2_dz},
-                            timeout=120,
-                        )
-                        pv2_response.raise_for_status()
-                        st.session_state["parting_line_v2_result"] = pv2_response.json()
-                    except requests.RequestException as exc:
-                        st.error(f"v2 analysis failed: {exc}")
+                parse_ok = True
+                core_pin_payload = None
+                delegations_payload = None
+                try:
+                    parsed = json.loads(pv2_core_pin_json_text or "[]")
+                    core_pin_payload = json.dumps(parsed) if parsed else None
+                except json.JSONDecodeError as exc:
+                    st.error(f"Core-pin authorization JSON is invalid: {exc}")
+                    parse_ok = False
+                try:
+                    parsed = json.loads(pv2_delegations_json_text or "[]")
+                    delegations_payload = json.dumps(parsed) if parsed else None
+                except json.JSONDecodeError as exc:
+                    st.error(f"Delegation authorization JSON is invalid: {exc}")
+                    parse_ok = False
+
+                if parse_ok:
+                    params: dict[str, Any] = {"dx": pv2_dx, "dy": pv2_dy, "dz": pv2_dz}
+                    if core_pin_payload:
+                        params["core_pin_face_refs"] = core_pin_payload
+                    if delegations_payload:
+                        params["delegations"] = delegations_payload
+                    with st.spinner("Running Track A/B -> graph -> H0-H7 (v2)..."):
+                        try:
+                            pv2_response = requests.get(
+                                f"{BACKEND_URL}/parts/{selected_part}/parting-line-v2",
+                                params=params,
+                                timeout=180,
+                            )
+                            pv2_response.raise_for_status()
+                            st.session_state["parting_line_v2_result"] = pv2_response.json()
+                            st.session_state["parting_line_v2_request"] = {
+                                "part": selected_part, "dx": pv2_dx, "dy": pv2_dy, "dz": pv2_dz,
+                                "core_pin_face_refs": core_pin_payload, "delegations": delegations_payload,
+                            }
+                        except requests.RequestException as exc:
+                            error_detail = None
+                            try:
+                                error_detail = pv2_response.json().get("error")
+                            except Exception:
+                                pass
+                            if isinstance(error_detail, dict):
+                                st.error(
+                                    f"v2 analysis failed ({error_detail.get('code', 'error')}): "
+                                    f"{error_detail.get('message', str(exc))}"
+                                )
+                            else:
+                                st.error(f"v2 analysis failed: {exc}")
 
         pv2_result = st.session_state.get("parting_line_v2_result")
         if pv2_result is None:
-            st.caption("Set a direction above and click \"Run v2 analysis\".")
+            st.caption("Choose a direction above and click \"Run v2 analysis\".")
         else:
             outcome = pv2_result.get("outcome", "unknown")
-            outcome_tone = {
-                "feasible": "good",
-                "no_feasible_candidate": "bad",
-                "referred_to_side_action": "warn",
-            }.get(outcome, "unknown")
-            _render_quality_indicators([
-                ("Outcome", outcome.replace("_", " ").title(), outcome_tone),
-                ("Candidates generated", pv2_result.get("candidate_count", 0), "info"),
-                (
-                    "Direction source",
-                    pv2_result.get("pull_direction", {}).get("source", "unknown"),
-                    "info",
-                ),
-            ])
-
-            track_a = pv2_result.get("track_a", {})
-            track_b = pv2_result.get("track_b", {})
-            reduction = pv2_result.get("reduction", {})
-            _render_summary_grid([
-                ("Track A segments", track_a.get("segment_count", 0), "Sharp-edge silhouette"),
-                ("Track B segments", track_b.get("segment_count", 0), "Face-interior silhouette"),
-                ("Graph nodes (post 2-core)", reduction.get("nodes_after", 0), "Welded points"),
-                ("Graph edges (post 2-core)", reduction.get("edges_after", 0), "Curve segments"),
-                ("Cyclomatic number", reduction.get("cyclomatic_number", 0), "Independent loops available"),
-            ])
-
-            rejection_summary = pv2_result.get("rejection_summary", {})
-            if rejection_summary:
-                st.markdown("**Rejection breakdown (why candidates failed)**")
-                _safe_dataframe(
-                    [{"gate": gate, "candidates_rejected": count} for gate, count in rejection_summary.items()],
-                    use_container_width=True,
-                )
-
             selected = pv2_result.get("selected")
-            if selected is not None:
-                st.success(
-                    f"Selected candidate {selected.get('candidate_id')}: "
-                    f"{selected.get('segment_count')} segments, "
-                    f"discovered by {selected.get('discovered_by')}."
+            feasibility = (selected or {}).get("feasibility") or {}
+            validated_delegations = feasibility.get("validated_delegations") or []
+            core_pin_interfaces = (selected or {}).get("core_pin_interfaces") or []
+            regions = pv2_result.get("regions")
+            candidate_count = pv2_result.get("candidate_count", 0)
+            bounds = pv2_result.get("bounds", {}) or {}
+            rejection_summary = pv2_result.get("rejection_summary", {}) or {}
+            scorecard = pv2_result.get("scorecard", []) or []
+
+            # -----------------------------------------------------------------
+            # THREE-STATE CLASSIFICATION (A/B/C) -- derived only from gate
+            # outcomes already in the response, never from a new heuristic or
+            # hardcoded threshold:
+            #   A = no candidate ever reached H3 (no primary split exists)
+            #   B = a candidate reached H3 (a valid split exists) but every
+            #       one fails H4 without authorization, OR the pipeline
+            #       explicitly referred to H5 side-action analysis
+            #   C = a candidate passed everything (outcome == "feasible")
+            # Note: B does not by itself mean secondary-action authorization
+            # WILL resolve it -- only that a genuine two-region split exists
+            # and the remaining obstacle is orientation-consistency (H4).
+            # Whether that split is a meaningful engineering architecture
+            # (core/cavity balance) is not assessed for rejected candidates.
+            # -----------------------------------------------------------------
+            dir_vec = pv2_result.get("pull_direction", {}).get("direction", [0, 0, 0])
+            dir_label = f"({dir_vec[0]:+.2f}, {dir_vec[1]:+.2f}, {dir_vec[2]:+.2f})"
+            dir_source = pv2_result.get("pull_direction", {}).get("source", "unknown")
+
+            reached_h3_or_later = candidate_count - sum(
+                rejection_summary.get(g, 0) for g in ("H0", "H1", "H2", "H3")
+            )
+            passed_h4_or_later = candidate_count - sum(
+                rejection_summary.get(g, 0) for g in ("H0", "H1", "H2", "H3", "H4")
+            )
+
+            if outcome == "feasible":
+                state_letter, state_tone = "C", "success"
+                state_title = "FEASIBLE WITH VALIDATED SECONDARY-ACTION AUTHORIZATION" if validated_delegations else "FEASIBLE — no secondary action required"
+            elif outcome == "referred_to_side_action" or (candidate_count > 0 and reached_h3_or_later > 0 and passed_h4_or_later == 0):
+                state_letter, state_tone = "B", "warning"
+                state_title = "PRIMARY ARCHITECTURE IDENTIFIED — requires unresolved/unauthorized secondary action"
+            else:
+                state_letter, state_tone = "A", "error"
+                state_title = "NO FEASIBLE PRIMARY ARCHITECTURE"
+
+            state_banner = {"success": st.success, "warning": st.warning, "error": st.error}[state_tone]
+            state_banner(f"**{state_letter} · {state_title}**")
+
+            # ---- Engineering Architecture Summary --------------------------
+            sel_feas = (selected or {}).get("feasibility") or {}
+            sel_meas = sel_feas.get("measurements") or {}
+            score = (selected or {}).get("score") or {}
+
+            h4_val = sel_meas.get("h4_orientation_violation_fraction")
+            h4_delegated_n = sel_meas.get("h4_delegated_face_count", 0.0)
+            h4_display = "n/a" if h4_val is None else (
+                f"{h4_val:.2%} (after {int(h4_delegated_n)} delegated face(s) excluded)"
+                if validated_delegations else f"{h4_val:.2%}"
+            )
+
+            h5_conflict = sel_meas.get("h5_conflicting_face_count")
+            if h5_conflict is None:
+                h5_display = "Not reached" if selected is None else "n/a"
+            elif outcome == "referred_to_side_action":
+                h5_display = f"⚠ Referred ({int(h5_conflict)} conflicting face(s))"
+            else:
+                h5_display = f"✓ Pass ({int(h5_conflict)} conflicts)"
+
+            if validated_delegations:
+                verifications = {d.get("evidence", {}).get("geometric_verification", "unknown") for d in validated_delegations}
+                gv_display = " / ".join(sorted(verifications))
+            else:
+                gv_display = "n/a — no secondary action authorized"
+
+            st.markdown("#### Engineering Architecture Summary")
+            _render_summary_grid([
+                ("Primary pull direction", dir_label, f"source: {dir_source}"),
+                ("PL status", state_letter, state_title[:40] + ("…" if len(state_title) > 40 else "")),
+                ("Selected candidate", selected.get("candidate_id") if selected else "—", f"of {candidate_count} evaluated"),
+                (
+                    "Core / Cavity",
+                    f"{(regions or {}).get('core_face_count', '—')} / {(regions or {}).get('cavity_face_count', '—')} faces"
+                    if regions else "—",
+                    "graph-connectivity based" if regions else "not available (no passing candidate)",
+                ),
+                ("Core pins", len(core_pin_interfaces), "D-043 metadata, not a PL curve"),
+                ("Secondary-action groups", len(validated_delegations), "D-044, structurally validated"),
+                ("Lifters", "—", "not reported by this engine"),
+                ("H4 (orientation)", h4_display, ""),
+                ("H5 (undercut conflict)", h5_display, ""),
+                ("Geometric verification", gv_display, "never elevated beyond \"unverified\""),
+            ])
+
+            if validated_delegations:
+                st.caption(
+                    "⚙️ The core-pin interface and secondary-action groups above are "
+                    "MANUALLY AUTHORIZED ENGINEERING INPUT — supplied by you, not "
+                    "discovered by the algorithm. Structural validation confirms only "
+                    "that the authorized groups are connected, non-parallel to the "
+                    "primary pull, and disjoint from Γ."
                 )
-                score = selected.get("score") or {}
-                if score:
+                st.warning(
+                    "⚠ Secondary action structurally validated, physical release "
+                    "**UNVERIFIED**. This is not a sweep, collision, or interference "
+                    "check. No physical release has been simulated or proven."
+                )
+
+            with st.expander("Candidate-level detail", expanded=False):
+                if selected is not None:
+                    st.markdown(
+                        f"Selected candidate **{selected.get('candidate_id')}** "
+                        f"({selected.get('discovered_by')}, {selected.get('segment_count')} segments) · "
+                        f"coverage {score.get('coverage', 0):.1%}" if score.get("coverage") is not None else ""
+                    )
+                    if core_pin_interfaces:
+                        for interface in core_pin_interfaces:
+                            st.caption(
+                                f"Core-pin interface: face {interface.get('face_id')}, split parameter ≈ "
+                                f"{interface.get('split_param'):.3f}, \"{interface.get('reason')}\"."
+                            )
+                    for i, d in enumerate(validated_delegations):
+                        ev = d.get("evidence", {})
+                        st.markdown(
+                            f"- Group {chr(65+i)}: {len(d.get('face_ids', []))} faces "
+                            f"(`{sorted(d.get('face_ids', []))[:3]}...`), movement "
+                            f"`{tuple(round(c, 2) for c in d.get('movement_direction', []))}`, "
+                            f"type `{d.get('movement_type')}` — "
+                            f"**geometric_verification: \"{ev.get('geometric_verification', 'unknown')}\"**"
+                        )
+                else:
+                    h3_valid_scored = [
+                        c for c in scorecard
+                        if (c.get("feasibility") or {}).get("measurements", {}).get("h3_region_count") == 2.0
+                    ]
+                    if h3_valid_scored:
+                        best = min(
+                            h3_valid_scored,
+                            key=lambda c: (c.get("feasibility") or {}).get("measurements", {}).get(
+                                "h4_orientation_violation_fraction", float("inf")
+                            ),
+                        )
+                        best_meas = (best.get("feasibility") or {}).get("measurements", {})
+                        st.markdown("**Best candidate found (rejected):**")
+                        bcols = st.columns(3)
+                        bcols[0].metric("Candidate", best.get("candidate_id"))
+                        bcols[1].metric("H4 violation", f"{best_meas.get('h4_orientation_violation_fraction', 0):.2%}")
+                        bcols[2].metric("Failed at", (best.get("feasibility") or {}).get("failed_gate", "?"))
+                        st.caption(
+                            "Core/cavity balance: not available for rejected candidates — "
+                            "region classification is only computed for the passing candidate."
+                        )
+                    elif candidate_count == 0:
+                        st.caption(
+                            "Candidate generation itself found zero closed loops for this "
+                            f"direction (strategy={bounds.get('strategy', 'unknown')}, "
+                            f"cyclomatic_number={bounds.get('cyclomatic_number', '?')}). "
+                            "This is not a gate rejection; there was nothing to evaluate."
+                        )
+                    else:
+                        st.caption(
+                            f"No candidate reached H3=2 (a valid two-region separation) at this "
+                            f"direction. All {rejection_summary.get('H3', 0)} H3 rejections were "
+                            "either under-separated (1 region) or over-partitioned (3+ regions)."
+                        )
+
+            # -----------------------------------------------------------------
+            # Candidate ranking / why-selected
+            # -----------------------------------------------------------------
+            with st.expander(f"Candidate breakdown ({len(scorecard)} total)", expanded=False):
+                rows = []
+                for c in scorecard:
+                    feas = c.get("feasibility") or {}
+                    meas = feas.get("measurements") or {}
+                    rows.append({
+                        "candidate_id": c.get("candidate_id"),
+                        "discovered_by": c.get("discovered_by"),
+                        "segments": c.get("segment_count"),
+                        "h3_region_count": meas.get("h3_region_count"),
+                        "h4_violation": meas.get("h4_orientation_violation_fraction"),
+                        "failed_gate": feas.get("failed_gate"),
+                        "passed": feas.get("passed"),
+                        "selected": c.get("candidate_id") == (selected or {}).get("candidate_id"),
+                    })
+                rows.sort(key=lambda r: (
+                    not r["selected"],
+                    r["h4_violation"] if r["h4_violation"] is not None else float("inf"),
+                ))
+                _safe_dataframe(rows[:50], use_container_width=True)
+                if len(rows) > 50:
+                    st.caption(f"Showing 50 of {len(rows)} candidates (sorted: selected first, then best H4).")
+
+            # -----------------------------------------------------------------
+            # 3D visualization with independent overlay toggles
+            # -----------------------------------------------------------------
+            st.markdown("#### 3D Visualization")
+            tcol1, tcol2, tcol3, tcol4, tcol5, tcol6 = st.columns(6)
+            show_pl = tcol1.checkbox("✓ Primary PL", value=True, key="pv2_show_pl")
+            show_core_cavity = tcol2.checkbox("Core/Cavity", value=selected is not None, key="pv2_show_region")
+            show_undercuts = tcol3.checkbox("Undercuts", value=False, key="pv2_show_undercuts")
+            show_side_actions = tcol4.checkbox("Side Actions", value=bool(validated_delegations), key="pv2_show_delegations")
+            show_core_pin = tcol5.checkbox("Core Pin", value=bool(core_pin_interfaces), key="pv2_show_core_pin")
+            show_unclassified = tcol6.checkbox("Neutral (no overlay)", value=False, key="pv2_show_neutral")
+            st.caption(
+                "Toggles only change what's highlighted in the viewport below — the "
+                "underlying result (candidate, gates, authorization) is unaffected."
+            )
+
+            # The real Γ, rendered bold and unmistakable -- points come only
+            # from the API's own selected-candidate geometry; width/colour
+            # are display-only overrides, never a change to what curve is
+            # drawn or where it comes from.
+            # Near-black core + light halo (set in _show_mesh_plotly) reads
+            # clearly against the neutral mesh AND every overlay hue below
+            # (blue/orange/red/magenta/gold/cyan/purple/green), unlike a
+            # single bright colour that could visually merge with one of them.
+            PL_LINE_COLOR = "#111827"
+            PL_LINE_WIDTH = 14
+            line_paths_v2 = []
+            if show_pl and pv2_result.get("parting_line_path"):
+                raw_path = pv2_result["parting_line_path"]
+                line_paths_v2 = [{
+                    **raw_path,
+                    "hex": PL_LINE_COLOR,
+                    "width": PL_LINE_WIDTH,
+                }]
+
+            if "display_mesh" in pv2_result:
+                _mesh_payload_v2 = _hydrate_mesh(pv2_result.get("display_mesh"))
+                mesh_face_ids = _mesh_payload_v2.get("face_ids", [])
+
+                cavity_ids = {
+                    f.get("face_id") for f in (regions or {}).get("faces", [])
+                    if f.get("label") == "cavity"
+                } if regions else set()
+                core_ids = {
+                    f.get("face_id") for f in (regions or {}).get("faces", [])
+                    if f.get("label") == "core"
+                } if regions else set()
+                undercut_ids = set((pv2_result.get("undercuts") or {}).get("face_ids", {}).get("undercut", []))
+                core_pin_ids = {i.get("face_id") for i in core_pin_interfaces}
+                delegation_groups = [set(d.get("face_ids", [])) for d in validated_delegations]
+
+                NEUTRAL = [0.72, 0.72, 0.75]
+                CAVITY_RGB = [0.35, 0.65, 0.95]
+                CORE_RGB = [0.95, 0.55, 0.20]
+                UNDERCUT_RGB = [0.90, 0.15, 0.15]
+                CORE_PIN_RGB = [0.85, 0.15, 0.85]
+                GROUP_PALETTE = [[0.95, 0.75, 0.10], [0.10, 0.75, 0.95], [0.75, 0.10, 0.95], [0.10, 0.95, 0.45]]
+
+                if show_unclassified or not any([show_core_cavity, show_undercuts, show_side_actions, show_core_pin]):
+                    composite_rgb = None
+                else:
+                    composite_rgb = []
+                    for fid in mesh_face_ids:
+                        color = NEUTRAL
+                        if show_core_cavity:
+                            if fid in cavity_ids:
+                                color = CAVITY_RGB
+                            elif fid in core_ids:
+                                color = CORE_RGB
+                        if show_side_actions:
+                            for gi, group in enumerate(delegation_groups):
+                                if fid in group:
+                                    color = GROUP_PALETTE[gi % len(GROUP_PALETTE)]
+                                    break
+                        if show_undercuts and fid in undercut_ids:
+                            color = UNDERCUT_RGB
+                        if show_core_pin and fid in core_pin_ids:
+                            color = CORE_PIN_RGB
+                        composite_rgb.append(color)
+
+                if composite_rgb is not None:
+                    _mesh_payload_v2 = {**_mesh_payload_v2, "pv2_composite_rgb": composite_rgb}
+                    color_key_v2 = "pv2_composite_rgb"
+                else:
+                    color_key_v2 = "__none__"
+
+                shown_v2 = _show_mesh(
+                    _mesh_payload_v2,
+                    color_key=color_key_v2,
+                    line_paths=line_paths_v2,
+                    viewer_key=(
+                        f"parting-line-v2-{selected_part}-{outcome}-{len(line_paths_v2)}-"
+                        f"{show_core_cavity}-{show_undercuts}-{show_side_actions}-{show_core_pin}"
+                    ),
+                )
+                if not shown_v2:
                     _render_summary_grid([
-                        ("Coverage", f"{score.get('coverage', 0):.1%}" if score.get("coverage") is not None else "n/a", "Of projected part extent"),
+                        ("Mesh Points", _mesh_payload_v2.get("point_count", 0), "Fallback display"),
+                        ("Mesh Triangles", _mesh_payload_v2.get("triangle_count", 0), "Fallback display"),
                     ])
-                regions = pv2_result.get("regions")
+
+                legend_entries: list[tuple[str, str]] = []
+                if show_pl and line_paths_v2:
+                    legend_entries.append(("Primary parting line (Γ)", PL_LINE_COLOR))
+                if show_core_cavity:
+                    legend_entries.append(("Cavity", _rgb_to_hex(CAVITY_RGB)))
+                    legend_entries.append(("Core", _rgb_to_hex(CORE_RGB)))
+                if show_undercuts:
+                    legend_entries.append(("Undercut face", _rgb_to_hex(UNDERCUT_RGB)))
+                if show_side_actions:
+                    for gi, _ in enumerate(delegation_groups):
+                        legend_entries.append((f"Side-action Group {chr(65+gi)}", _rgb_to_hex(GROUP_PALETTE[gi % len(GROUP_PALETTE)])))
+                if show_core_pin and core_pin_ids:
+                    legend_entries.append(("Core-pin face", _rgb_to_hex(CORE_PIN_RGB)))
+                if legend_entries:
+                    _render_color_legend(legend_entries)
+                else:
+                    st.caption("No overlay layers active — toggle one above to see it highlighted.")
+
+            # -----------------------------------------------------------------
+            # Technical details -- raw gate measurements + full JSON
+            # -----------------------------------------------------------------
+            with st.expander("Technical details (raw H0-H7 measurements)", expanded=False):
+                last_request = st.session_state.get("parting_line_v2_request")
+                if last_request:
+                    st.caption(f"Exact request that produced this result: `{last_request}`")
+                if selected is not None:
+                    sel_meas = ((selected.get("feasibility") or {}).get("measurements")) or {}
+                    _safe_dataframe(
+                        [{"measurement": k, "value": v} for k, v in sorted(sel_meas.items())],
+                        use_container_width=True,
+                    )
+                track_a = pv2_result.get("track_a", {})
+                track_b = pv2_result.get("track_b", {})
+                reduction = pv2_result.get("reduction", {})
+                _render_summary_grid([
+                    ("Track A segments", track_a.get("segment_count", 0), "Sharp-edge silhouette"),
+                    ("Track B segments", track_b.get("segment_count", 0), "Face-interior silhouette"),
+                    ("Graph nodes (post 2-core)", reduction.get("nodes_after", 0), "Welded points"),
+                    ("Graph edges (post 2-core)", reduction.get("edges_after", 0), "Curve segments"),
+                    ("Cyclomatic number", reduction.get("cyclomatic_number", 0), "Independent loops available"),
+                ])
+                if rejection_summary:
+                    st.markdown("**Rejection breakdown (why candidates failed)**")
+                    _safe_dataframe(
+                        [{"gate": gate, "candidates_rejected": count} for gate, count in rejection_summary.items()],
+                        use_container_width=True,
+                    )
                 if regions:
-                    _render_summary_grid([
-                        ("Cavity faces", regions.get("cavity_face_count", 0), "Graph-connectivity based"),
-                        ("Core faces", regions.get("core_face_count", 0), "Graph-connectivity based"),
-                        (
-                            "Ambiguous/split faces",
-                            len(regions.get("inconsistent_face_ids", []) or []),
-                            "Reported, not hidden",
-                        ),
-                    ])
                     _render_summary_grid([
                         ("Cavity area", f"{regions.get('cavity_area_mm2', 0):.1f} mm²", ""),
                         ("Core area", f"{regions.get('core_area_mm2', 0):.1f} mm²", ""),
@@ -5200,31 +5638,8 @@ with center:
                             "Genuinely split/inconsistent faces",
                         ),
                     ])
-            else:
-                st.warning(
-                    "No feasible candidate at this direction. This may mean the direction "
-                    "is not moldable, or that a genuine global loop exists but requires "
-                    "further investigation -- see docs/DECISIONS_AND_ALGORITHMS.md for the "
-                    "ongoing Part3 feasibility investigation. The gates were not loosened to "
-                    "force a result."
-                )
 
-            line_paths_v2 = [pv2_result["parting_line_path"]] if pv2_result.get("parting_line_path") else []
-            if "display_mesh" in pv2_result:
-                _mesh_payload_v2 = _hydrate_mesh(pv2_result.get("display_mesh"))
-                shown_v2 = _show_mesh(
-                    _mesh_payload_v2,
-                    color_key="__none__",
-                    line_paths=line_paths_v2,
-                    viewer_key=f"parting-line-v2-{selected_part}-{outcome}-{len(line_paths_v2)}",
-                )
-                if not shown_v2:
-                    _render_summary_grid([
-                        ("Mesh Points", _mesh_payload_v2.get("point_count", 0), "Fallback display"),
-                        ("Mesh Triangles", _mesh_payload_v2.get("triangle_count", 0), "Fallback display"),
-                    ])
-
-            with st.expander("Parting Line v2 JSON"):
+            with st.expander("Parting Line v2 JSON (full raw response)"):
                 st.json(pv2_result)
 
     with core_cavity_tab:

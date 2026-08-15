@@ -27,6 +27,808 @@
 
 ---
 
+# Phase — Secondary-action delegation (plan D-044): H4 asks whether the geometry expected to move with the primary mould direction is orientation-consistent, not whether the whole part has no undercuts — an explicitly authorized, independently validated face set that is genuinely handled by a separate secondary mechanism can be excluded from that specific test, without ever claiming the mechanism has been proven to physically release it
+
+## D-044 — `DelegatedSecondaryAction`/`validate_delegation`: H4's per-region orientation-area sums exclude only face ids from delegation records that independently pass structural validation for THAT candidate and THAT pull direction; validation proves self-consistency, never physical release ⭐⭐⭐
+
+**[2026-08-15] Implemented — `contracts.py`, `types.py`, `regions.py`,
+`gates.py`, `engine.py`.**
+
+**Decision.** `evaluate_gates` gains an additive `delegations: tuple[
+DelegatedSecondaryAction, ...] = ()` parameter. Each record is
+re-validated, independently, per candidate and per `pull_direction`, by
+`regions.validate_delegation`; only face ids from records that pass are
+subtracted from BOTH the numerator (violating area) and denominator (total
+area) of H4's per-region sums — region-aware, so a face delegated for one
+candidate's cavity is never subtracted from an unrelated region or
+candidate. `DelegationEligibility.eligible=True` means exactly one thing:
+*"this explicitly authorized claim is structurally self-consistent for
+this candidate"* — never that the secondary mechanism has been
+geometrically proven to release the delegated faces.
+`DelegationEvidence.geometric_verification` stays `"unverified"` — the
+only legal value — regardless of validation outcome, and nothing in this
+implementation reads it as anything stronger.
+
+**Mathematics.** For each region `A ∈ {cavity, core}`, with `D` the union
+of face ids from validated delegations: `area(A) = Σ_{f∈A\D} area(f)`,
+`violation_area(A) = Σ_{f∈A\D, sign·g(f)<-ε} area(f)`,
+`h4 = max_A violation_area(A)/area(A)`. Both sums are reduced together —
+masking only the numerator (a naive "give credit" approach) would corrupt
+the denominator's honest accounting of what area is actually being
+claimed as primary-pull surface.
+
+**Why.**
+1. *Two-part gap, kept structurally separate throughout this design.* Gap
+   A (detection): re-confirmed both `detect_undercuts` paths — fast-proxy
+   returns `{35,37,38}` for Part3 +Z, Boolean-refined returns nothing at
+   all — neither flags the rib lattice's radial trapping, a multi-face
+   topological pattern no per-face draft heuristic can see. Gap B
+   (semantics): even with a correctly-identified feature, H4 had no
+   mechanism to exclude it. This milestone closes Gap B only; Gap A
+   remains open, and `DelegatedSecondaryAction` is deliberately an
+   AUTHORIZATION contract (mirroring `CorePinFaceRef`'s precedent), not a
+   detector.
+2. *`SideActionReferral` deliberately not reused.* It is H5's OUTPUT for
+   one already-rejected candidate (`conflicting_segment_ids` only makes
+   sense relative to a specific `Γ`) — the wrong lifecycle stage for a
+   pre-candidate, part-level authorization. A new type was required.
+3. *Validation is necessary, not sufficient, and the stress test proved
+   it concretely, not just in principle.* Attempting to author ONE
+   delegation record spanning Part3's ENTIRE rib lattice (`faces 0-16 ∪
+   18-34`) was REJECTED by the connectedness check during implementation
+   — measured directly, not hypothesized: the two mirror stacks are not
+   adjacent to each other. This is the real-world confirmation of the
+   design-phase question "can a connected face set requirement be
+   violated by an overreaching claim" — split into two per-stack records
+   (each independently confirmed connected), both pass.
+4. *No confidence/readiness field.* Plan §12.7's ban, already enforced
+   elsewhere in `parting_line_v2`, extends here:
+   `DelegationEligibility` is boolean + reason (mirroring
+   `CorePinEligibility`'s shape), and `geometric_verification` is a
+   categorical admission of what has/has not been checked, never a score.
+5. *`movement_type` is advisory-only, read by nothing.* Consistent with
+   `.claude/rules/honesty-and-scope.md`'s existing "never claim the
+   tooling mechanism" rule — H4's decision logic reads only the validated
+   face-id set.
+6. *No face-count/area threshold added*, per explicit instruction — a
+   single small legitimate side-action face must remain representable;
+   no concrete degenerate case has yet demonstrated the existing
+   structural checks (connectedness, Γ-disjointness, non-parallel
+   movement, provenance) are insufficient on their own.
+7. *End-to-end confirmation on the real, unforced production pipeline.*
+   `analyse_parting_line(Part3, +Z, core_pin_face_refs=(face 35,),
+   delegations=(stack1, stack2))`: candidate 110 (`split_param=4.0`,
+   already established as a real Round-1-discovered boundary) drops from
+   `h4=7.56%` (0 delegated faces) to `h4=0.499%` (34 delegated faces) and
+   **passes** — `outcome="feasible"`, this candidate selected. The
+   residual 0.499% is real, un-delegated small transition-cluster faces,
+   correctly still counted (not masked). The other two real core-pin
+   candidates (`z=1.0`, `z=31.43`) receive the IDENTICAL two-record
+   delegation and REMAIN REJECTED at H4 (12.6% and 23.8% respectively) —
+   confirming nothing was tuned or additionally masked to force a result;
+   the same authorized facts simply resolve one candidate's actual
+   violation and not the others'.
+8. *`CorePinInterface`/`tooling_split_face_ids` (D-043) and
+   `DelegatedSecondaryAction` (D-044) coexist on the same candidate
+   without interaction* — verified directly: the bore's core-pin face
+   never appears in the validated delegated-face set, and the two
+   mechanisms' face sets never overlap. They solve different problems
+   (primary PL topology for a continuous coaxial face, vs. secondary-
+   action geometry intentionally excluded from the primary rigid-body
+   test) and remain reported through separate channels.
+
+**Alternatives rejected.**
+- *Reusing `undercut_face_ids` as delegation authorization* — an
+  undercut/low-draft face is not automatically a side-action face (C4's
+  formal statement and this project's own detector target different
+  geometric properties; conflating them was explicitly rejected during
+  design).
+- *A numeric confidence/readiness score* — banned by plan §12.7; would
+  also invite exactly the "passing validation proves feasibility"
+  misreading this design exists to prevent.
+- *Any geometric release/sweep/interference verification* — not
+  implemented, not designed; D-042 already shows the one candidate
+  mechanism (Boolean sweep) is unreliable for this class of geometry.
+  `geometric_verification="unverified"` represents this limitation
+  explicitly rather than manufacturing a stronger claim.
+- *Face-count/area threshold* — deferred until a concrete degenerate case
+  demonstrates the existing checks are insufficient; not before.
+
+**Where.**
+`backend/geometry/parting_line_v2/contracts.py` (`DelegationEvidence`,
+`DelegatedSecondaryAction`, `DelegationEligibility`,
+`GEOMETRIC_VERIFICATION_UNVERIFIED`, `DELEGATION_SOURCE_MANUAL_ENGINEERING`) ·
+`backend/geometry/parting_line_v2/types.py`
+(`FeasibilityReport.validated_delegations`) ·
+`backend/geometry/parting_line_v2/regions.py`
+(`_is_connected_subgraph`, `validate_delegation`) ·
+`backend/geometry/parting_line_v2/gates.py` (H4's delegation-aware,
+region-scoped area/violation-area computation; `validated_delegations`
+threaded through every H4-and-later `FeasibilityReport`) ·
+`backend/geometry/parting_line_v2/engine.py` (`delegations` parameter,
+threaded through all three `evaluate_gates` call sites) ·
+`config.yaml`/`backend/config.py` (`delegation_max_parallel_cos`) ·
+`tests/test_parting_line_v2_delegation.py`.
+
+---
+
+# Phase — Core-pin / tooling-split mechanism (plan D-043): a coaxial through-bore has no B-Rep boundary or Track-B crossing anywhere along its length, so no candidate loop can ever be closed by cutting through it — closed instead via non-geometric H3 partition metadata, never a second curve on the real parting line
+
+## D-043 — `tooling_split_face_ids`: a face exactly coaxial with the pull direction (Part3's bore, face 35, `g ≡ 0` across its entire length) is represented to H3 as a logical, axial-parameter-based split, kept structurally separate from `Γ` itself ⭐⭐⭐
+
+**[2026-08-15] Implemented — `regions.py`, `contracts.py`, `types.py`,
+`gates.py`, `engine.py`.**
+
+**Decision.** A coaxial face bridging an otherwise-real candidate boundary
+is split for H3 purposes by comparing each neighbouring edge's own axial
+position against a canonically-derived `split_param`, via a new
+`tooling_split_face_ids: dict[int, float]` argument to `separate_surface` —
+**not** by adding a curve to `PartingLoopCandidate.segments`/`.loops`. The
+real parting line stays exactly the candidate's genuine B-Rep boundary.
+
+**Mathematics.** `separate_surface`'s existing split mechanism assigns a
+neighbouring edge to one of a split face's two nodes by `sign(g)` at that
+edge — exact when the cutting curve IS the `g=0` level set. A face with
+`g≡0` everywhere (axis parallel to the pull direction) has no such level
+set: `_g_at_edge_on_face` returns ≈0.0 at BOTH of the face's real ends,
+which the existing `side >= 0.0` convention collapses onto the same node —
+verified directly this session (naively adding face 35 to `split_face_ids`
+merges its two ends instead of separating them). The new rule instead
+computes `pos = dot(edge_midpoint, pull_direction) - split_param` and uses
+the SAME `side >= 0.0` convention on that value — exact whenever the face
+is genuinely coaxial (guaranteed by eligibility, below), because the two
+ends then differ in axial position by construction.
+
+**Why.**
+1. *Representation gap, independently confirmed.* Face 35 (Part3's central
+   bore) has exactly two B-Rep edges, both at its literal ends (z=1, z=39);
+   nothing exists between them because Track B's silhouette detection is a
+   `g`-crossing mechanism and `g≡0` the entire length. Any Z-primary H3-valid
+   split is therefore forced to place its boundary at one of those two ends
+   under the OLD representation — measured directly on the real candidate
+   graph, not assumed.
+2. *`ToolingBacking` (a fourth `CurveSegment` backing kind) was designed,
+   then rejected after tracing the full lifecycle of `.segments`/`.loops`.*
+   `ranking.score_candidate` computes coverage (T1), `excess_turning` (T5),
+   and `length_3d_mm` (T6) directly from `.loops` with no regard to backing
+   kind — a synthetic bore curve would inflate those measures with length
+   that is not a real manufacturing seam. Plan §9.5 documents `.segments`/
+   `.loops` as read by "the surface provider, the API payload, coverage and
+   span measurement, the exporter, the agent" as the real, to-be-manufactured
+   parting line; a core-pin's assigned split point fails that description
+   (no flash risk, no witness mark). `H5`'s `loop_face_ids` is derived
+   purely from `EdgeBacking` segments (`gates.py:279`, `364-367`) either
+   way, so — correcting an earlier, wrong claim in this design's own
+   derivation — adding `ToolingBacking` would NOT have caused a false H5
+   undercut-touching referral; the decisive objection is the ranking/§9.5
+   one, not H5.
+3. *Bridge localization is topology-only, never proof of validity.*
+   `find_bridge_faces` (iterative Tarjan articulation-point analysis on the
+   plain edge-cut face-adjacency graph, reusing the exact edge-cutting rule
+   `separate_surface` itself applies) answers only "does removing this face
+   split the graph into two clean, one-neighbour-each-side components."
+   Measured on the real z≈22 Part3 boundary: it returns 11 candidate faces
+   (`{17,35,36,37,39,40,317,318,319,320,321}`), not just 35 — the base-flange
+   and top-cap "stems" are simple unbranched paths, so every node on either
+   one is individually a valid articulation-point bridge in the pure graph
+   sense. `check_core_pin_eligibility` (five conditions: cylindrical, axis
+   parallel/antiparallel within `cfg.core_pin_axis_angle_tol`, uniformly
+   `|g| ≤ cfg.core_pin_uniform_g_max` over the WHOLE face — deliberately
+   distinct config keys from H4's `orientation_epsilon`/
+   `orientation_violation_max` — exactly two distinct neighbours, and
+   `split_param` strictly inside the face's own longitudinal extent) is what
+   actually narrows this to face 35 alone: every other candidate is a Plane,
+   Cone, or Torus (fails condition a), and face 37 — the one other Cylinder
+   in the set — fails only because `split_param=22` lies outside its own
+   `z∈[1,4]` extent, not because it isn't a graph bridge.
+4. *Naively bypassing eligibility can silently fabricate a passing H3.*
+   Measured directly: calling `separate_surface` with
+   `tooling_split_face_ids={37: 22.0}` (an ineligible face, both of whose
+   real neighbours evaluate on the SAME side of 22) still returns
+   `component_count == 2` — not because the split is meaningful, but because
+   face 37's now-empty "other" node becomes its own trivial, isolated
+   one-node component. This is why eligibility must run and be checked
+   BEFORE `tooling_split_face_ids` is ever constructed for a real candidate,
+   never treated as an optional/defensive check — `engine.py`'s Round 1.5
+   only constructs the dict entry after `eligibility.eligible` is True.
+5. *`split_param` is computed exactly once per candidate.* `
+   resolve_primary_split_param` is the sole source of "where does this
+   candidate's real boundary sit," passed by value into eligibility, the
+   candidate's `tooling_split_face_ids`, `CorePinInterface`, and
+   `separate_surface` — guarding against the class of defect already chased
+   once in this project (two independently-sampled "same" geometric values
+   silently disagreeing at the sub-millimetre level).
+6. *End-to-end confirmation on the real production pipeline* (not just the
+   isolated mechanism): `engine.analyse_parting_line(Part3, +Z,
+   core_pin_face_refs=(CorePinFaceRef(35, ...),))` closes 3 independently
+   Round-1-discovered candidates (real boundaries at z=1.0, z=4.0, z≈31.43)
+   via the tooling mechanism, all subsequently and separately rejected at
+   H4 — the pre-existing, deliberately untouched orientation-consistency
+   gap this milestone does not address. `core_pin_face_refs=()` (the
+   default) leaves every candidate's `tooling_split_face_ids`/
+   `core_pin_interfaces` empty and Round 1.5 inert.
+
+**Alternatives rejected.**
+- *`ToolingBacking` as a fourth `SegmentBacking`/`CurveSegment` kind* — see
+  point 2. Rejected after tracing the full consumer lifecycle
+  (`ranking.py`, plan §9.5, the not-yet-built `PartingSurfaceProvider`),
+  not merely asserted.
+- *Iterating over all `CorePinFaceRef`-authorized faces and re-running H3 to
+  see which one "makes it pass"* — rejected as opportunistic/search-based,
+  not causal. `find_bridge_faces` must run first and its output intersected
+  with authorization; a face never used merely because it is authorized,
+  and never used merely because it is topologically a bridge — both plus
+  eligibility, together, every time.
+- *Reusing H4's `orientation_epsilon`/`orientation_violation_max` for the
+  uniform-`g` eligibility check* — rejected: those are an AREA-FRACTION
+  slack for a different purpose (whole-region orientation consistency); a
+  dedicated, tight, per-point `core_pin_uniform_g_max` (default `1e-6`)
+  keeps an edit to either from silently changing core-pin eligibility.
+
+**Where.**
+`backend/geometry/parting_line_v2/types.py` (`CorePinInterface`;
+`PartingLoopCandidate.tooling_split_face_ids`/`.core_pin_interfaces`) ·
+`backend/geometry/parting_line_v2/contracts.py` (`CorePinFaceRef`,
+`CorePinEligibility`) ·
+`backend/geometry/parting_line_v2/regions.py`
+(`_axial_position_at_edge`, `separate_surface`'s tooling branch,
+`_plain_face_adjacency`, `_components`, `_articulation_points`,
+`find_bridge_faces`, `resolve_primary_split_param`,
+`check_core_pin_eligibility`) ·
+`backend/geometry/parting_line_v2/gates.py` (single-line
+`tooling_split_face_ids` threading into the existing `separate_surface`
+call) ·
+`backend/geometry/parting_line_v2/engine.py` (Round 1.5) ·
+`config.yaml`/`backend/config.py` (`core_pin_uniform_g_max`,
+`core_pin_axis_angle_tol`) ·
+`tests/test_parting_line_v2_core_pin.py`.
+
+---
+
+# Phase P3.19 — Workstream B side-core forensics on faces 325/366: BFS topology map built, then the Boolean-confirmed asymmetry between the two mirror faces traced to a floating-point sign-branch bug plus a deeper silhouette-sweep degeneracy in `undercut_detector.py`, NOT a real geometric difference
+
+## D-042 — `detect_undercuts(boolean_refine=True)`'s per-face access-direction branch (`_face_access_direction`, strict `signed < 0.0`) mis-routes near-zero-g "silhouette" faces on floating-point sign noise (measured: `-9.9e-32` on one mirror twin, exact `0.0` on the other), and independently, `_swept_face_interference_volume` returns a degenerate whole-part-sized volume for this face type regardless of which direction it is swept — invalidating the "face 366 is critical / face 325 is clear" asymmetry that had been treated as the strongest side-core evidence ⭐⭐⭐⭐
+
+**[P3.19, Workstream B] 2026-08-14.** No production code changed — this is a
+finding, not yet a fix. All calls below invoke existing
+`backend/geometry/undercut_detector.py` functions directly with explicit
+arguments (read-only diagnosis).
+
+**Motivation.** Workstream B asked for a geometrically-verified (not
+assumed) characterization of faces 325/366 — Part3's only `+X`-undercut
+faces (D-040-era B1/B2 survey, `boolean_refine=False`) and the strongest
+evidence-backed side-core candidate at that point. Before building any
+kinematic (main-cavity/main-core/side-core) decomposition on top of that
+evidence, `detect_undercuts(..., boolean_refine=True)` was re-run to get
+the full Boolean-confirmed picture Workstream B's steps 1-4 require.
+
+**First finding — the asymmetry is real in the *report*, but the two faces
+are geometrically indistinguishable.** `detect_undercuts` at `+X` with
+`boolean_refine=True` returns `undercut_face_ids=[366]` only — face 325 is
+absent, and 366 is `severity=critical`, `boolean_depth_proxy_mm=9.52`,
+`depth_proxy_mm=53.97` (the latter LARGER than the part's own 40mm height —
+a red flag on its own). Both `boolean_checked_face_ids` include 325 and
+366; 325's own `_swept_face_interference_volume` returns exactly `0.0`
+(clean), 366's returns `15062.3296mm3`.
+
+**Second finding — that 15062.33mm3 is not a local pocket, it is the
+entire part.** `GProp_GProps.VolumeProperties(part3.occ_shape)` gives
+`15062.330994510356mm3`; the part's own bbox is
+`(38.98, 38.98, 40.01)mm` centered at `(0,0,20)` — both match feature 366's
+reported `boolean_region_geometry` to 5+ significant figures (vertex/edge
+counts differ by 12/6, consistent with a Boolean-seam artifact on top of
+an otherwise whole-part result, not literal shape identity). A 4.111mm2
+planar shelf cannot legitimately have a 15062mm3 "local interference
+volume" equal to 100% of the part's own material — this number is
+degenerate, not evidence of a real trapped pocket.
+
+**Root cause, part 1 (sign-branch bug).** `_face_access_direction` chooses
+sweep direction by `signed = face.signed_dot(pull_direction); if signed <
+0.0: return -pull_direction`. Both faces' normals are, geometrically,
+EXACTLY `(0, 0, 1)` (perpendicular to `+X`, the textbook "silhouette"
+case) — but `face.normal` for 325 evaluates to the literal tuple
+`(0.0, 0.0, 1.0)` (`signed_dot = 0.0` exactly) while 366 evaluates to
+`(-9.914e-32, -8.319e-32, 1.0)` (`signed_dot = -9.914e-32`) — floating-point
+noise at the 1e-32 scale from whatever upstream normal computation
+produced this specific face's vector. The **strict** `< 0.0` branch
+treats these as opposite cases: 325 sweeps `+X` (correctly finds nothing,
+`volume=0`), 366 sweeps `-X` (the "wrong"/backward direction for a face
+that should be treated identically to its mirror twin).
+
+**Root cause, part 2 (silhouette-sweep degeneracy, independent of the sign
+bug).** Forcing BOTH faces through the SAME explicit access direction
+(bypassing `_face_access_direction` entirely, calling
+`_swept_face_interference_volume(part, face, direction)` directly) shows
+the degeneracy is not explained by the sign bug alone: swept `+X`, 325=`0`
+(clean) but 366=`15062.33` (still degenerate); swept `-X`, 325=`15061.48`
+(ALSO ~whole-part-sized!) and 366=`15062.33` (same value, direction no
+longer even changes the answer for 366). Two different faces produce the
+same ~whole-part-volume reading when swept in their respective "wrong"
+direction — strong corroborating evidence this is a general degeneracy of
+sweeping a near-zero-g ("silhouette": face normal ~perpendicular to the
+sweep direction) face's offset prism and Boolean-intersecting it with the
+part: the prism's own side walls are then nearly tangent/coincident with
+surrounding geometry, exactly the configuration OCC's Boolean kernel is
+known to handle unreliably, and it does so here by returning something
+close to the whole solid instead of failing loudly.
+
+**Consequence — the "strongest side-core candidate" claim is retracted as
+stated.** The 325/326 asymmetry (325 clear, 366 critical) that anchored
+the side-core hypothesis through D-040/D-041 was never a proven geometric
+fact — it is an artifact of applying an unreliable Boolean-refinement path
+to exactly the face category (near-zero-g, silhouette) that path cannot
+currently handle. The earlier `boolean_refine=False` survey (D-040-era
+B1/B2) is UNAFFECTED (it never invokes this code path) and its finding
+stands: both 325 and 366 are symmetric, moderate-severity, silhouette-type
+proxy candidates — matching their genuinely mirror-symmetric B-Rep geometry
+(identical 4.111mm2 area; centroids `(8.481,-10.167,22.0)` /
+`(-8.481,10.167,22.0)`; both cap a near-identical stack of Cylinder /
+Plane / Torus / Sphere-fillet ribs running from the part's base plane
+(face 17, area 413mm2, `z=4.5`) up to `z=22.0`, where the rib meets the
+underside of a full circumferential outer cylindrical band, face 38
+(radius 12.5mm, centered on the part's own main Z axis, `z=22.0` to
+`31.43`, confirmed via `BRepAdaptor_Surface.Cylinder()` — NOT an off-axis
+pillar as an earlier informal read of its single centroid/normal
+suggested; a full-circle face's own centroid/normal pair is not a
+meaningful "direction" and should not have been read that way).
+
+**Decision.** Do not build a kinematic main-cavity/main-core/side-core
+decomposition on top of the Boolean-refined evidence for this feature type
+— it is not currently trustworthy. Do not modify
+`undercut_detector.py` in this turn (out of the scope explicitly given —
+Workstream B asked for geometric characterization, not an algorithm fix,
+and this defect needs its own regression fixture before any change is
+trusted, per this project's standing discipline). Treat 325/366 as a
+genuinely symmetric, moderate-confidence pair pending either (a) a fixed
+Boolean layer, or (b) direct geometric/manual reasoning about the rib
+structure's release kinematics that does not depend on the broken sweep
+path.
+
+**Alternatives rejected.** Silently using the Boolean-confirmed numbers
+(depth, release direction, "critical" severity) to build the requested
+kinematic decomposition — rejected: `release_direction=(-0.0, 0.859,
+0.512)` for feature 0 is computed by
+`release-direction-method: boolean-region-center-transverse`, i.e. directly
+FROM the degenerate whole-part `boolean_region_geometry`'s center of mass
+— a number derived from corrupted input is not usable evidence, and
+reporting it as a finding would violate this project's explicit honesty
+rules.
+
+**Where.** Reproduction commands only (no new file yet — this is a
+diagnosis, not an instrumented script): `backend.geometry.undercut_detector
+._face_access_direction`, `_swept_face_interference_volume`,
+`detect_undercuts`; `backend.geometry.step_loader.load_step_cached`;
+BFS topology map obtained via `part.face_adjacency` (3 hops from face 366,
+80 faces).
+
+---
+
+# Phase P3.18 — Workstream A1/B: same-piece self-closure welding defect proven on a controlled fixture, proven regression-safe, but proven NON-OPERATIVE for Part3's real odd-degree vertices; Formulation A/B side-core diagnostic re-interpreted accordingly
+
+## D-041 — Two-stage welding correction (Stage 1 cross-piece unchanged, Stage 2 same-piece self-closure gated on chord/path ratio) reproduces and fixes the hypothesized defect on a controlled synthetic fixture and is byte-identical-safe on Part1, but produces ZERO change across all 25 Part3 (direction × objective) cells because a structurally distinct bypass mechanism — the same cross-piece tolerance transitively re-merging the same two vertices through a nearby legitimate near-degenerate piece — reproduces the identical erroneous merge ⭐⭐⭐
+
+**[P3.18, Workstream A1] 2026-08-14.** No production code changed. New:
+`backend/validation/parting_line_self_weld_diagnostic.py`.
+
+**Motivation.** D-040's forensic trace of cluster 571 (`+Y`, `C_balanced_low`)
+found piece 285 (a genuine, Track-B-confirmed OPEN curve on face 371, UV
+span `[0,1]`, path length 1.09mm) marked `is_self_loop=True` by
+`_weld_piece_endpoints` purely because its own endpoint chord (0.9312mm)
+falls inside the general stitch tolerance (1.36mm) — the same flat
+pairwise-distance test used for legitimate cross-piece stitching (D-022)
+is applied, unmodified, to a single piece's own two ends. This is a
+specific, generalizable hypothesis (not specific to piece 285): **open
+curve + spatially-close endpoints is being conflated with closed/
+near-degenerate curve**, and needed to be proven or falsified on a
+controlled fixture before any correction could be trusted on Part3.
+
+**Mathematics — the two-stage correction.** Stage 1 (cross-piece, UNCHANGED
+from production): any two DIFFERENT pieces' endpoints within `tolerance`
+are unioned exactly as `_weld_piece_endpoints` already does. Stage 2 (NEW):
+a piece's own start/end are unioned only if BOTH (a) `chord <= tolerance`
+(the existing spatial-closeness gate) AND (b)
+`chord / path_length <= self_close_ratio_threshold`, where `path_length` is
+the real polyline length through the piece's own already-sampled 3-D
+points. This is a relative, scale-invariant criterion, not a new absolute
+tolerance — verified explicitly with two closed-loop fixtures at radius
+0.5mm and radius 2e-4mm (matching production's real near-degenerate scale,
+piece 227's ~1.5e-4mm sub-arc), both correctly self-closing under the same
+ratio rule.
+
+**Fixture proof.** `fixture_open_hook` (circular arc, radius 0.5mm, 110deg
+covered) reproduces the real defect almost exactly: chord=0.819mm,
+path=0.958mm, ratio=0.855 (real piece 285: chord=0.931mm, path=1.090mm,
+ratio=0.854) — production's `_weld_piece_endpoints` DOES incorrectly
+self-weld it (defect reproduced on a clean, non-Part3-specific fixture);
+`weld_piece_endpoints_v2` correctly refuses self-closure at every tested
+ratio threshold (0.05, 0.1, 0.2, 0.3) — the huge separation between the
+open-curve regime (ratio ~0.85) and the closed/near-degenerate regime
+(ratio ~1e-16 to ~1e-3) means the exact threshold value is not
+load-bearing. Cross-piece welding at realistic D-022 gaps (0.043mm,
+0.5mm, 1.05mm) is byte-identical between old and new logic (Stage 1 is
+untouched).
+
+**Part1 regression.** `+Z`/`+X`, all 5 objectives: old vs new fingerprints
+IDENTICAL in every cell that produces a real candidate (one `+X`
+`B_silhouette_dominant` cell is `degenerate_cut` under both, unaffected).
+`+Z`/`C_balanced_low` matches the golden fingerprint exactly
+(`cavity=42, core=269, cavity_area_mm2=362.338, core_area_mm2=1203.814,
+h3=2.0, h4=0.0, h7=0.9991608536203086`, single loop, `h1=0.0`).
+
+**Part3 result — the important finding.** Patched into the full pipeline
+(`run_experiment_nway_subedge`) via a scoped monkeypatch of
+`proto._weld_piece_endpoints`, restored after every measurement: across
+ALL 5 directions (`az15`, `(0,1,1)`, `+X`, `-X`, `+Y`) × all 5 objectives
+(25 cells), OLD and NEW produce **byte-identical** `outcome`,
+`failed_gate`, `loop_count`, `cavity_face_count`, `core_face_count`, and
+every H0/H1/H3/H4/H7 measurement. The odd-degree-vertex tallies at
+`C_balanced_low` are also identical in every direction (`az15`: 20/20,
+`(0,1,1)`: 2/2, `+X`: 16/16, `-X`: 16/16, `+Y`: 8/8).
+
+Directly re-checking piece 285 explains why: under `weld_piece_endpoints_v2`
+piece 285's own two ends are correctly refused DIRECT self-union (ratio
+0.854 > 0.1), but they still end up in the SAME connected component
+(cluster 571) via a two-hop bypass — piece 285's start point is
+cross-piece-welded (Stage 1, legitimate, chord~0) to piece 227's end
+point; piece 227's own two ends ARE correctly self-welded (piece 227 is a
+genuine near-degenerate arc, ratio~0); and piece 227's start, plus
+piece 284's start (another face-backed piece touching the same physical
+location), sit within the SAME 1.36mm tolerance of piece 285's END point's
+own cross-piece cluster (piece 1 / piece 236, at the other, ~0.93mm-away
+physical location) — closing the loop through a chain of individually
+legitimate-looking pairwise unions. **The defect is real and was correctly
+fixed at the level it targets (a piece's own direct self-closure), but it
+is not the operative mechanism producing Part3's observed odd-degree
+vertices** — a second, structurally similar phenomenon (the same shared
+cross-piece tolerance bridging two physically distinct vertices through an
+intermediary piece) reproduces the identical erroneous merge and was
+explicitly out of this diagnostic's bounded scope (fixing it would mean
+touching the shared cross-piece tolerance itself, which D-040's earlier
+tightening experiment already showed makes things dramatically worse:
+8→82 odd vertices — and which the standing instructions forbid weakening
+or "fixing" merely to produce a cleaner topology).
+
+**Decision (per the 5-way matrix).** Closest to option 3, precisely
+qualified: the hypothesized welding defect is PROVEN real, PROVEN fixed at
+its own level, PROVEN regression-safe — and PROVEN NOT SUFFICIENT to
+change any Part3 outcome, because a related-but-distinct transitive-bypass
+mechanism achieves the same erroneous merge through the same shared
+tolerance. This is not "welding defect disproven" (option 2) — the fixture
+proof stands — and it is not "rerun side-core analysis with a now-trustworthy
+graph" (option 1) — the graph's odd-degree vertex set at `+X` (where the
+side-core candidate faces 325/366 live) is completely unchanged by this
+fix, so the topology is not "trustworthy" in the sense the instructions
+require before returning to Workstream B.
+
+**Alternatives rejected.** Tightening the shared cross-piece tolerance to
+close the bypass — rejected, already shown (D-040) to make things far
+worse and explicitly forbidden. Blocking any self-loop that shares a
+cluster with another self-loop (a broader structural rule) — not
+attempted: it would need its own fixture/validation cycle and risks
+breaking legitimate multi-feature junctions (D-040's Fixture G/J
+territory); flagged as a candidate follow-up hypothesis, not implemented,
+per the standing instruction to stay bounded.
+
+**Where.** `backend/validation/parting_line_self_weld_diagnostic.py`
+(`weld_piece_endpoints_v2`, `run_fixture_tests`, `run_part1_regression`,
+`run_part3_comparison`, `_patched_welding`); raw run log at
+`/private/tmp/claude-501/-Users-abhinavgurkar-Bosch/327b3d9a-100f-4d64-8415-7e9e483cfc8f/scratchpad/a1_full_run.log`
+(session-scoped scratch path, not committed).
+
+---
+
+# Phase P3.16-17 — N-way face partitioning + sub-edge-aware cross-face attachment; even-degree invariant proved; forensic odd-degree tracing; self-loop duplication investigation
+
+## D-040 — Proper N-way (not binary) face-region topology solved generally via `shapely.polygonize`, validated on 12 synthetic fixtures before touching Part3; sub-edge-aware cross-face attachment (splitting shared edges at every real geometric breakpoint) fixes the coarse-midpoint-attachment gap; a mathematical proof establishes odd-degree vertices are NEVER legitimate topology; automated real-geometry-only forensic tracing (never comparing raw parameters across different OCC parameterizations) clears cross-face attachment as a cause at cluster 571 and instead finds a single-piece self-merge tolerance conflation (piece 285) ⭐⭐⭐⭐
+
+**[P3.16-17] 2026-08-13/14.** No production code changed. New:
+`backend/validation/parting_line_face_partition.py`,
+`backend/validation/parting_line_odd_degree_trace.py`,
+`backend/validation/parting_line_forensic_trace.py`; extended
+`build_min_cut_partition_nway_subedge` in
+`parting_line_region_partition_prototype.py` (diagnostic file, still no
+production code touched).
+
+**Motivation.** D-039 showed the binary (face, +-1) split model is wrong
+whenever a face has more than one Track-B interior curve (45% of Part3's
+split faces). The general topology question — how many regions does a
+face's own boundary plus N interior curves actually create — needed a
+non-hardcoded solver (explicitly NOT an "N curves -> N+1 regions" rule)
+proven on synthetic fixtures before being trusted on Part3, per the
+standing instruction.
+
+**Mathematics — N-way partitioning.** A face's outer + inner wire boundary
+edges, sampled in UV via `_sample_edge_uv`, plus its own Track-B interior
+curves' UV samples, are fed to `shapely.ops.polygonize` after
+`unary_union` + `set_precision` snapping — a general planar-arrangement
+solver, not a curve-counting formula. `region_adjacency` requires
+`boundary.intersection(other.boundary).length > touch_tolerance` (a
+LENGTH, not a distance, test) so that two regions only touching at a
+single point (e.g. diagonally, across intersecting curves) are correctly
+NOT treated as edge-adjacent. `build_face_regions` filters out regions
+bounded only by inner (hole) wire edges with no outer-wire or
+interior-curve touch — these are hole interiors, not material.
+
+**Fixtures A-L (+K), all PASS.** A (1 open curve -> 2 regions), B (2
+disjoint open -> 3), C (3 disjoint open -> 4), D (1 closed -> 2), E (2
+disjoint closed -> 3), F (open+closed -> 3), G (intersecting curves -> 4,
+explicitly NOT N+1 — proves the solver is general), H (periodic-seam flat
+domain, documented limitation), I/J (multi-face offset/multiple
+breakpoints -> 3/4 sub-intervals), K (real `BRepPrimAPI_MakeCylinder`
+lateral face, own seam edge appearing twice in its wire, zero interior
+curves -> exactly 1 region, not 2), L ("Task 5" coincident junction — both
+faces' curves reaching the shared edge at the SAME parameter must merge
+into exactly 2 sub-intervals, not 3).
+
+**Mathematics — the even-degree invariant (proof, not hypothesis).** For a
+candidate curve `Gamma` satisfying C1 (disjoint union of simple closed
+curves) and H2 (simple), ANY subdivision graph built from it — regardless
+of how points are merged by welding — has every vertex at even degree.
+Proof sketch: before any merging, every point on a simple closed curve has
+degree exactly 2 (one edge in, one edge out along the curve). Merging two
+points into one vertex sums their pre-merge degrees; summing any multiset
+of 2's is always even. Therefore **odd degree is mathematically impossible
+for a correctly-constructed representation of valid input geometry** — it
+is not a tolerable edge case, and any occurrence must always trace to a
+specific representation defect (a missing edge, a wrong attachment, or a
+spurious edge), never to "legitimate high-valence B-Rep topology." This is
+the standard the entire subsequent forensic investigation is held to.
+
+**Sub-edge-aware cross-face attachment.** Earlier attachment sampled one
+midpoint per shared B-Rep edge; `edge_subinterval_attachment` instead
+splits a shared edge at every real breakpoint contributed by EITHER
+adjacent face's region boundary, found via exact shapely geometric
+intersection (never coarse resampling). Two representation bugs were
+found and fixed via Part1 regression stress-testing before this was
+trusted: (1) collinear-fragment over-fragmentation from two independently
+discretized copies of the same boundary, fixed by collapsing to
+min/max of each region's own projected extent; (2) ~1e-6mm floating-point
+breakpoint noise, fixed via a `1e-4` merge pass. A sampling-density
+mismatch (explicit `n=24` in the attachment call vs. the `n=12` default
+used to build the regions themselves) alone produced 58/744 Part1 edges
+(all `Circle`-type) with 21 spurious sub-intervals each — fixed by
+removing the override so both call sites share one default.
+
+**Odd-degree forensic tracing.** A systematic tracer
+(`parting_line_odd_degree_trace.py`) found 20/2/16/16/8 odd-degree
+vertices at `az15`/`(0,1,1)`/`+X`/`-X`/`+Y` (`C_balanced_low`). An early
+programmatic classifier's "near_seam" heuristic was flagged as unreliable
+(too broad) and its resulting "14 E_periodic_seam" count explicitly
+marked not-trustworthy evidence. A manual trace of cluster 49 caught a
+real self-inflicted error: conflating an edge's own curve parameter `t`
+with a face's UV parameter `u` because both numerically resembled `pi` —
+caught via direct `S(u,v)` evaluation showing a 23.23mm discrepancy,
+self-reported rather than silently continued, and it produced the standing
+rule that all subsequent tracing (`parting_line_forensic_trace.py`) uses
+ONLY real OCC point evaluation (`BRepAdaptor_Curve.Value`, `Geom_Surface`
+evaluation, `GeomAPI_ProjectPointOnCurve/OnSurf`), never raw parameter
+comparison across different parameterizations.
+
+**Cluster 571 self-loop investigation (Task: pieces 227 vs 285).** The
+initial hypothesis — piece 227 and piece 285 are the same feature counted
+twice — was DISPROVEN by direct geometric comparison. The real mechanism:
+piece 285 is a genuine, Track-B-confirmed OPEN curve (face 371,
+BSpline/NURBS, UV span `[0,1]`, path 1.09mm) whose own two ends (chord
+0.9312mm) fall inside the general stitch tolerance (1.36mm), so
+`_weld_piece_endpoints` incorrectly self-closes it — this is exactly the
+defect later proven and bounded in D-041. Diagnostic removal experiments
+(deleting pieces one at a time and rechecking parity: 7->5->5->3, all
+still odd) explicitly did NOT restore even parity — used as evidence
+AGAINST the "degree-becomes-even" test as proof of anything, per the
+standing instruction never to use parity-restoration-by-deletion as
+validation.
+
+**Alternatives rejected.** Trusting the early near_seam classifier's tally
+as a finished taxonomy — rejected pending the automated forensic tool.
+Treating cluster 571's odd count as resolved once removal experiments
+changed the number — rejected explicitly (parity was never restored, and
+even if it had been, removal is not evidence of correctness per the
+standing rule).
+
+**Where.** `backend/validation/parting_line_face_partition.py` (fixtures
+A-L+K, `build_face_regions`, `region_adjacency`, `edge_subinterval_attachment`);
+`backend/validation/parting_line_odd_degree_trace.py`
+(`trace_odd_degree_vertices`, `classify`); `backend/validation/parting_line_forensic_trace.py`
+(`search_all_edges_near_point`, `forensic_trace`); sub-edge wiring in
+`parting_line_region_partition_prototype.py`'s
+`build_min_cut_partition_nway_subedge`.
+
+---
+
+# Phase P3.13-15 — Multi-curve split-face defect discovered and bounded (Option 2); proper N-way partitioning scoped as the correct fix
+
+## D-039 — Binary (face, +-1) split-face model is provably wrong whenever a face has more than one Track-B interior curve (45% of Part3's split faces); Option 2 (single-curve-only faces get split, multi-curve faces treated as whole) isolates the defect's effect without yet fixing it ⭐⭐⭐
+
+**[P3.13-15] 2026-08-13.** No production code changed. Extended
+`parting_line_region_partition_prototype.py` (diagnostic file only):
+`build_min_cut_partition_split`, `run_experiment_split`, `main_option2`.
+
+**Motivation.** D-038's Experiment 1 (Track-B split-face nodes) modeled
+each split face as exactly two sides, `(face_id, +1)`/`(face_id, -1)`,
+implicitly assuming exactly one Track-B interior curve per face. A Part1
+`+X` regression stress-test surfaced systematic H1 closure failures whose
+cause traced to faces with MULTIPLE interior curves being forced into this
+2-sided model — measured directly: 45% of Part3's Track-B split faces
+have more than one curve, so the binary model is not a corner case, it is
+close to half of the represented geometry.
+
+**Mathematics.** `build_min_cut_partition_split` adds
+`max_curves_per_split_face: int | None` — when set, faces with more curves
+than the limit fall back to being treated as a single whole-face node
+(their split is simply not represented, not silently corrupted).
+
+**Diagnostic isolation (Option 2).** Comparing single-curve-only faces
+(correctly representable in the binary model) against multi-curve faces
+(known-wrong in the binary model) via `_gate_tally` across Part1 controls
+and Part3 directions shows single-curve faces behave consistently with
+D-038's whole-face baseline, while multi-curve faces show elevated,
+inconsistent H1 failure rates — consistent with, but not yet a full fix
+for, the multi-curve hypothesis. Per the standing "narrow interpretation
+only" rule for this experiment, this was reported strictly as "the binary
+model is confirmed insufficient for multi-curve faces," not as "the
+general N-way model would fix Part3" — that claim required the separate
+Option 1 fixture-first validation (D-040).
+
+**Decision.** Do not patch the binary model with a special case; scope the
+proper general fix (N-way partitioning, validated on synthetic fixtures
+FIRST) as the next step — carried out in D-040.
+
+**Alternatives rejected.** Extending the binary model to a fixed small N
+(e.g. 3-sided) — rejected as still not general and still implicitly
+hardcoding a curve-count assumption the geometry does not respect (some
+faces have many more than 3 curves).
+
+**Where.** `backend/validation/parting_line_region_partition_prototype.py`
+(`build_min_cut_partition_split`, `run_experiment_split`, `main_option2`,
+`_gate_tally`).
+
+---
+
+# Phase P3.12 — Region-partition candidate proposer (architecture-report follow-up): Part1 sanity confirmed, Part3 finding self-corrected, extended sweep finds no genuine separator
+
+## D-038 — Global min-cut candidate PROPOSER (not a validator) tested against the unchanged production H0-H7 gates on Part1 controls + 3 Part3 directions; Part1 independently reproduced; Part3's apparent H3 pass was a degenerate 3-4-face pinch, not a real separator, and a 3-order-of-magnitude weight sweep found no regime that produces one ⭐⭐⭐⭐
+
+**[P3.12] 2026-08-13.** No production code changed. New:
+`backend/validation/parting_line_region_partition_prototype.py`,
+`reports/region_partition_prototype.json`.
+
+**Motivation.** The architecture-report investigation (this doc's own
+summary, delivered as a 10-section report answering the standing question
+"is the cycle-based candidate representation strong enough") identified one
+untested representational question: the cycle-based pipeline's candidate
+space has a hard ceiling of `max_loop_union_size=4` simultaneously-unioned
+loops, chosen from an independently-enumerated pool (D-017, D-019). Every
+prior Part3 forensic finding (D-027/D-028/D-033/D-034/D-036/D-037) traces a
+failure to a candidate *within that space* not separating the part — none
+of them tests whether a candidate *outside* that space (an unbounded number
+of simultaneous components, read off a jointly-optimized global partition
+rather than assembled from independently-found cycles) could succeed where
+the bounded search structurally cannot even propose an answer. A follow-up
+review correctly flagged that the report's original framing ("a min-cut
+boundary is a valid candidate by construction") conflated two different
+claims — a min cut gives a PARTITION OF FACES, not an H0-H7-valid parting
+curve — and required this prototype to (a) treat the optimizer as a
+proposer only, (b) route every candidate through the unmodified
+`gates.evaluate_gates`, and (c) test at least 3 qualitatively different cost
+formulations rather than trust a single arbitrary weighting.
+
+**Mathematics.** Standard s-t minimum cut / binary image-segmentation
+construction over the part's face-adjacency graph (nodes = whole faces;
+Track-B split-face nodes are explicitly out of scope for this prototype —
+every candidate boundary it can propose runs along existing B-Rep edges
+only). Source `S` = cavity label, sink `T` = core label, `g(f) =
+f.signed_dot(d)`:
+
+```
+capacity(S, f)  = unary_weight * area(f) * max(0, +g(f))
+capacity(f, T)  = unary_weight * area(f) * max(0, -g(f))
+capacity(a, b)  = smoothness_weight * shared_edge_length(a, b)
+                  * (silhouette_discount if any shared edge is already
+                     Track-A-flagged silhouette else 1.0)
+```
+
+`networkx.minimum_cut` solves the partition; the cut edge set is decomposed
+into closed walks by a deterministic Hierholzer traversal (a 2-coloring
+boundary on a closed 2-manifold has even degree at every vertex it touches
+— a real topological guarantee, not an assumption; any component that turns
+up odd-degree is skipped with a note, never forced closed); each walk's
+direction is resolved by matching the weld-key vertex SHARED between
+consecutive edges (anchoring on an arbitrary edge endpoint was tried first
+and produced a systematic H1 closure failure on every candidate — Hierholzer
+does not preserve which physical endpoint of the first edge begins the
+cycle, so that anchor is topologically arbitrary); every point is then
+sampled directly off the real OCC edge curve (`BRepAdaptor_Curve.Value(t)`,
+never fitted/interpolated) and assembled into a real `PartingLoopCandidate`,
+fed unmodified into `evaluate_gates`.
+
+Five weightings tested per direction: `A_orientation_dominant` (1.0, 0.0,
+1.0) — the naive per-face baseline D-033 already showed is too fragmented,
+included as a negative control; `B_silhouette_dominant` (0.05, 1.0, 0.05);
+`C_balanced_{low,mid,high}` (1.0, {0.10, 0.30, 1.00}, 0.10).
+
+**Findings — Part1 (sanity gate, both pass).** `+Z`: 4/5 objectives (all but
+the naive baseline) independently rediscover the known-good candidate —
+`h3_region_count=2`, `h4_violation=0.0`, feasible, `h1_closure_error_mm`
+exactly `0.0` after the direction-resolution fix. `A` correctly
+over-fragments into 23 regions. `+X` (known cycle-search failure): all 5
+correctly fail to separate (fragmentation or degenerate cut). The
+machinery is doing the right thing on ground truth before touching Part3.
+
+**Findings — Part3, first pass (3 directions: `az15` — D-036's strongest
+single-loop direction; `(0,1,1)` — D-033's CASE-A cluster anchor; `+X` —
+known control).** `B_silhouette_dominant` reached `h3_region_count=2` at
+`az15` and `(0,1,1)` — the first time in the ENTIRE P3.x investigation H3
+has returned exactly 2 for Part3 at any tested direction under any method.
+Inspecting the actual candidate before reporting this as a breakthrough (per
+the standing instruction not to trust a single arbitrary weighting):
+`az15`'s candidate is cavity=411/core=3 faces over 2 cut edges;
+`(0,1,1)`'s is cavity=410/core=4 over 3 cut edges. **This is a degenerate
+artifact, not a discovery**: at `B`'s near-zero unary weight, the global
+minimum of "total cut cost" is generically achieved by isolating whatever
+local cluster has the least total boundary length, which on a real part is
+almost always a small local feature — the same category of trivial pinch
+D-027/D-028/D-032 already found and H4 already correctly rejects (34%
+violation there; 21.1%/27.2% here, same mechanism, both correctly rejected
+at H4 here too). The `C`-family (real orientation weight) never reached H3
+in this first pass, but showed region counts falling as smoothness weight
+rose (`az15`: 15→14→9; `(0,1,1)`: 18→16→4) while cavity/core face counts
+stayed substantial and roughly balanced (e.g. 354/60, not a sliver) — an
+initial, and in hindsight premature, reading treated this trend as
+suggestive of convergence toward a genuine large-scale separator.
+
+**Findings — Part3, extended sweep (self-correction).** Smoothness weight
+swept 1.0→100.0 (unary=1.0, silhouette_discount=0.10 fixed) at the two
+directions showing the trend. Both directions show the SAME shape, not
+convergence toward 2: region count falls to a local minimum around a
+genuinely balanced split (`az15` sw=2-5: 354/60, region_count=**3**, not
+yet 2; `(0,1,1)` sw=1-3: 354/60 or 75/339, region_count=**4**), then at a
+sharply higher weight (`az15` sw=8; `(0,1,1)` sw=5) the cut **jumps
+straight to the same trivial 3-4-face pinch** `B` already found
+(411/3 and 410/4, both `h3_region_count=2`, both rejected at H4 — identical
+values to the first pass, confirming this is one specific, findable
+attractor, not noise), and at even higher weight (`az15` sw≥60; `(0,1,1)`
+sw≥20) the cut collapses entirely to "no separation" as the smoothness term
+overwhelms the unary forcing signal. **There is no smoothness-weight regime,
+across 3 orders of magnitude, where the cut converges to a genuine
+non-trivial H3-passing global separator at either direction.** The earlier
+"9→4 trending toward 2" reading is retracted: 9 and 4 were transit points on
+the way to full collapse, not progress toward a real answer.
+
+**Classification.** Genuinely new evidence, not previously obtainable: a
+method structurally capable of proposing an UNBOUNDED number of
+simultaneous components (no `max_loop_union_size` analog) — the
+representational capacity the cycle-based search provably lacks (D-017,
+D-019) — was tested against the unmodified H0-H7 gates at the two Part3
+directions with the strongest prior circumstantial evidence (D-033's
+"plausible" separability score, D-036's largest single loop), under 5
+qualitatively different cost formulations spanning a 3-order-of-magnitude
+weight range, and **found no genuine H3-passing candidate at either
+direction**. This does not prove Hypothesis A (no feasible direction) — only
+2 of Part3's 374+ tested directions were probed this way, and Track-B
+split-face nodes remain out of scope for this prototype — but it is real
+evidence *against* Hypothesis B (representational ceiling) being the whole
+explanation at these specific two directions: removing the ceiling did not
+produce an answer cycle-search was blocked from reaching. Consistent with,
+not contradicting, D-034's finding that Part3's partial silhouette coverage
+(the bore, the torus/boss pinches) reflects genuine geometry rather than a
+detection gap.
+
+**Alternatives rejected.** Reporting the first-pass `B`/`C`-trend finding at
+face value without the face-count inspection and extended sweep — rejected
+per the explicit standing instruction to test multiple cost formulations
+specifically to catch this failure mode, and per this project's own
+practice of correcting a claim in a later entry rather than leaving a
+misleading one standing (see D-027→D-028).
+
+**Where.** `backend/validation/parting_line_region_partition_prototype.py`
+(full script); `reports/region_partition_prototype.json` (first-pass raw
+results, 5 directions × 5 objectives); extended sweep run inline, not yet
+persisted to a file — re-run from the module's `build_min_cut_partition` /
+`decompose_into_loops` / `assemble_candidate` functions if the raw sweep
+data is needed again.
+
+---
+
 # Phase P3.11 — Independent S2 separation test, self-corrected mid-investigation, confirms H3 correctness on all tested candidates
 
 ## D-037 — Fresh independent separation test (own sign computation, own adjacency, own components) validated on Part1, found and FIXED a bug in itself (not production) via a suspected discrepancy, then confirmed H3 agrees on all 5 requested Part3 directions; basis-cycle-pair search for an alternative single-loop S2 candidate came back negative ⭐⭐⭐⭐

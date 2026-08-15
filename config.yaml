@@ -162,6 +162,35 @@ dfm:
     # cannot affect RANKING -- only reported coverage and the H7 comparison.
     face_sample_grid: 11
 
+    # --- core-pin / tooling-split eligibility (2026-08-15) ---
+    # A DEDICATED, strict, per-point uniform-draft tolerance for deciding
+    # whether a coaxial face (e.g. a straight through-bore) is a genuine
+    # core-pin candidate. Deliberately NOT orientation_epsilon (H4's 0.05,
+    # an AREA-FRACTION slack meant for whole-region orientation consistency)
+    # and NOT silhouette_epsilon (0.02, Track B's zero-draft-band width).
+    # Sharing either of those would let an edit made for H4/Track-B reasons
+    # silently change which faces are eligible for tooling splits -- exactly
+    # the kind of cross-purpose coupling this project avoids elsewhere.
+    # Tight by design: a genuinely coaxial face (axis parallel to the pull
+    # direction) has g = 0 analytically everywhere, so 1e-6 only excludes
+    # faces that are merely CLOSE to coaxial, never a true core-pin surface.
+    core_pin_uniform_g_max: 1.0e-6
+    # How close to exactly parallel/antiparallel a candidate cylinder's axis
+    # must be to the pull direction to count as "coaxial" for core-pin
+    # eligibility. |cos(angle)| must exceed 1 - this value.
+    core_pin_axis_angle_tol: 1.0e-6
+
+    # --- secondary-action delegation eligibility (D-044) ---
+    # A delegation's claimed secondary movement direction must differ
+    # meaningfully from the primary pull direction, or it is not a distinct
+    # secondary mechanism at all. This is a SANITY-check tolerance (rejecting
+    # only near-degenerate claims), deliberately loose relative to
+    # core_pin_axis_angle_tol (which checks a mathematically exact cylinder
+    # axis) -- an engineer's asserted direction is not expected to be exact.
+    # |cos(angle)| must be <= this value to be accepted; 0.99 ~ requires at
+    # least ~8.1 degrees of separation from parallel/antiparallel.
+    delegation_max_parallel_cos: 0.99
+
   core_cavity:
     threshold: 0.05
     cavity_color: [0.2, 0.8, 0.3]
