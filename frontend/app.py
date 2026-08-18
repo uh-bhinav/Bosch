@@ -1492,6 +1492,136 @@ def _rgb_to_hex(rgb: list[float]) -> str:
     return f"#{values[0]:02x}{values[1]:02x}{values[2]:02x}"
 
 
+# ---------------------------------------------------------------------------
+# Parting Line v2 core/cavity region colors (Phase 4 accounting contract,
+# docs/DECISIONS_AND_ALGORITHMS.md D-045). Five distinct, mutually exclusive
+# visual states for the five possible per-face outcomes of
+# RegionClassification -- "ambiguous" and "no classification data" are
+# deliberately different colors: ambiguous is a real, computed geometric
+# finding (mean_g inside the zero-draft band, off the loop); no-record means
+# the backend never produced a FaceClassification for this face at all
+# (normal_valid=False). Chosen to not collide with the primary-PL, undercut,
+# core-pin, or delegation-group overlay colors used alongside these.
+# Cavity/core values are UNCHANGED from their pre-Phase-4 values.
+# ---------------------------------------------------------------------------
+PV2_CAVITY_RGB = [0.35, 0.65, 0.95]
+PV2_CORE_RGB = [0.95, 0.55, 0.20]
+PV2_SPLIT_RGB = [0.20, 0.60, 0.55]
+PV2_AMBIGUOUS_RGB = [0.65, 0.55, 0.20]
+PV2_NEUTRAL_RGB = [0.72, 0.72, 0.75]
+PV2_NO_DATA_RGB = [0.35, 0.35, 0.38]
+#: Phase 4 (2026-08-16, D-055): blended into a cavity/core color to mark a
+#: face whose LOCAL draft is zero/ambiguous while its topological side is
+#: still known and shown -- deliberately dark/desaturating rather than a
+#: new independent hue, so the underlying cavity/core color stays the
+#: dominant, recognizable signal and the zero-draft marking reads as
+#: secondary (per the explicit "subtle, not a coloring book" instruction).
+PV2_ZERO_DRAFT_ACCENT_RGB = [0.12, 0.12, 0.12]
+PV2_ZERO_DRAFT_BLEND_WEIGHT = 0.35
+
+
+def _pv2_blend_zero_draft(base_rgb: list[float]) -> list[float]:
+    """cavity/core color, subtly darkened to mark a zero-draft/review face
+    -- see PV2_ZERO_DRAFT_ACCENT_RGB's docstring for why this is a blend,
+    not a new hue."""
+    w = PV2_ZERO_DRAFT_BLEND_WEIGHT
+    return [c * (1.0 - w) + a * w for c, a in zip(base_rgb, PV2_ZERO_DRAFT_ACCENT_RGB)]
+
+
+def _pv2_build_face_label_map(regions: dict[str, Any] | None) -> dict[int, str]:
+    """
+    face_id -> label ("cavity"/"core"/"split"/"ambiguous") from a
+    RegionClassification.to_dict() payload's "faces" list.
+
+    A face_id present in the mesh but absent from this map is either (a)
+    regions is None -- no candidate was selected, nothing was classified at
+    all, or (b) regions is present but this specific face has no
+    FaceClassification record (normal_valid=False on the backend) --
+    "no classification data". Callers must distinguish these two cases
+    themselves (see _pv2_region_color's regions_present argument); this
+    function only ever returns case (b)'s absence, never conflating it with
+    "ambiguous", which is always an explicit key in this map.
+    """
+    if not regions:
+        return {}
+    return {
+        f["face_id"]: f["label"]
+        for f in regions.get("faces", [])
+        if "face_id" in f and "label" in f
+    }
+
+
+def _pv2_build_face_topological_side_map(regions: dict[str, Any] | None) -> dict[int, str]:
+    """
+    face_id -> topological_side ("cavity"/"core"/"split"/"unknown"), Phase 4
+    (D-055). ANSWERS A DIFFERENT QUESTION from _pv2_build_face_label_map:
+    label is this face's own local draft/g-based classification (where
+    "ambiguous" means the face's own sampled normals are too close to zero
+    to confirm a side by themselves); topological_side is which side of the
+    primary parting topology this face actually belongs to, from H3's own
+    graph connectivity -- known and reported even when label=="ambiguous".
+    The two are orthogonal, never conflated here or in _pv2_region_color.
+    """
+    if not regions:
+        return {}
+    return {
+        f["face_id"]: f["topological_side"]
+        for f in regions.get("faces", [])
+        if "face_id" in f and "topological_side" in f
+    }
+
+
+def _pv2_region_color(
+    face_id: int,
+    face_label_map: dict[int, str],
+    regions_present: bool,
+    topological_side_map: dict[int, str] | None = None,
+) -> list[float]:
+    """
+    Core/Cavity overlay color for one face, before any other overlay toggle
+    (side actions, undercuts, core pin) layers on top of it.
+
+    Five label states: cavity, core, split (genuinely belongs to both
+    regions -- the parting boundary passes through it), ambiguous
+    (LOCAL draft/orientation not confidently assigned at this analysis
+    level -- not an error), and no-classification-data (regions were
+    computed for this candidate but this face has no FaceClassification
+    record at all -- dormant on Part1/Part3 today, but a real, distinct
+    state). When no regions exist at all (no candidate selected), every
+    face falls back to the same neutral color used before Phase 4.
+
+    Phase 4 (D-055): an "ambiguous" face whose `topological_side` is known
+    (the common case -- Part1: 70/70, Part3 candidate 110: 95/95, measured
+    directly) is rendered as its cavity/core color SUBTLY blended toward a
+    dark accent (`_pv2_blend_zero_draft`) instead of the old flat
+    PV2_AMBIGUOUS_RGB -- communicating BOTH facts at once: which side it
+    belongs to (dominant, still the recognizable cavity/core hue) and that
+    its local draft needs moldability review (secondary, the darkening).
+    `topological_side_map` is optional and defaults to None so any other
+    caller that hasn't been updated keeps the pre-D-055 flat-color
+    behavior exactly (falls through to the plain PV2_AMBIGUOUS_RGB, same
+    as when topological_side is missing or "unknown" -- structurally
+    unreachable today, but not assumed impossible).
+    """
+    label = face_label_map.get(face_id)
+    if label == "cavity":
+        return PV2_CAVITY_RGB
+    if label == "core":
+        return PV2_CORE_RGB
+    if label == "split":
+        return PV2_SPLIT_RGB
+    if label == "ambiguous":
+        side = (topological_side_map or {}).get(face_id)
+        if side == "cavity":
+            return _pv2_blend_zero_draft(PV2_CAVITY_RGB)
+        if side == "core":
+            return _pv2_blend_zero_draft(PV2_CORE_RGB)
+        return PV2_AMBIGUOUS_RGB
+    if regions_present:
+        return PV2_NO_DATA_RGB
+    return PV2_NEUTRAL_RGB
+
+
 def _show_mesh_plotly(
     mesh_payload: dict[str, Any],
     color_key: str = "draft_rgb",
@@ -5419,27 +5549,43 @@ with center:
                             f"**geometric_verification: \"{ev.get('geometric_verification', 'unknown')}\"**"
                         )
                 else:
-                    h3_valid_scored = [
-                        c for c in scorecard
-                        if (c.get("feasibility") or {}).get("measurements", {}).get("h3_region_count") == 2.0
-                    ]
-                    if h3_valid_scored:
-                        best = min(
-                            h3_valid_scored,
-                            key=lambda c: (c.get("feasibility") or {}).get("measurements", {}).get(
-                                "h4_orientation_violation_fraction", float("inf")
-                            ),
-                        )
+                    # Phase 4 (D-049): the best-rejected candidate and its
+                    # ID are computed exactly once, in engine.py -- read the
+                    # authoritative result instead of re-deriving a
+                    # (potentially divergent) "best" via a second, duplicate
+                    # min() here. `best_rejected_regions` being non-null is
+                    # itself the proof this candidate reached H3=2.
+                    best_rejected_id = pv2_result.get("best_rejected_candidate_id")
+                    best = next(
+                        (c for c in scorecard if c.get("candidate_id") == best_rejected_id),
+                        None,
+                    ) if best_rejected_id is not None else None
+                    if best is not None:
                         best_meas = (best.get("feasibility") or {}).get("measurements", {})
+                        best_regions = pv2_result.get("best_rejected_regions")
                         st.markdown("**Best candidate found (rejected):**")
                         bcols = st.columns(3)
                         bcols[0].metric("Candidate", best.get("candidate_id"))
                         bcols[1].metric("H4 violation", f"{best_meas.get('h4_orientation_violation_fraction', 0):.2%}")
-                        bcols[2].metric("Failed at", (best.get("feasibility") or {}).get("failed_gate", "?"))
-                        st.caption(
-                            "Core/cavity balance: not available for rejected candidates — "
-                            "region classification is only computed for the passing candidate."
+                        bcols[2].metric(
+                            "Failed at",
+                            pv2_result.get("best_rejected_failed_gate")
+                            or (best.get("feasibility") or {}).get("failed_gate", "?"),
                         )
+                        if best_regions:
+                            st.caption(
+                                f"Core/cavity balance for this REJECTED candidate: "
+                                f"{best_regions.get('core_face_count', '—')} core / "
+                                f"{best_regions.get('cavity_face_count', '—')} cavity faces, "
+                                f"{best_regions.get('ambiguous_area_fraction', 0):.1%} ambiguous area. "
+                                "This is a diagnostic preview of a REJECTED candidate, not a feasible "
+                                "core/cavity split — see the viewport preview toggle below."
+                            )
+                        else:
+                            st.caption(
+                                "Core/cavity balance: not available for this rejected candidate "
+                                "(no RegionClassification was retained for it)."
+                            )
                     elif candidate_count == 0:
                         st.caption(
                             "Candidate generation itself found zero closed loops for this "
@@ -5519,21 +5665,35 @@ with center:
                 _mesh_payload_v2 = _hydrate_mesh(pv2_result.get("display_mesh"))
                 mesh_face_ids = _mesh_payload_v2.get("face_ids", [])
 
-                cavity_ids = {
-                    f.get("face_id") for f in (regions or {}).get("faces", [])
-                    if f.get("label") == "cavity"
-                } if regions else set()
-                core_ids = {
-                    f.get("face_id") for f in (regions or {}).get("faces", [])
-                    if f.get("label") == "core"
-                } if regions else set()
+                # Phase 4 accounting contract (docs/DECISIONS_AND_ALGORITHMS.md
+                # D-045): every face in regions.faces carries one of four
+                # labels (cavity/core/split/ambiguous); a mesh face_id absent
+                # from that list -- while regions itself is present -- has no
+                # FaceClassification record at all ("no classification data",
+                # dormant on Part1/Part3 today but a real, distinct state).
+                face_label_map = _pv2_build_face_label_map(regions)
+                # Phase 4 (D-055): topological_side is a SEPARATE dimension
+                # from label -- see _pv2_build_face_topological_side_map's
+                # docstring. Used only to give an "ambiguous"-labelled face
+                # a cavity/core-tinted color instead of a flat neutral one;
+                # never changes which faces are "ambiguous" or any area
+                # metric.
+                face_topological_side_map = _pv2_build_face_topological_side_map(regions)
+                regions_present = regions is not None
+                no_data_ids = (
+                    set(mesh_face_ids) - set(face_label_map.keys())
+                    if regions_present else set()
+                )
                 undercut_ids = set((pv2_result.get("undercuts") or {}).get("face_ids", {}).get("undercut", []))
                 core_pin_ids = {i.get("face_id") for i in core_pin_interfaces}
                 delegation_groups = [set(d.get("face_ids", [])) for d in validated_delegations]
 
-                NEUTRAL = [0.72, 0.72, 0.75]
-                CAVITY_RGB = [0.35, 0.65, 0.95]
-                CORE_RGB = [0.95, 0.55, 0.20]
+                NEUTRAL = PV2_NEUTRAL_RGB
+                CAVITY_RGB = PV2_CAVITY_RGB
+                CORE_RGB = PV2_CORE_RGB
+                SPLIT_RGB = PV2_SPLIT_RGB
+                AMBIGUOUS_RGB = PV2_AMBIGUOUS_RGB
+                NO_DATA_RGB = PV2_NO_DATA_RGB
                 UNDERCUT_RGB = [0.90, 0.15, 0.15]
                 CORE_PIN_RGB = [0.85, 0.15, 0.85]
                 GROUP_PALETTE = [[0.95, 0.75, 0.10], [0.10, 0.75, 0.95], [0.75, 0.10, 0.95], [0.10, 0.95, 0.45]]
@@ -5545,10 +5705,9 @@ with center:
                     for fid in mesh_face_ids:
                         color = NEUTRAL
                         if show_core_cavity:
-                            if fid in cavity_ids:
-                                color = CAVITY_RGB
-                            elif fid in core_ids:
-                                color = CORE_RGB
+                            color = _pv2_region_color(
+                                fid, face_label_map, regions_present, face_topological_side_map,
+                            )
                         if show_side_actions:
                             for gi, group in enumerate(delegation_groups):
                                 if fid in group:
@@ -5581,12 +5740,108 @@ with center:
                         ("Mesh Triangles", _mesh_payload_v2.get("triangle_count", 0), "Fallback display"),
                     ])
 
+                # -------------------------------------------------------------
+                # Phase 4 (D-049), H2: best-rejected-candidate preview.
+                # Deliberately OPT-IN (default off, its own checkbox) and
+                # rendered as a SEPARATE viewer instance from the
+                # accepted-result mesh above -- never blended into the
+                # Core/Cavity toggle, never sharing composite_rgb/
+                # color_key_v2/viewer_key with it, so a user can never land
+                # on this view by flipping an existing checkbox. It previews
+                # a REJECTED candidate; it is never feasible, never a valid
+                # parting line, never a final core/cavity split.
+                # -------------------------------------------------------------
+                best_rejected_id_view = pv2_result.get("best_rejected_candidate_id")
+                best_rejected_regions_view = pv2_result.get("best_rejected_regions")
+                if outcome != "feasible" and best_rejected_regions_view is not None:
+                    st.markdown("---")
+                    st.error(
+                        f"🚫 **BEST REJECTED CANDIDATE {best_rejected_id_view} — PREVIEW ONLY** — "
+                        f"failed **{pv2_result.get('best_rejected_failed_gate') or '?'}**: "
+                        f"{pv2_result.get('best_rejected_reason') or 'no reason recorded'} "
+                        "This is NOT a feasible result, NOT a valid parting line, and NOT a "
+                        "final core/cavity split — it exists only to show why this direction "
+                        "did not produce an accepted candidate."
+                    )
+                    show_rejected_preview = st.checkbox(
+                        "Show best-rejected-candidate core/cavity preview in the viewport "
+                        "(separate from the view above; opt-in)",
+                        value=False, key="pv2_show_rejected_preview",
+                    )
+                    if show_rejected_preview:
+                        st.caption(
+                            "⚠️ PREVIEW ONLY — REJECTED CANDIDATE, not accepted, not feasible. "
+                            "Colors reuse the cavity/core/split/ambiguous legend for readability "
+                            "only; this split was never validated past "
+                            f"{pv2_result.get('best_rejected_failed_gate') or 'its failing gate'}."
+                        )
+                        rejected_label_map = _pv2_build_face_label_map(best_rejected_regions_view)
+                        rejected_topological_side_map = _pv2_build_face_topological_side_map(
+                            best_rejected_regions_view
+                        )
+                        rejected_rgb = [
+                            _pv2_region_color(
+                                fid, rejected_label_map, True, rejected_topological_side_map,
+                            )
+                            for fid in mesh_face_ids
+                        ]
+                        rejected_mesh_payload = {**_mesh_payload_v2, "pv2_rejected_rgb": rejected_rgb}
+                        shown_rejected = _show_mesh(
+                            rejected_mesh_payload,
+                            color_key="pv2_rejected_rgb",
+                            viewer_key=f"parting-line-v2-rejected-preview-{selected_part}-{best_rejected_id_view}",
+                        )
+                        if not shown_rejected:
+                            _render_summary_grid([
+                                ("Mesh Points", rejected_mesh_payload.get("point_count", 0), "Fallback display"),
+                                ("Mesh Triangles", rejected_mesh_payload.get("triangle_count", 0), "Fallback display"),
+                            ])
+                        rejected_legend = [
+                            ("Cavity (preview, rejected)", _rgb_to_hex(CAVITY_RGB)),
+                            ("Core (preview, rejected)", _rgb_to_hex(CORE_RGB)),
+                        ]
+                        if any(label == "split" for label in rejected_label_map.values()):
+                            rejected_legend.append(("Split (preview, rejected)", _rgb_to_hex(SPLIT_RGB)))
+                        if any(label == "ambiguous" for label in rejected_label_map.values()):
+                            rejected_legend.append((
+                                "Zero-draft / review (preview, rejected)",
+                                _rgb_to_hex(_pv2_blend_zero_draft(CAVITY_RGB)),
+                            ))
+                        _render_color_legend(rejected_legend)
+                    st.markdown("---")
+
                 legend_entries: list[tuple[str, str]] = []
                 if show_pl and line_paths_v2:
                     legend_entries.append(("Primary parting line (Γ)", PL_LINE_COLOR))
                 if show_core_cavity:
                     legend_entries.append(("Cavity", _rgb_to_hex(CAVITY_RGB)))
                     legend_entries.append(("Core", _rgb_to_hex(CORE_RGB)))
+                    if any(label == "split" for label in face_label_map.values()):
+                        legend_entries.append(("Split (crosses parting boundary)", _rgb_to_hex(SPLIT_RGB)))
+                    # Phase 4 (D-055): "Zero-draft / review" replaces the old
+                    # "Ambiguous (side not confidently assigned)" wording --
+                    # the side IS known (topological_side, from H3) for
+                    # every ambiguous face measured on Part1/Part3; what's
+                    # actually unresolved is this face's own LOCAL draft.
+                    # Swatch shown is representative (cavity-tinted); the
+                    # rendered mesh uses the matching cavity- or core-
+                    # tinted blend per face, per _pv2_region_color.
+                    if any(label == "ambiguous" for label in face_label_map.values()):
+                        legend_entries.append((
+                            "Zero-draft / review (known cavity/core side, local draft ~0)",
+                            _rgb_to_hex(_pv2_blend_zero_draft(CAVITY_RGB)),
+                        ))
+                    if any(
+                        face_label_map.get(fid) == "ambiguous"
+                        and face_topological_side_map.get(fid) not in ("cavity", "core")
+                        for fid in face_label_map
+                    ):
+                        legend_entries.append((
+                            "Ambiguous (topological side genuinely unknown)",
+                            _rgb_to_hex(AMBIGUOUS_RGB),
+                        ))
+                    if no_data_ids:
+                        legend_entries.append(("No classification data", _rgb_to_hex(NO_DATA_RGB)))
                 if show_undercuts:
                     legend_entries.append(("Undercut face", _rgb_to_hex(UNDERCUT_RGB)))
                 if show_side_actions:
@@ -5635,9 +5890,35 @@ with center:
                         (
                             "Ambiguous area fraction",
                             f"{regions.get('ambiguous_area_fraction', 0):.1%}",
-                            "Genuinely split/inconsistent faces",
+                            "Faces whose orientation is not confidently assigned "
+                            "to either primary side at this analysis level -- "
+                            "not necessarily an error, and never forced onto a side.",
                         ),
                     ])
+                    # Phase 4 accounting contract (docs/DECISIONS_AND_ALGORITHMS.md
+                    # D-045): these two area figures are the human-facing
+                    # RegionClassification convention, not H4's own gate-area
+                    # convention. They intentionally differ and neither should
+                    # be substituted for the other.
+                    st.caption(
+                        "This is reported area: it apportions each split face's "
+                        "area between cavity/core by real geometric share, and "
+                        "separates ambiguous area into its own figure above. "
+                        "H4's pass/fail check (the orientation violation fraction "
+                        "shown earlier) uses a different, gate-specific area "
+                        "convention -- the full area of every face in a region's "
+                        "raw topological membership, including ambiguous faces, "
+                        "with a split face's full area counted in both regions. "
+                        "These two conventions are intentionally different; do "
+                        "not read the reported area above as H4's own denominator."
+                    )
+                    if any(f.get("label") == "split" for f in regions.get("faces", [])):
+                        st.caption(
+                            "A **split** face genuinely belongs to both cavity "
+                            "and core because the parting boundary passes "
+                            "through it -- its area is apportioned between the "
+                            "two figures above, not hidden or double-counted."
+                        )
 
             with st.expander("Parting Line v2 JSON (full raw response)"):
                 st.json(pv2_result)
@@ -5652,12 +5933,17 @@ with center:
             counts = core_cavity.get("face_counts", {})
             percentages = core_cavity.get("percentages", {})
             pull = core_cavity.get("pull_direction", [0.0, 0.0, 1.0])
-            _render_color_legend([
+            skipped_count = counts.get("skipped", 0)
+            legend_v1 = [
                 ("Cavity (upper mold half)", "#32c864"),
                 ("Core (lower mold half)", "#3264c8"),
                 ("Parting zone", "#dcc832"),
-            ])
-            c1, c2, c3 = st.columns(3)
+            ]
+            if skipped_count:
+                legend_v1.append(("Skipped / unknown (invalid face normal)", "#a0a0a0"))
+            _render_color_legend(legend_v1)
+            columns = st.columns(4 if skipped_count else 3)
+            c1, c2, c3 = columns[0], columns[1], columns[2]
             c1.metric(
                 "Cavity Faces",
                 counts.get("cavity", 0),
@@ -5669,6 +5955,8 @@ with center:
                 f"{percentages.get('core_pct', 0)}%",
             )
             c3.metric("Parting Faces", counts.get("parting", 0))
+            if skipped_count:
+                columns[3].metric("Skipped / unknown", skipped_count)
             st.write(f"Pull direction used: `{_direction_axis_tilt_text(pull)}`")
             st.caption(
                 "Core/cavity classification uses the optimal mold direction found in Step 4."
