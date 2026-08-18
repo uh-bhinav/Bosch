@@ -1,2 +1,0 @@
-﻿,Feature,Severity,Action,Confidence,Faces,Confirmed,Fallback,Depth mm,Volume mm3,Why
-0,0,critical,side-action,high,10,10,0,26.8551,14401.047127,"Feature release direction is transverse to the main mold opening direction. High confidence: Boolean-confirmed interference, depth from vertex-reference, critical severity; reduced by silhouette category is inherently ambiguous. Release ..."

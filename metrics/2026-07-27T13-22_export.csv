@@ -1,5 +1,0 @@
-﻿,Evidence Area,Value,Detail
-0,Reliability,Mixed Boolean reliability,score 0.623
-1,Operation success,73.1%,checked 26 | failed 7 | skipped 0
-2,Proxy retained,7,failed proxy 7 | skipped proxy 0
-3,Failure classes,boolean-common-failure: 7,Skip classes: none
