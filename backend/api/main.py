@@ -2,11 +2,13 @@ import base64
 import json
 import logging
 import math
+import os
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from backend.geometry.core_cavity import classify_core_cavity, export_mold_halves, split_core_cavity_solids
@@ -25,6 +27,12 @@ from backend.geometry.parting_line_v2.contracts import (
     DelegationEvidence,
 )
 from backend.geometry.parting_line_v2.engine import analyse_parting_line
+from backend.geometry.mold_orchestration import (
+    prepare_manual_direction,
+    resolve_authoritative_parting_line,
+    resolve_manual_direction_mold,
+    resolve_winning_direction_mold,
+)
 from backend.geometry.step_loader import STEPLoadError, load_step_cached
 from backend.geometry.undercut_detector import detect_undercuts
 from backend.geometry.visualize_raw import build_display_mesh, build_shape_display_mesh
@@ -38,6 +46,16 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PARTS_DIR = PROJECT_ROOT / "data" / "parts"
+# F2: user-uploaded STEP files live here, never in data/parts/ -- CLAUDE.md's
+# "never modify files in data/parts/" invariant is about that directory's
+# curated, read-only fixtures; uploads are a separate, generated-content
+# directory (same pattern as the existing gitignored output/mold_halves/).
+UPLOADS_DIR = PROJECT_ROOT / "data" / "uploads"
+# API/infra constant, not a DFM algorithm threshold -- lives here rather
+# than config.yaml/Settings, matching this file's own existing convention
+# for presentation/API-layer constants (BOOLEAN_REGION_STYLES, ERROR_HINTS)
+# per .claude/rules/api-layer.md.
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024  # 200 MB
 
 
 BOOLEAN_REGION_STYLES = {
@@ -117,6 +135,21 @@ UNDERCUT_FACE_VISUAL_STYLES = {
         "rgb": _rgb_byte_triplet(255, 230, 150),
         "priority": 25,
     },
+    "manual_review_undercut": {
+        "label": "Manual review / possible undercut (Boolean inconclusive, risk evidence present)",
+        "rgb": _rgb_byte_triplet(255, 180, 60),
+        "priority": 30,
+    },
+    "zero_draft_not_applicable": {
+        "label": "Zero-draft / not Boolean-testable (no risk evidence)",
+        "rgb": _rgb_byte_triplet(200, 210, 225),
+        "priority": 8,
+    },
+    "ray_verified_clear": {
+        "label": "Ray-verified clear (geometric clearance check, not Boolean proof)",
+        "rgb": _rgb_byte_triplet(150, 215, 180),
+        "priority": 7,
+    },
     "parting": {
         "label": "Parting/silhouette face",
         "rgb": _rgb_byte_triplet(180, 180, 180),
@@ -147,6 +180,11 @@ ERROR_HINTS = {
     "agent_provider_error": "The configured LLM provider call failed; check its API key and quota, then retry.",
     "invalid_screenshot": "screenshot_png_base64 must be valid base64-encoded PNG data.",
     "report_export_failed": "Retry with include_agent_narrative=false or include_side_core=false. If it repeats, inspect the backend logs.",
+    "no_file_provided": "Attach a .stp or .step file to the upload request.",
+    "invalid_upload_extension": "Only .stp and .step files can be uploaded.",
+    "empty_upload": "The uploaded file has no content.",
+    "upload_too_large": f"Uploaded files must be {MAX_UPLOAD_BYTES // (1024 * 1024)} MB or smaller.",
+    "export_file_not_found": "The exported STEP file was not found on the server -- it may have been cleaned up, or export never completed. Re-run the export.",
 }
 
 
@@ -215,7 +253,13 @@ def _part_path_or_raise(filename: str, operation: str) -> tuple[str, Path]:
             ),
         )
 
+    # F2: an uploaded part's filename never collides with a curated
+    # data/parts/ fixture (see part_upload's uuid-prefixing) -- checking
+    # data/parts/ first preserves the exact pre-F2 resolution order for
+    # every existing fixture-based test and call site.
     path = PARTS_DIR / safe_name
+    if not path.exists():
+        path = UPLOADS_DIR / safe_name
     if not path.exists():
         raise HTTPException(
             status_code=404,
@@ -223,7 +267,11 @@ def _part_path_or_raise(filename: str, operation: str) -> tuple[str, Path]:
                 code="part_not_found",
                 message=f"STEP file not found: {safe_name}",
                 operation=operation,
-                details={"parts_dir": str(PARTS_DIR), "filename": safe_name},
+                details={
+                    "parts_dir": str(PARTS_DIR),
+                    "uploads_dir": str(UPLOADS_DIR),
+                    "filename": safe_name,
+                },
             ),
         )
     return safe_name, path
@@ -324,14 +372,35 @@ def _undercut_result_value(result: object, name: str, default: Any = None) -> An
 
 
 def _undercut_confirmed_face_ids(result: object) -> set[int]:
+    """
+    Discovered during Stage 1 validation (2026-08-16): this previously always
+    fell through to the feature-based fallback below for a raw
+    ``UndercutDetectionResult`` dataclass (every real call site in this
+    file), because ``boolean_refinement`` only exists as a key in
+    ``.to_dict()``'s JSON output, never as a dataclass attribute --
+    ``getattr(result, "boolean_refinement", {})`` always returned the `{}`
+    default, which is itself a dict, so the ``isinstance(refinement, dict)``
+    branch always ran and always returned ``[]`` from the empty placeholder,
+    never reaching the correct ``getattr(result, "boolean_confirmed_face_ids",
+    [])`` branch. The fallback's own ``evidence_source != "proxy"`` check is
+    stale relative to the current evidence-source vocabulary (D-046/D-053:
+    "proxy-only", "proxy-retained-after-boolean-failure", etc. -- none of
+    which literally equal "proxy"), so it fired for every feature
+    unconditionally, painting proxy-only and Boolean-failed faces as if
+    Boolean-CONFIRMED. Fixed by checking the real field directly first, and
+    only using the fallback when that field is genuinely absent (not merely
+    empty) -- an empty ``boolean_confirmed_face_ids=[]`` must mean "nothing
+    confirmed," never "field missing, guess from features."
+    """
+    direct = _undercut_result_value(result, "boolean_confirmed_face_ids", None)
+    if direct is not None:
+        return _as_int_set(direct)
+
     refinement = _undercut_result_value(result, "boolean_refinement", {}) or {}
     if isinstance(refinement, dict):
-        confirmed = refinement.get("confirmed_face_ids", [])
-    else:
-        confirmed = getattr(result, "boolean_confirmed_face_ids", [])
-    confirmed_ids = _as_int_set(confirmed)
-    if confirmed_ids:
-        return confirmed_ids
+        nested = refinement.get("confirmed_face_ids", None)
+        if nested is not None:
+            return _as_int_set(nested)
 
     fallback_ids: set[int] = set()
     for feature in list(_undercut_result_value(result, "features", []) or []):
@@ -363,13 +432,60 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
     """
     Build feature-aware visualization arrays for undercut meshes.
 
-    Boolean-confirmed faces use severity-based red/orange coloring. Proxy-only
-    faces use light yellow so the whole body is not painted critical red.
+    Boolean-confirmed faces use severity-based red/orange coloring.
+
+    The legacy ``undercut_face_ids`` union (confirmed | failed | skipped |
+    not_applicable, D-042's deliberately conservative "still flagged,
+    uncertain" bucket) is NOT painted as one undifferentiated category here
+    -- it remains available on the API response for compatibility/
+    diagnostics, but the primary visualization instead distinguishes:
+
+      1. CONFIRMED               -- boolean_confirmed_face_ids (unchanged)
+      2. MANUAL_REVIEW            -- boolean_failed_face_ids that ALSO carry
+                                      accessibility-risk evidence (a real
+                                      signed g + concave edge): Boolean was
+                                      attempted and could not resolve it, but
+                                      there IS a positive reason to suspect
+                                      this face, not just "couldn't test."
+      3. ZERO_DRAFT_NOT_APPLICABLE -- boolean_not_applicable_face_ids with NO
+                                      accessibility-risk evidence: exactly
+                                      tangent to the pull direction (g=0 to
+                                      float precision), structurally
+                                      untestable, and nothing else about the
+                                      face suggests it's suspicious. This was
+                                      previously painted identically to (2),
+                                      which is exactly the "large ordinary
+                                      wall panels painted as undercut"
+                                      problem this fixes.
+      4. RAY_VERIFIED_CLEAR        -- ray_verified_clear_face_ids (D-061):
+                                      an adaptive ray-based geometric
+                                      clearance check converged to "no
+                                      material found" BEFORE any Boolean was
+                                      attempted. A positive, bounded-
+                                      confidence geometric result -- NOT
+                                      Boolean proof -- kept visually and
+                                      semantically distinct from both
+                                      CONFIRMED (real physical evidence) and
+                                      ZERO_DRAFT_NOT_APPLICABLE (never
+                                      independently verified at all).
+      5. UNVERIFIED/OTHER          -- anything else left in the legacy union
+                                      (e.g. boolean_skipped_face_ids, or the
+                                      rare not_applicable-AND-risk overlap).
+
+    Conflating (2) and (3) was the actual bug: both fell into a single
+    "proxy_undercut" bucket regardless of whether the face carried any
+    positive risk signal at all.
     """
     undercut_ids = _as_int_set(_undercut_result_value(result, "undercut_face_ids", []))
     parting_ids = _as_int_set(_undercut_result_value(result, "parting_face_ids", []))
     accessible_ids = _as_int_set(_undercut_result_value(result, "accessible_face_ids", []))
     confirmed_ids = _undercut_confirmed_face_ids(result)
+    failed_ids = _as_int_set(_undercut_result_value(result, "boolean_failed_face_ids", []))
+    not_applicable_ids = _as_int_set(_undercut_result_value(result, "boolean_not_applicable_face_ids", []))
+    risk_ids = _as_int_set(_undercut_result_value(result, "accessibility_risk_face_ids", []))
+    ray_verified_clear_ids = _as_int_set(_undercut_result_value(result, "ray_verified_clear_face_ids", []))
+    manual_review_ids = failed_ids & risk_ids
+    zero_draft_ids = not_applicable_ids - risk_ids
     feature_by_face: dict[int, object] = {}
     feature_ids_by_face: dict[int, list[int]] = {}
 
@@ -399,7 +515,16 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
         if face_id in confirmed_ids:
             feature = feature_by_face.get(face_id)
             style_key = _confirmed_undercut_style_key(feature)
+        elif face_id in manual_review_ids:
+            style_key = "manual_review_undercut"
+        elif face_id in zero_draft_ids:
+            style_key = "zero_draft_not_applicable"
+        elif face_id in ray_verified_clear_ids:
+            style_key = "ray_verified_clear"
         elif face_id in undercut_ids:
+            # Remaining legacy-union members not covered above (e.g.
+            # boolean_skipped_face_ids, or a not_applicable face that also
+            # carries risk evidence -- rare, but not silently dropped).
             style_key = "proxy_undercut"
         elif face_id in parting_ids or face_id in accessible_ids:
             style_key = "parting" if face_id in parting_ids else "accessible"
@@ -577,23 +702,105 @@ def health():
     }
 
 
+def _step_files(directory: Path) -> list[str]:
+    if not directory.exists():
+        return []
+    return [
+        p.name for p in directory.iterdir()
+        if p.is_file() and p.suffix.lower() in {".stp", ".step"}
+    ]
+
+
 @app.get("/parts")
 def list_parts():
-    """List STEP files available for analysis."""
+    """
+    List STEP files available for analysis -- the curated data/parts/
+    fixtures plus any user-uploaded files (F2, data/uploads/), merged into
+    one flat, sorted list. Upload filenames are uuid-prefixed (see
+    part_upload) so a name collision between the two directories cannot
+    happen; the merge is a plain union, not a dedupe.
+    """
     if not PARTS_DIR.exists():
         return {
             "parts_dir": str(PARTS_DIR),
-            "files": [],
+            "files": sorted(_step_files(UPLOADS_DIR)),
             "warnings": ["Parts directory does not exist."],
         }
 
-    files = sorted(
-        p.name for p in PARTS_DIR.iterdir()
-        if p.is_file() and p.suffix.lower() in {".stp", ".step"}
-    )
+    files = sorted(_step_files(PARTS_DIR) + _step_files(UPLOADS_DIR))
     return {
         "parts_dir": str(PARTS_DIR),
         "files": files,
+    }
+
+
+@app.post("/parts/upload")
+async def part_upload(file: UploadFile = File(...)):
+    """
+    F2: accept a user-supplied STEP file and store it so every existing
+    `/parts/{filename}/...` endpoint (summary, draft, direction, core-
+    cavity, ...) can operate on it immediately via the SAME `filename`
+    contract those endpoints already use -- no parallel upload-specific API
+    surface. Stored in `data/uploads/`, never `data/parts/` (CLAUDE.md:
+    that directory's fixtures are read-only).
+
+    Validation is deliberately shallow here (extension, non-empty, size
+    cap) -- deep STEP/geometry validation already exists and is NOT
+    duplicated: the caller's very next request, `GET /parts/{filename}/
+    summary`, runs `load_step()` and returns the existing structured
+    `step_load_failed` error if the content isn't a valid STEP file.
+    """
+    operation = "STEP file upload"
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(code="no_file_provided", message="No file was attached.", operation=operation),
+        )
+
+    original_name = Path(file.filename).name
+    if Path(original_name).suffix.lower() not in {".stp", ".step"}:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(
+                code="invalid_upload_extension",
+                message=f"'{original_name}' is not a .stp/.step file.",
+                operation=operation,
+                details={"filename": original_name},
+            ),
+        )
+
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(code="empty_upload", message=f"'{original_name}' is empty.", operation=operation),
+        )
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=_error_detail(
+                code="upload_too_large",
+                message=f"'{original_name}' is {len(content)} bytes, over the {MAX_UPLOAD_BYTES} byte limit.",
+                operation=operation,
+                details={"size_bytes": len(content), "max_bytes": MAX_UPLOAD_BYTES},
+            ),
+        )
+
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    # uuid-prefixed so two uploads of the same original filename (or an
+    # upload that happens to share a name with a data/parts/ fixture) never
+    # collide -- this stored name is the `filename` every subsequent
+    # /parts/{filename}/... call must use.
+    stored_name = f"{uuid.uuid4().hex[:8]}_{original_name}"
+    final_path = UPLOADS_DIR / stored_name
+    tmp_path = UPLOADS_DIR / f".{stored_name}.part"
+    tmp_path.write_bytes(content)
+    os.replace(tmp_path, final_path)  # atomic on the same filesystem
+
+    return {
+        "filename": stored_name,
+        "original_filename": original_name,
+        "size_bytes": len(content),
     }
 
 
@@ -1024,6 +1231,17 @@ def _parse_delegations(raw: str | None) -> tuple[DelegatedSecondaryAction, ...]:
     return tuple(delegations)
 
 
+#: C18A: _resolve_v2_parting_line (C1, 2026-08-17) was removed here -- its
+#: two remaining callers (/core-cavity, /export/report's unconditional
+#: face-classification section) were both replaced by
+#: resolve_authoritative_parting_line, fed by real undercut evidence
+#: (direction.optimal_undercuts / prepare_manual_direction), eliminating
+#: the undercuts=UndercutInput.empty() staleness C13/C17 identified. It had
+#: zero remaining callers after that change (/parting-line-v2 has always
+#: called analyse_parting_line directly, independently, with its own
+#: deliberate undercuts=UndercutInput.empty() -- untouched, out of scope).
+
+
 @app.get("/parts/{filename}/parting-line-v2")
 def part_parting_line_v2(
     filename: str,
@@ -1126,18 +1344,15 @@ def part_parting_line_v2(
 
             mesh_payload.update(_undercut_mesh_visual_payload(undercut_result, mesh))
 
-            # Core/cavity tint -- only meaningful once a candidate is
-            # selected (RegionClassification is only computed for the
-            # passing candidate, see PartingLineV2Result.regions).
-            if result.regions is not None:
-                cavity_ids = result.regions.cavity_face_ids
-                core_ids = result.regions.core_face_ids
-                mesh_payload["pv2_region_rgb"] = [
-                    [0.35, 0.65, 0.95] if fid in cavity_ids
-                    else [0.95, 0.55, 0.20] if fid in core_ids
-                    else [0.55, 0.55, 0.55]
-                    for fid in mesh.face_ids
-                ]
+            # Core/cavity tint: retired server-side "pv2_region_rgb" here
+            # (Phase 4, docs/DECISIONS_AND_ALGORITHMS.md D-045) -- it only
+            # distinguished cavity/core by raw H3 component membership, never
+            # the split/ambiguous labels, and a repo-wide search found zero
+            # consumers of this key. The frontend already owns core/cavity
+            # compositing for this tab (it independently overlays undercuts,
+            # core-pin, and delegation groups on top), and builds its own
+            # label-aware coloring directly from `payload["regions"]["faces"]`
+            # (RegionClassification.to_dict(), unaffected by this removal).
 
             # Core-pin interface highlight (D-043) -- metadata annotation
             # only; never a curve, never mixed into the Γ overlay itself.
@@ -1196,13 +1411,42 @@ def part_core_cavity(
     include_mesh: bool = Query(default=True),
     include_mesh_geometry: bool = Query(default=True),
     mesh_deflection: float = Query(default=0.5, gt=0.0),
+    core_pin_face_refs: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-043), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
+    delegations: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-044), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
 ):
     """
     Classify faces as cavity, core, or parting relative to the pull direction.
 
     Level 1: face classification (always returned).
-    Milestone 1.10: set ``solid_split=true`` to also run the Boolean mold-half split
-    using the parting surface from the parting-line endpoint.
+    Milestone 1.10: set ``solid_split=true`` to also run the Boolean mold-half split.
+
+    C1 (2026-08-17): both Level 1 classification and the solid split are now
+    sourced from the AUTHORITATIVE ``parting_line_v2`` pipeline
+    (``analyse_parting_line``), never the legacy ``parting_line.py`` module.
+    Face classification uses ``RegionClassification`` (graph-connectivity-
+    based, straddle-aware) whenever v2 finds a feasible candidate for this
+    direction; it falls back to the pre-existing single-normal test only
+    when v2 does not (e.g. an infeasible/unauthorized direction). The
+    Boolean solid split additionally REQUIRES a v2-feasible candidate --
+    core/cavity does not decide feasibility itself (that stays
+    ``direction_optimizer`` -> ``parting_line_v2`` -> H0-H7's job); an
+    infeasible/unauthorized direction reports
+    ``solid_split_status="blocked_by_parting_line"`` and the Boolean split
+    never runs, with no fallback to the legacy module. ``core_pin_face_refs``/
+    ``delegations`` are optional, explicitly-authorized inputs threaded
+    straight through to both ``optimize_mold_direction`` and
+    ``analyse_parting_line`` -- this endpoint performs no discovery or
+    inference of its own.
 
     Set ``use_optimal_direction=false`` and pass ``dx``/``dy``/``dz`` to
     classify against a manually supplied direction (Stage 3 S3.6 — direction
@@ -1235,88 +1479,194 @@ def part_core_cavity(
     _, path = _part_path_or_raise(filename, operation)
 
     try:
+        parsed_core_pin_face_refs = _parse_core_pin_face_refs(core_pin_face_refs)
+        parsed_delegations = _parse_delegations(delegations)
+
         part = load_step_cached(path)
         pull_direction = (dx, dy, dz)
         pull_direction_source = "manual_query_direction"
 
+        # C18A: eliminates the stale _resolve_v2_parting_line(undercuts=
+        # UndercutInput.empty()) duplication (C13/C17 finding) -- face
+        # classification below now uses the SAME real-undercut-aware
+        # parting-line result the solid-split orchestration uses, computed
+        # via the SAME resolve_authoritative_parting_line/
+        # prepare_manual_direction helpers, and threaded into the
+        # orchestration call further down as precomputed_pl_result so it is
+        # never derived twice.
+        undercuts_for_pl = None
+        manual_invalid: object = None
         if use_optimal_direction:
-            direction = optimize_mold_direction(part)
+            direction = optimize_mold_direction(
+                part,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
+            )
             pull_direction = direction.best_direction
             pull_direction_source = "optimal_mold_direction"
             part.optimal_pull_direction = pull_direction
+            undercuts_for_pl = direction.optimal_undercuts
+        else:
+            normalized, undercuts_for_pl, manual_invalid = prepare_manual_direction(part, pull_direction)
+            if manual_invalid is None:
+                pull_direction = normalized
+                part.optimal_pull_direction = pull_direction
+
+        pl_result = None
+        if manual_invalid is None:
+            pl_result = resolve_authoritative_parting_line(
+                part, pull_direction, undercuts_for_pl,
+                core_pin_face_refs=parsed_core_pin_face_refs, delegations=parsed_delegations,
+                source_label="optimizer" if use_optimal_direction else "manual",
+            )
 
         result = classify_core_cavity(
             part,
             pull_direction=pull_direction,
             threshold=threshold,
             mutate=True,
+            region_classification=pl_result.regions if pl_result is not None else None,
         )
         payload: dict[str, Any] = {
             "part": part.to_dict(include_faces=include_faces),
             "core_cavity": result.to_dict(),
             "pull_direction_source": pull_direction_source,
+            "parting_line_v2_outcome": pl_result.outcome if pl_result is not None else None,
         }
+        if manual_invalid is not None:
+            payload["orchestration"] = manual_invalid.to_dict()
 
         # Milestone 1.10: optional Boolean solid split.
-        if solid_split:
-            from backend.geometry.parting_line import detect_parting_line_candidates
-            parting_result = detect_parting_line_candidates(
-                part,
-                pull_direction=pull_direction,
-                mutate=False,
-            )
-            parting_sheet = (
-                parting_result.parting_surface.occ_shape
-                if parting_result.parting_surface.status.startswith("generated")
-                else None
-            )
-            solid_result = split_core_cavity_solids(
-                part,
-                parting_sheet,
-                pull_direction=pull_direction,
-                loop_points=parting_result.wire_points,
-            )
-            payload["solid_split"] = solid_result.to_dict()
-
-            # Stage 4 (Bosch criterion #5): first-increment side core, gated
-            # behind solid_split since it needs cavity_solid/core_solid.
+        if solid_split and use_optimal_direction:
+            # C14: the ONE winning-direction orchestration chain -- requires
+            # optimal_found=True (never proceeds on best_unverified_
+            # candidate), re-derives the parting-line result with the SAME
+            # real undercut evidence the optimizer's own search used
+            # (fixing the undercuts=UndercutInput.empty() gap C13 found),
+            # and threads validated delegations into side-core feature
+            # selection before generation. Replaces the ad hoc
+            # detect_undercuts()+generate_*_side_core() calls previously
+            # inlined here.
+            severities = tuple(
+                s.strip() for s in side_core_severities.split(",") if s.strip()
+            ) or ("critical",)
             if generate_side_core:
-                undercut_result = detect_undercuts(
-                    part,
-                    pull_direction,
-                    mutate=False,
-                    boolean_refine=True,
+                orchestration = resolve_winning_direction_mold(
+                    part, direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    primary_only=True,
+                    generate_side_cores=True,
+                    precomputed_pl_result=pl_result,
                 )
-                side_core_result = generate_primary_side_core(
-                    part, undercut_result, solid_result,
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
                 )
-                payload["side_core"] = side_core_result.to_dict()
-
-            # S4.3 (2026-07-29): multi-feature generalization, independent
-            # of (and mutually usable alongside) the single-feature path
-            # above.
+                payload["orchestration"] = orchestration.to_dict()
+                if orchestration.multi_side_core_result is not None:
+                    generated = orchestration.multi_side_core_result.generated_results
+                    payload["side_core"] = (
+                        generated[0].to_dict() if generated
+                        else orchestration.multi_side_core_result.to_dict()
+                    )
             if multi_feature_side_cores:
-                severities = tuple(
-                    s.strip() for s in side_core_severities.split(",") if s.strip()
+                orchestration = resolve_winning_direction_mold(
+                    part, direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    severities=severities, max_features=side_core_max_features,
+                    primary_only=False,
+                    generate_side_cores=True,
+                    precomputed_pl_result=pl_result,
                 )
-                undercut_result = detect_undercuts(
-                    part,
-                    pull_direction,
-                    mutate=False,
-                    boolean_refine=True,
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
                 )
-                multi_result = generate_side_cores_for_features(
-                    part,
-                    undercut_result,
-                    solid_result,
-                    severities=severities,
-                    max_features=side_core_max_features,
-                )
-                combined = combine_side_cores_per_half(solid_result, multi_result)
-                payload["side_cores"] = multi_result.to_dict()
+                payload["orchestration"] = orchestration.to_dict()
+                if orchestration.multi_side_core_result is not None:
+                    payload["side_cores"] = orchestration.multi_side_core_result.to_dict()
                 payload["side_core_combined"] = {
-                    half: result.to_dict() for half, result in combined.items()
+                    half: r.to_dict() for half, r in orchestration.combined_side_cores.items()
                 }
+            if not generate_side_core and not multi_feature_side_cores:
+                orchestration = resolve_winning_direction_mold(
+                    part, direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    generate_side_cores=False,
+                    precomputed_pl_result=pl_result,
+                )
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
+                )
+                payload["orchestration"] = orchestration.to_dict()
+        elif solid_split and manual_invalid is None:
+            # C16/C18A: manual/override direction (Stage 3 S3.6) now runs
+            # through the EXACT SAME orchestration core as the automatic
+            # path -- resolve_manual_direction_mold's validation/
+            # normalization/undercut-detection was already done above
+            # (prepare_manual_direction) and its result reused here via
+            # precomputed_undercuts/precomputed_pl_result, so neither
+            # detect_undercuts nor analyse_parting_line runs a second time
+            # for this direction. Never fabricates a
+            # DirectionOptimizationResult/optimal_found -- see
+            # resolve_manual_direction_mold's own docstring.
+            severities = tuple(
+                s.strip() for s in side_core_severities.split(",") if s.strip()
+            ) or ("critical",)
+            if generate_side_core:
+                orchestration = resolve_manual_direction_mold(
+                    part, pull_direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    primary_only=True,
+                    generate_side_cores=True,
+                    precomputed_undercuts=undercuts_for_pl,
+                    precomputed_pl_result=pl_result,
+                )
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
+                )
+                payload["orchestration"] = orchestration.to_dict()
+                if orchestration.multi_side_core_result is not None:
+                    generated = orchestration.multi_side_core_result.generated_results
+                    payload["side_core"] = (
+                        generated[0].to_dict() if generated
+                        else orchestration.multi_side_core_result.to_dict()
+                    )
+            if multi_feature_side_cores:
+                orchestration = resolve_manual_direction_mold(
+                    part, pull_direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    severities=severities, max_features=side_core_max_features,
+                    primary_only=False,
+                    generate_side_cores=True,
+                    precomputed_undercuts=undercuts_for_pl,
+                    precomputed_pl_result=pl_result,
+                )
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
+                )
+                payload["orchestration"] = orchestration.to_dict()
+                if orchestration.multi_side_core_result is not None:
+                    payload["side_cores"] = orchestration.multi_side_core_result.to_dict()
+                payload["side_core_combined"] = {
+                    half: r.to_dict() for half, r in orchestration.combined_side_cores.items()
+                }
+            if not generate_side_core and not multi_feature_side_cores:
+                orchestration = resolve_manual_direction_mold(
+                    part, pull_direction,
+                    core_pin_face_refs=parsed_core_pin_face_refs,
+                    delegations=parsed_delegations,
+                    generate_side_cores=False,
+                    precomputed_undercuts=undercuts_for_pl,
+                    precomputed_pl_result=pl_result,
+                )
+                payload["solid_split"] = (
+                    orchestration.split_result.to_dict() if orchestration.split_result else None
+                )
+                payload["orchestration"] = orchestration.to_dict()
 
         if include_mesh:
             mesh = build_display_mesh(part, linear_deflection=mesh_deflection)
@@ -1372,9 +1722,30 @@ def export_mold_halves_endpoint(
     multi_feature_side_cores: bool = Query(default=False),
     side_core_severities: str = Query(default="critical"),
     side_core_max_features: int | None = Query(default=None),
+    core_pin_face_refs: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-043), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
+    delegations: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-044), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
 ):
     """
     Export cavity and core mold-half solids as a multi-body AP214 STEP file (Milestone 1.11).
+
+    C1 (2026-08-17): the parting-line loop now comes from the AUTHORITATIVE
+    ``parting_line_v2`` pipeline, never the legacy ``parting_line.py``
+    module. If v2 finds no feasible candidate for this exact direction/
+    authorization, the export reports ``solid_split_status=
+    "blocked_by_parting_line"`` and no Boolean split runs -- there is no
+    fallback to the legacy module. ``core_pin_face_refs``/``delegations``
+    are optional, explicitly-authorized inputs threaded straight through to
+    both ``optimize_mold_direction`` and ``analyse_parting_line``.
 
     Runs the full pipeline: load → direction → parting line → parting surface →
     solid split → export. Writes to ``output/mold_halves/`` by default (never to
@@ -1408,31 +1779,11 @@ def export_mold_halves_endpoint(
     _, path = _part_path_or_raise(filename, operation)
 
     try:
-        from backend.geometry.parting_line import detect_parting_line_candidates
+        parsed_core_pin_face_refs = _parse_core_pin_face_refs(core_pin_face_refs)
+        parsed_delegations = _parse_delegations(delegations)
 
         part = load_step_cached(path)
         pull_direction = (dx, dy, dz)
-        if use_optimal_direction:
-            direction = optimize_mold_direction(part)
-            pull_direction = direction.best_direction
-        part.optimal_pull_direction = pull_direction
-
-        parting_result = detect_parting_line_candidates(
-            part,
-            pull_direction=pull_direction,
-            mutate=False,
-        )
-        parting_sheet = (
-            parting_result.parting_surface.occ_shape
-            if parting_result.parting_surface.status.startswith("generated")
-            else None
-        )
-        solid_result = split_core_cavity_solids(
-            part,
-            parting_sheet,
-            pull_direction=pull_direction,
-            loop_points=parting_result.wire_points,
-        )
         prefix = filename.replace(".stp", "").replace(".step", "")
 
         side_core_result = None
@@ -1440,43 +1791,123 @@ def export_mold_halves_endpoint(
         combined_side_cores: dict[str, object] = {}
         solid_overrides: dict[str, object] | None = None
         extra_solids: list[tuple[object, str]] | None = None
-        if generate_side_core and solid_result.solid_split_status == "split_ok":
-            undercut_result = detect_undercuts(
-                part, pull_direction, mutate=False, boolean_refine=True,
+        orchestration = None
+
+        if use_optimal_direction:
+            direction = optimize_mold_direction(
+                part,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
             )
-            side_core_result = generate_primary_side_core(
-                part, undercut_result, solid_result,
-            )
-            if side_core_result.status == "generated":
-                solid_overrides = {
-                    side_core_result.containing_half: side_core_result.reduced_half_solid,
-                }
-                extra_solids = [
-                    (side_core_result.side_core_solid, f"side_core_{side_core_result.feature_id}"),
-                ]
-        elif multi_feature_side_cores and solid_result.solid_split_status == "split_ok":
+            pull_direction = direction.best_direction
+            part.optimal_pull_direction = pull_direction
+
+            # C14: the ONE winning-direction orchestration chain -- requires
+            # optimal_found=True, re-derives the parting-line result with
+            # the SAME real undercut evidence the optimizer's own search
+            # used (fixing the undercuts=UndercutInput.empty() gap C13
+            # found), and threads validated delegations into side-core
+            # feature selection before generation.
             severities = tuple(
                 s.strip() for s in side_core_severities.split(",") if s.strip()
-            )
-            undercut_result = detect_undercuts(
-                part, pull_direction, mutate=False, boolean_refine=True,
-            )
-            multi_side_core_result = generate_side_cores_for_features(
-                part, undercut_result, solid_result,
+            ) or ("critical",)
+            orchestration = resolve_winning_direction_mold(
+                part, direction,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
                 severities=severities, max_features=side_core_max_features,
+                primary_only=(generate_side_core and not multi_feature_side_cores),
+                generate_side_cores=(generate_side_core or multi_feature_side_cores),
             )
-            combined_side_cores = combine_side_cores_per_half(solid_result, multi_side_core_result)
-            solid_overrides = {}
-            extra_solids = []
-            for half, combined in combined_side_cores.items():
-                if combined.status != "generated":
-                    continue
-                solid_overrides[half] = combined.reduced_half_solid
-                extra_solids.append((combined.side_core_solid, f"side_core_combined_{half}"))
-            if not solid_overrides:
-                solid_overrides = None
-            if not extra_solids:
-                extra_solids = None
+            solid_result = orchestration.split_result
+            if solid_result is None:
+                response = {
+                    "filename": filename,
+                    "pull_direction": list(pull_direction),
+                    "orchestration": orchestration.to_dict(),
+                    "export": None,
+                }
+                return response
+
+            if orchestration.multi_side_core_result is not None:
+                generated = orchestration.multi_side_core_result.generated_results
+                if generate_side_core and not multi_feature_side_cores:
+                    if generated:
+                        side_core_result = generated[0]
+                        solid_overrides = {
+                            side_core_result.containing_half: side_core_result.reduced_half_solid,
+                        }
+                        extra_solids = [
+                            (side_core_result.side_core_solid, f"side_core_{side_core_result.feature_id}"),
+                        ]
+                else:
+                    multi_side_core_result = orchestration.multi_side_core_result
+                    combined_side_cores = orchestration.combined_side_cores
+                    solid_overrides = {}
+                    extra_solids = []
+                    for half, combined in combined_side_cores.items():
+                        if combined.status != "generated":
+                            continue
+                        solid_overrides[half] = combined.reduced_half_solid
+                        extra_solids.append((combined.side_core_solid, f"side_core_combined_{half}"))
+                    if not solid_overrides:
+                        solid_overrides = None
+                    if not extra_solids:
+                        extra_solids = None
+        else:
+            # C16: manual/override direction (Stage 3 S3.6) now runs through
+            # the EXACT SAME orchestration core as the automatic path above
+            # -- resolve_manual_direction_mold normalizes/validates
+            # pull_direction, computes real undercut evidence for it, and
+            # calls the shared _resolve_mold_for_direction chain. Never
+            # fabricates a DirectionOptimizationResult/optimal_found.
+            part.optimal_pull_direction = pull_direction
+            severities = tuple(
+                s.strip() for s in side_core_severities.split(",") if s.strip()
+            ) or ("critical",)
+            orchestration = resolve_manual_direction_mold(
+                part, pull_direction,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
+                severities=severities, max_features=side_core_max_features,
+                primary_only=(generate_side_core and not multi_feature_side_cores),
+                generate_side_cores=(generate_side_core or multi_feature_side_cores),
+            )
+            solid_result = orchestration.split_result
+            if solid_result is None:
+                response = {
+                    "filename": filename,
+                    "pull_direction": list(pull_direction),
+                    "orchestration": orchestration.to_dict(),
+                    "export": None,
+                }
+                return response
+
+            if orchestration.multi_side_core_result is not None:
+                generated = orchestration.multi_side_core_result.generated_results
+                if generate_side_core and not multi_feature_side_cores:
+                    if generated:
+                        side_core_result = generated[0]
+                        solid_overrides = {
+                            side_core_result.containing_half: side_core_result.reduced_half_solid,
+                        }
+                        extra_solids = [
+                            (side_core_result.side_core_solid, f"side_core_{side_core_result.feature_id}"),
+                        ]
+                else:
+                    multi_side_core_result = orchestration.multi_side_core_result
+                    combined_side_cores = orchestration.combined_side_cores
+                    solid_overrides = {}
+                    extra_solids = []
+                    for half, combined in combined_side_cores.items():
+                        if combined.status != "generated":
+                            continue
+                        solid_overrides[half] = combined.reduced_half_solid
+                        extra_solids.append((combined.side_core_solid, f"side_core_combined_{half}"))
+                    if not solid_overrides:
+                        solid_overrides = None
+                    if not extra_solids:
+                        extra_solids = None
 
         export_result = export_mold_halves(
             solid_result,
@@ -1488,10 +1919,11 @@ def export_mold_halves_endpoint(
         response: dict[str, Any] = {
             "filename": filename,
             "pull_direction": list(pull_direction),
-            "parting_surface_status": parting_result.parting_surface.status,
             "solid_split": solid_result.to_dict(),
             "export": export_result,
         }
+        if orchestration is not None:
+            response["orchestration"] = orchestration.to_dict()
         if side_core_result is not None:
             response["side_core"] = side_core_result.to_dict()
         if multi_side_core_result is not None:
@@ -1506,6 +1938,35 @@ def export_mold_halves_endpoint(
         _raise_value_error(exc, operation)
     except STEPLoadError as exc:
         _raise_step_error(exc, operation)
+
+
+@app.get("/export/download/{filename}")
+def export_download(filename: str):
+    """
+    F6: retrieve the bytes of a STEP file `POST /parts/{filename}/export/
+    mold-halves` already wrote to disk (`export.download_filename` in that
+    endpoint's response). `/export/mold-halves` itself only ever returns a
+    server-side filesystem path -- there was previously no way for a
+    browser client to actually download the file it names; this is the
+    minimal endpoint that closes that gap. Scoped strictly to
+    `settings.dfm.core_cavity.export_dir` (never an arbitrary path) via the
+    same basename-only guard `_part_path_or_raise` already uses.
+    """
+    operation = "STEP export download"
+    safe_name = Path(filename).name
+    if safe_name != filename:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_detail(code="invalid_filename", message="filename must not contain path separators", operation=operation, details={"filename": filename}),
+        )
+    export_dir = Path(settings.dfm.core_cavity.export_dir).resolve()
+    path = export_dir / safe_name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=_error_detail(code="export_file_not_found", message=f"Exported file not found: {safe_name}", operation=operation, details={"export_dir": str(export_dir), "filename": safe_name}),
+        )
+    return FileResponse(path, media_type="application/octet-stream", filename=safe_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1628,8 +2089,21 @@ def export_pdf_report(
     include_solid_split: bool = Query(default=True),
     include_side_core: bool = Query(default=False),
     include_agent_narrative: bool = Query(default=False),
+    include_executive_summary: bool = Query(default=True),
     agent_provider: str | None = Query(default=None),
     screenshot: ReportScreenshotPayload = ReportScreenshotPayload(),
+    core_pin_face_refs: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-043), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
+    delegations: str | None = Query(
+        default=None,
+        description='Optional JSON array (plan D-044), threaded straight through '
+                     "to parting_line_v2 -- see /parting-line-v2's description. "
+                     "Omit for today's default behaviour.",
+    ),
 ):
     """
     Generate a PDF DfM report (Stage 6) and return it as `application/pdf`.
@@ -1643,6 +2117,23 @@ def export_pdf_report(
     report is always generatable with none of them. Set
     `use_optimal_direction=false` with `dx`/`dy`/`dz` for a manually
     supplied direction, matching every other endpoint's S3.6 pattern.
+
+    C1 (2026-08-17): the report's own "parting line" section still reports
+    the legacy `parting_line.py` candidate (unrelated to core/cavity —
+    that section's own display data, unchanged this phase). The Boolean
+    SOLID SPLIT (`include_solid_split=true`), however, now sources its
+    loop from the AUTHORITATIVE `parting_line_v2` pipeline, never the
+    legacy module -- an infeasible/unauthorized direction reports
+    `solid_split_status="blocked_by_parting_line"` with no split attempted
+    and no fallback to the legacy module. `core_pin_face_refs`/
+    `delegations` are threaded through to both `optimize_mold_direction`
+    and `analyse_parting_line`.
+
+    F6 (2026-08-17): `include_executive_summary` (default true) prepends a
+    one-block "read this first" verdict/summary -- see
+    `build_dfm_report_pdf`'s own docstring; it is derived entirely from
+    the same dicts every other section already renders from, never a new
+    computation, and every other section's inclusion logic is unchanged.
     """
     operation = "PDF report export"
     _, path = _part_path_or_raise(filename, operation)
@@ -1662,36 +2153,110 @@ def export_pdf_report(
     try:
         from backend.report.pdf_export import build_dfm_report_pdf
 
+        parsed_core_pin_face_refs = _parse_core_pin_face_refs(core_pin_face_refs)
+        parsed_delegations = _parse_delegations(delegations)
+
         part = load_step_cached(path)
         pull_direction = (dx, dy, dz)
         direction_result = None
+        # C18A: eliminates the stale _resolve_v2_parting_line(undercuts=
+        # UndercutInput.empty()) duplication AND the separate detect_
+        # undercuts() call this endpoint previously ran unconditionally
+        # (C13/C17 finding). undercuts_for_pl is now the SAME real evidence
+        # reused for the PDF's own "undercuts" section, the authoritative
+        # parting-line derivation below, AND (when include_solid_split is
+        # requested) the orchestration -- computed exactly once.
         if use_optimal_direction:
-            direction_result = optimize_mold_direction(part)
+            direction_result = optimize_mold_direction(
+                part,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
+            )
             pull_direction = direction_result.best_direction
+            part.optimal_pull_direction = pull_direction
+            undercuts_for_pl = direction_result.optimal_undercuts
+        else:
+            normalized, undercuts_for_pl, invalid = prepare_manual_direction(part, pull_direction)
+            if invalid is not None:
+                raise ValueError(invalid.failure_reason)
+            pull_direction = normalized
             part.optimal_pull_direction = pull_direction
 
         draft_result = analyze_draft(part, pull_direction, mutate=False)
-        undercut_result = detect_undercuts(part, pull_direction, mutate=False, boolean_refine=True)
+        undercut_result = undercuts_for_pl
+        # Legacy parting_line.py is kept HERE only for the report's own
+        # separate "parting line" display section -- unrelated to
+        # core/cavity, unchanged this phase (see docstring above).
         parting_result = detect_parting_line_candidates(
             part, pull_direction, undercut_context=undercut_result, mutate=False,
         )
-        core_cavity_result = classify_core_cavity(part, pull_direction=pull_direction, mutate=False)
+
+        # C18A: the ONE authoritative, real-undercut-aware parting_line_v2
+        # call for this direction -- feeds BOTH core/cavity classification
+        # and (reused via precomputed_pl_result below) the solid split.
+        pl_result = resolve_authoritative_parting_line(
+            part, pull_direction, undercuts_for_pl,
+            core_pin_face_refs=parsed_core_pin_face_refs, delegations=parsed_delegations,
+            source_label="optimizer" if use_optimal_direction else "manual",
+        )
+        core_cavity_result = classify_core_cavity(
+            part, pull_direction=pull_direction, mutate=False,
+            region_classification=pl_result.regions,
+        )
 
         solid_split_dict = None
         side_core_dict = None
-        if include_solid_split:
-            parting_sheet = (
-                parting_result.parting_surface.occ_shape
-                if parting_result.parting_surface.status.startswith("generated")
-                else None
+        if include_solid_split and use_optimal_direction:
+            # C14: the ONE winning-direction orchestration chain -- requires
+            # optimal_found=True (never proceeds on best_unverified_
+            # candidate), re-derives the parting-line result with the SAME
+            # real undercut evidence the optimizer's own search used
+            # (fixing the undercuts=UndercutInput.empty() gap C13 found),
+            # and threads validated delegations into side-core feature
+            # selection before generation.
+            orchestration = resolve_winning_direction_mold(
+                part, direction_result,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
+                primary_only=True,
+                generate_side_cores=include_side_core,
+                precomputed_pl_result=pl_result,
             )
-            solid_result = split_core_cavity_solids(
-                part, parting_sheet, pull_direction, loop_points=parting_result.wire_points,
+            solid_split_dict = (
+                orchestration.split_result.to_dict() if orchestration.split_result else None
             )
-            solid_split_dict = solid_result.to_dict()
-            if include_side_core and solid_result.solid_split_status == "split_ok":
-                side_result = generate_primary_side_core(part, undercut_result, solid_result)
-                side_core_dict = side_result.to_dict()
+            if include_side_core and orchestration.multi_side_core_result is not None:
+                generated = orchestration.multi_side_core_result.generated_results
+                side_core_dict = (
+                    generated[0].to_dict() if generated
+                    else orchestration.multi_side_core_result.to_dict()
+                )
+        elif include_solid_split:
+            # C16/C18A: manual/override direction (Stage 3 S3.6) now runs
+            # through the EXACT SAME orchestration core as the automatic
+            # path above -- validation/normalization/undercut-detection was
+            # already done above (prepare_manual_direction) and reused here
+            # via precomputed_undercuts/precomputed_pl_result, so neither
+            # detect_undercuts nor analyse_parting_line runs a second time.
+            # Never fabricates a DirectionOptimizationResult/optimal_found.
+            orchestration = resolve_manual_direction_mold(
+                part, pull_direction,
+                core_pin_face_refs=parsed_core_pin_face_refs,
+                delegations=parsed_delegations,
+                primary_only=True,
+                generate_side_cores=include_side_core,
+                precomputed_undercuts=undercuts_for_pl,
+                precomputed_pl_result=pl_result,
+            )
+            solid_split_dict = (
+                orchestration.split_result.to_dict() if orchestration.split_result else None
+            )
+            if include_side_core and orchestration.multi_side_core_result is not None:
+                generated = orchestration.multi_side_core_result.generated_results
+                side_core_dict = (
+                    generated[0].to_dict() if generated
+                    else orchestration.multi_side_core_result.to_dict()
+                )
 
         agent_report_dict = None
         if include_agent_narrative:
@@ -1724,6 +2289,7 @@ def export_pdf_report(
             side_core=side_core_dict,
             agent_report=agent_report_dict,
             screenshot_png=screenshot_png_bytes,
+            include_executive_summary=include_executive_summary,
         )
         prefix = filename.replace(".stp", "").replace(".step", "")
         return Response(

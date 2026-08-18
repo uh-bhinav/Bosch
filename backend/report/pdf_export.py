@@ -110,6 +110,66 @@ def _collect_warnings(
     return warnings
 
 
+def _executive_summary_verdict(core_cavity: dict, solid_split: Optional[dict], parting_line: dict) -> str:
+    """
+    F6: one-line overall verdict for the Executive Summary -- derived
+    entirely from already-computed dicts, never a new computation. Mirrors
+    the same status vocabulary `describeAnalysisOutcome`
+    (frontend-web/src/analysis/) already uses for the same fields, so the
+    PDF's verdict and the on-screen verdict never diverge.
+    """
+    if solid_split is not None:
+        status = solid_split.get("solid_split_status")
+        if status == "split_ok":
+            return "Feasible — core/cavity solid split generated for this pull direction."
+        reason = solid_split.get("failure_reason")
+        base = f"Blocked — core/cavity solid split status is '{status}'"
+        return f"{base}: {reason}" if reason else f"{base}."
+    readiness = (parting_line.get("readiness") or {}).get("status")
+    if readiness:
+        return f"Face classification only (solid split not requested) — parting-line readiness: {readiness}."
+    return "Face classification only — solid split not requested for this report."
+
+
+def _executive_summary(
+    *,
+    filename: str,
+    pull_direction,
+    undercuts: dict,
+    core_cavity: dict,
+    solid_split: Optional[dict],
+    parting_line: dict,
+    warning_count: int,
+) -> list:
+    """
+    F6: a short "read this first" block -- verdict, part identity, pull
+    direction, undercut/warning counts -- built from the SAME dicts the
+    rest of the report already renders from. Zero new computation, exactly
+    like every other section (roadmap §5.5's honesty constraint).
+    """
+    story: list = []
+    story.append(heading("Executive Summary"))
+    story.append(body(_executive_summary_verdict(core_cavity, solid_split, parting_line)))
+    story.append(Spacer(1, 6))
+    cc_counts = core_cavity.get("face_counts", {}) or {}
+    story.append(key_value_table([
+        ("Part", filename),
+        ("Pull direction", _direction_text(pull_direction)),
+        (
+            "Core / Cavity faces",
+            f"{cc_counts.get('core', 0)} / {cc_counts.get('cavity', 0)}",
+        ),
+        (
+            "Undercut features",
+            f"{undercuts.get('feature_count', 0)} "
+            f"(critical: {undercuts.get('has_critical_undercut', 'n/a')})",
+        ),
+        ("Warnings raised", str(warning_count)),
+    ]))
+    story.append(Spacer(1, 10))
+    return story
+
+
 def build_dfm_report_pdf(
     *,
     filename: str,
@@ -123,6 +183,7 @@ def build_dfm_report_pdf(
     side_core: Optional[dict] = None,
     agent_report: Optional[dict] = None,
     screenshot_png: Optional[bytes] = None,
+    include_executive_summary: bool = True,
 ) -> bytes:
     """
     Build the full PDF DfM report and return its raw bytes.
@@ -133,6 +194,15 @@ def build_dfm_report_pdf(
     `agent_report`/`screenshot_png` are optional: the report must be
     generatable without any of them (roadmap §5.2's explicit requirement for
     the agent narrative, applied here to every optional section).
+
+    `include_executive_summary` (F6, default True): prepends a one-page-top
+    "read this first" block -- verdict, part identity, pull direction,
+    undercut/warning counts -- derived entirely from the other arguments,
+    never a new computation. Every other section (Part Summary, Draft,
+    Undercuts, Parting Line, Core/Cavity) remains unconditional, matching
+    this module's existing architecture unchanged -- F6 does not redesign
+    which sections exist, it only adds this one additive, always-derivable
+    block.
     """
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -160,6 +230,18 @@ def build_dfm_report_pdf(
         side_core=side_core,
         agent_report=agent_report,
     )
+
+    if include_executive_summary:
+        story.extend(_executive_summary(
+            filename=filename,
+            pull_direction=pull_direction,
+            undercuts=undercuts,
+            core_cavity=core_cavity,
+            solid_split=solid_split,
+            parting_line=parting_line,
+            warning_count=len(warnings),
+        ))
+
     story.append(subheading("Warnings"))
     if warnings:
         for w in warnings:
