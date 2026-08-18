@@ -297,3 +297,92 @@ def test_9_to_dict_serializes_regions_with_new_balance_fields():
     # added (see RegionClassification docstring): raw metrics only.
     assert "classification" not in d["regions"]
     assert "meaningfulness" not in d["regions"]
+
+
+# ---------------------------------------------------------------------------
+# 10-13. Phase 4 accounting-contract regression pins (docs/DECISIONS_AND_
+# ALGORITHMS.md D-045). These lock the exact measured label partition and
+# H4 numbers this phase's frontend/documentation work was built on -- if
+# any of these ever change, it means classify_regions/gates.py's math
+# changed, which Phase 4 explicitly forbids; a failure here means STOP and
+# find out why, not update the expected number to match.
+# ---------------------------------------------------------------------------
+
+@requires_occ
+@requires_part1
+def test_10_part1_plus_z_label_partition_matches_measured_baseline():
+    from backend.config import settings
+    from backend.geometry.parting_line_v2 import PullDirectionInput, UndercutInput
+    from backend.geometry.parting_line_v2.engine import analyse_parting_line
+
+    part = _part1()
+    result = analyse_parting_line(
+        part, PullDirectionInput(PULL_Z, "fixture"), cfg=settings.dfm.parting_line_v2,
+        undercuts=UndercutInput.empty(),
+    )
+    assert result.selected is not None
+    assert result.selected.candidate_id == 49
+    regions = result.regions
+    assert regions is not None
+
+    counts = {"cavity": 0, "core": 0, "split": 0, "ambiguous": 0}
+    for face in regions.faces:
+        counts[face.label] += 1
+    total_faces = len(part.faces)
+    no_record = total_faces - len(regions.faces)
+
+    assert counts == {"cavity": 24, "core": 217, "split": 0, "ambiguous": 70}
+    assert no_record == 0
+    assert total_faces == 311
+    assert sum(counts.values()) + no_record == total_faces
+
+
+@requires_occ
+@requires_part3
+def test_11_part3_candidate_110_label_partition_matches_measured_baseline():
+    part = _part3()
+    result = _candidate_110_result(part)
+    assert result.selected is not None
+    assert result.selected.candidate_id == 110
+    regions = result.regions
+    assert regions is not None
+
+    counts = {"cavity": 0, "core": 0, "split": 0, "ambiguous": 0}
+    for face in regions.faces:
+        counts[face.label] += 1
+    total_faces = len(part.faces)
+    no_record = total_faces - len(regions.faces)
+
+    assert counts == {"cavity": 314, "core": 4, "split": 1, "ambiguous": 95}
+    assert no_record == 0
+    assert total_faces == 414
+    assert sum(counts.values()) + no_record == total_faces
+
+
+@requires_occ
+@requires_part3
+def test_12_face_35_is_split_not_ambiguous():
+    """The D-043 core-pin bore is a real cross-region face and must be
+    reported as 'split', never silently folded into 'ambiguous' -- these
+    are disjoint, differently-caused states (Phase 4 accounting contract)."""
+    result = _candidate_110_result(_part3())
+    regions = result.regions
+    assert regions is not None
+    face_35 = next(f for f in regions.faces if f.face_id == BORE_FACE_ID)
+    assert face_35.label == "split"
+    assert face_35.cavity_area_mm2 > 0.0
+    assert face_35.core_area_mm2 > 0.0
+    assert BORE_FACE_ID in regions.cavity_face_ids
+    assert BORE_FACE_ID in regions.core_face_ids
+
+
+@requires_occ
+@requires_part3
+def test_13_h4_orientation_violation_fraction_regression_pin():
+    """Frozen per Phase 4: no visualization/documentation change in this
+    phase may alter H4's own computed value."""
+    result = _candidate_110_result(_part3())
+    assert result.selected is not None
+    assert result.selected.feasibility.measurements["h4_orientation_violation_fraction"] == \
+        pytest.approx(0.004994890916885516, rel=1e-9)
+    assert result.selected.feasibility.passed is True

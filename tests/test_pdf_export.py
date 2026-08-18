@@ -225,6 +225,94 @@ def test_build_dfm_report_pdf_with_only_required_sections():
     _assert_valid_pdf(pdf_bytes)
 
 
+# ---------------------------------------------------------------------------
+# F6: include_executive_summary -- the one additive backend change for the
+# frontend's section picker (see docs/... F6 report). Prepends a "read this
+# first" verdict/summary block, built entirely from the same dicts every
+# other section already renders from -- never a new computation.
+# ---------------------------------------------------------------------------
+
+
+def _common_report_kwargs() -> dict:
+    return dict(
+        filename="Part1.stp",
+        part_summary=_minimal_part_summary(),
+        draft=_minimal_draft(),
+        undercuts=_minimal_undercuts(),
+        parting_line=_minimal_parting_line(),
+        core_cavity=_minimal_core_cavity(),
+    )
+
+
+def test_include_executive_summary_true_is_the_default():
+    """
+    `build_dfm_report_pdf` must generate the Executive Summary block
+    without the caller explicitly opting in -- matches every other
+    "on by default, real content" section's convention.
+    """
+    default_bytes = build_dfm_report_pdf(**_common_report_kwargs())
+    explicit_true_bytes = build_dfm_report_pdf(**_common_report_kwargs(), include_executive_summary=True)
+    _assert_valid_pdf(default_bytes)
+    # Same content -> deterministic reportlab output of comparable size
+    # (a few bytes of timestamp jitter aside), confirming the default
+    # really does take the same branch as an explicit `True`.
+    assert abs(len(default_bytes) - len(explicit_true_bytes)) < 50
+
+
+def test_include_executive_summary_false_omits_the_block():
+    """
+    Regression guard for the F6 addition itself: toggling the flag must
+    have a real, measurable effect on the generated document (the block
+    is genuinely added/removed, not a no-op flag). PDF content streams are
+    compressed, so a raw substring search is unreliable -- the size delta
+    is the same signal `test_build_dfm_report_pdf_side_core_no_feature_
+    does_not_show_misleading_error` and friends rely on for byte-level
+    regression guards elsewhere in this file, applied here via size
+    instead of substring.
+    """
+    with_summary = build_dfm_report_pdf(**_common_report_kwargs(), include_executive_summary=True)
+    without_summary = build_dfm_report_pdf(**_common_report_kwargs(), include_executive_summary=False)
+    _assert_valid_pdf(with_summary)
+    _assert_valid_pdf(without_summary)
+    assert len(with_summary) > len(without_summary), (
+        "include_executive_summary=True must produce a strictly larger document "
+        "than include_executive_summary=False for identical input data."
+    )
+
+
+def test_executive_summary_verdict_reflects_a_successful_split():
+    from backend.report.pdf_export import _executive_summary_verdict
+
+    verdict = _executive_summary_verdict(
+        core_cavity=_minimal_core_cavity(),
+        solid_split={"solid_split_status": "split_ok"},
+        parting_line=_minimal_parting_line(),
+    )
+    assert "Feasible" in verdict
+
+
+def test_executive_summary_verdict_reflects_a_blocked_split():
+    from backend.report.pdf_export import _executive_summary_verdict
+
+    verdict = _executive_summary_verdict(
+        core_cavity=_minimal_core_cavity(),
+        solid_split={"solid_split_status": "blocked_by_parting_line", "failure_reason": "no selected candidate"},
+        parting_line=_minimal_parting_line(),
+    )
+    assert "Blocked" in verdict
+    assert "no selected candidate" in verdict
+
+
+def test_executive_summary_verdict_when_no_split_was_requested():
+    from backend.report.pdf_export import _executive_summary_verdict
+
+    verdict = _executive_summary_verdict(
+        core_cavity=_minimal_core_cavity(), solid_split=None, parting_line=_minimal_parting_line(),
+    )
+    assert "solid split not requested" in verdict
+    assert "ready" in verdict  # surfaces parting-line readiness instead
+
+
 def test_build_dfm_report_pdf_with_all_optional_sections():
     pdf_bytes = build_dfm_report_pdf(
         filename="Part1.stp",
