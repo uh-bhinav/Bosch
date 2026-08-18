@@ -1,8 +1,14 @@
 # =============================================================================
 # DfM Agent — docker-compose.yml
-# One command:  docker compose up
-# Judge/Bosch opens:  http://localhost:8501  (Streamlit UI)
-#                     http://localhost:8000  (FastAPI backend docs)
+# One command:  docker compose up --build
+# Judge opens:  http://localhost:5173  (React frontend-web UI — the demo)
+#               http://localhost:8000/docs  (FastAPI backend, interactive API docs)
+#
+# This launches frontend-web/ (React + Three.js, F1-F6), NOT the legacy
+# Streamlit UI. Dockerfile.frontend (Streamlit) and its "frontend" service
+# definition were replaced by Dockerfile.frontend-web below; Streamlit can
+# still be run manually (see README) but is no longer part of the Docker
+# path.
 # =============================================================================
 
 # version: "3.9"
@@ -53,40 +59,19 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── Frontend Streamlit service ───────────────────────────────────────────
+  # ── Frontend service — frontend-web (React + Three.js, F1-F6) ───────────
   frontend:
     platform: linux/amd64
     build:
       context: .
-      dockerfile: Dockerfile.frontend
-    command: >
-      /bin/sh -lc "echo 'Starting Streamlit frontend on :8501';
-      python -c 'import streamlit, requests; print(\"Frontend Python deps OK\")';
-      xvfb-run -a streamlit run frontend/app.py
-      --server.port=8501
-      --server.address=0.0.0.0
-      --server.headless=true
-      --server.fileWatcherType=none"
+      dockerfile: Dockerfile.frontend-web
     ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-      - ./reports:/app/reports
-      - ./frontend:/app/frontend
-      - ./config.yaml:/app/config.yaml:ro
+      - "5173:5173"
     environment:
-      - DFM_BACKEND_URL=http://backend:8000
-      - DFM_CONFIG=/app/config.yaml
-      - PYVISTA_OFF_SCREEN=true
-      - LOG_LEVEL=INFO
-      # FIX C: without this, Docker (Linux) silently falls through to the
-      # PyVista/stpyvista/Xvfb renderer while local macOS dev uses the
-      # interactive Plotly viewer (`_USE_PLOTLY_VIEWER` in frontend/app.py
-      # checks `sys.platform == "darwin"` first) — same backend data, two
-      # different viewer UX depending on where you run it. Forcing Plotly
-      # here makes both environments render identically; `plotly==5.21.0`
-      # is already a Dockerfile.frontend dependency, no image change needed.
-      - DFM_FORCE_PLOTLY=1
+      # Read server-side by the Vite dev server's proxy (vite.config.ts),
+      # not by the browser -- the judge's browser only ever talks to
+      # localhost:5173. "backend" resolves via Docker's internal network.
+      - VITE_BACKEND_URL=http://backend:8000
     depends_on:
       - backend
 

@@ -1,3 +1,11 @@
+# NOTE: this builds the legacy Streamlit UI (frontend/app.py). It is no
+# longer wired into docker-compose.yml's default "frontend" service --
+# that now builds Dockerfile.frontend-web (React). This file is kept,
+# not deleted, since it still works standalone
+# (`docker build -f Dockerfile.frontend .`) and nothing else depends on
+# its removal; it's just not part of the recommended judge path anymore.
+# See README.md for the current Docker/manual setup instructions.
+
 FROM python:3.10-slim
 
 WORKDIR /app

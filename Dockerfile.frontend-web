@@ -1,0 +1,28 @@
+# =============================================================================
+# DfM Agent — frontend-web (React) Dockerfile
+# =============================================================================
+# Runs the Vite dev server inside the container, bound to 0.0.0.0 so the
+# published port is reachable from the host. This is the same dev server
+# used for local `npm run dev` (see frontend-web/README.md) -- no separate
+# production build/nginx step, kept minimal for a judge-facing demo.
+#
+# `/api/*` proxying (frontend-web/vite.config.ts) is driven by the
+# VITE_BACKEND_URL env var, set by docker-compose.yml to the backend
+# service's Docker-internal address (http://backend:8000). That proxying
+# happens inside this container (server-side), so the browser on the
+# judge's host machine only ever talks to the published frontend port --
+# it never needs to resolve "backend" itself.
+# =============================================================================
+
+FROM node:22-slim
+
+WORKDIR /app
+
+COPY frontend-web/package.json frontend-web/package-lock.json ./
+RUN npm install
+
+COPY frontend-web/ ./
+
+EXPOSE 5173
+
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

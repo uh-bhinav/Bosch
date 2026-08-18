@@ -3,6 +3,36 @@
 STEP-native Design-for-Manufacturability analysis for injection-molded
 automotive plastic parts.
 
+## Quick start — two supported ways to run this
+
+**Recommended — Docker** (platform-isolated, one command):
+
+```bash
+docker compose up --build
+```
+
+Open **http://localhost:5173** — this launches `frontend-web/` (the React
+UI, F1–F6), talking to the FastAPI backend on `:8000` inside Docker's own
+network. `http://localhost:8000/docs` gives the backend's interactive API
+docs directly. Full detail in §21.
+
+**Alternative — Manual setup** (conda backend + npm/Vite frontend, no
+Docker):
+
+```bash
+conda env create -f environment.yml && conda activate dfm_agent
+pip install -r requirements.txt
+uvicorn backend.api.main:app --reload --port 8000   # terminal 1
+cd frontend-web && npm install && npm run dev        # terminal 2
+```
+
+Open **http://localhost:5173**. Full detail, including Windows-specific
+commands, in §5–§9.
+
+Both paths launch the exact same `frontend-web/` React application against
+the exact same backend — pick whichever is more convenient. Neither path
+launches the legacy Streamlit UI (`frontend/app.py`) — see §7.
+
 ## 1. What this does
 
 Given a real STEP (`.stp`) CAD file — exact B-Rep geometry, not a
@@ -145,12 +175,16 @@ actively developed React application covering the full guided + manual
 analysis flow, diagnostics, and export.
 
 `frontend/app.py` (Streamlit) is the original UI and is **not** the
-recommended demo path. It has not been deleted — two real backend test
-files (`tests/test_frontend_pv2_apptest.py`,
+recommended demo path — neither the Docker path (§21) nor the manual
+setup (§8–§9) launches it. It has not been deleted — two real backend
+test files (`tests/test_frontend_pv2_apptest.py`,
 `tests/test_frontend_pv2_region_colors.py`) import functions from it
 directly, so removing it would break real test coverage, not just an old
 UI. It still runs and was kept functionally up to date, but it is legacy:
-run `frontend-web/`, not this, for the demo.
+run `frontend-web/`, not this, for the demo. If you want to run it
+anyway, it's still reachable manually (`streamlit run frontend/app.py`)
+or via `docker build -f Dockerfile.frontend .` — just not through
+`docker compose up`.
 
 ## 8. Start the backend
 
@@ -312,6 +346,8 @@ maintained "claims to avoid" list this project holds itself to.
 | Windows: `'uvicorn' is not recognized` / `'conda' is not recognized` | The conda env isn't activated in this terminal, or you're in `cmd.exe` instead of the Anaconda/PowerShell prompt conda configured. Open "Anaconda Prompt" (or re-run `conda init powershell` once, then open a new PowerShell window) and `conda activate dfm_agent` again. |
 | Windows: backend starts but every request 404s or import-errors | `PYTHONPATH` wasn't set in that terminal session — it does not persist across terminal windows. Re-run `$env:PYTHONPATH = (Get-Location).Path` from the repo root in the same window you start `uvicorn` from. |
 | Windows: `conda env create -f environment.yml` fails resolving `pythonocc-core`/`cadquery`/`vtk` | These are published for `win-64` on conda-forge but this was not independently re-verified on Windows this pass (§20) — capture the exact solver error; it likely means a channel/version needs adjusting for your conda version, not that Windows is unsupported. |
+| Docker: `frontend` container shows "Could not reach the backend" in the UI | Check `docker compose ps` — if `backend` isn't healthy yet, wait for its healthcheck; `frontend` starts as soon as its own container is up, not after the backend is ready. |
+| Docker: port `5173` or `8000` already in use | Something else on the host is already bound to that port — stop it, or edit the left-hand side of the `ports:` mapping in `docker-compose.yml` (e.g. `"5174:5173"`) and open that port instead. |
 
 ## 20. Cross-platform notes
 
@@ -329,9 +365,10 @@ itself), one command is given because it is genuinely the same command.
   conda-forge's `pythonocc-core` builds.
 - **Linux**: expected to work via the same conda + npm flow as macOS —
   nothing in `backend/` or `frontend-web/` is OS-conditional. Not
-  physically tested this pass. (`xvfb` is only relevant to the
-  Docker/Streamlit headless-rendering path in §21, not to the local
-  `frontend-web/` setup, which renders in a normal browser.)
+  physically tested this pass. (`xvfb` only matters if you separately
+  run the legacy Streamlit UI's own Dockerfile, per §7 — it is not part
+  of the recommended Docker path in §21, which runs `frontend-web/` and
+  renders in a normal browser.)
 - **Windows**: expected to work via conda + npm in PowerShell, using the
   Windows-specific commands given in §6/§8 for `PYTHONPATH`. Not
   physically tested this pass — specifically unverified: (1) that
@@ -348,17 +385,42 @@ one genuine cross-platform risk in this repository worth flagging back —
 everything else in the setup path (Python imports, FastAPI, Vite/npm) is
 plain and platform-agnostic once the conda environment exists.
 
-## 21. Docker
+## 21. Docker (recommended path)
 
-`docker-compose.yml`, `Dockerfile.backend`, and `Dockerfile.frontend`
-exist and build a working backend + **Streamlit** stack
-(`docker compose up`, backend on `:8000`, Streamlit on `:8501`). There is
-no Docker service for `frontend-web/` — adding one was out of scope for
-this cleanup pass (no new Docker architecture was introduced). If you
-want to use Docker for the backend only, it works as-is (on Windows,
-Docker Desktop with the WSL2 backend); for the intended React demo, use
-the local setup in §8–§9, which is the simplest reliable path — on every
-platform — with what's in this repository today.
+```bash
+docker compose up --build
+```
+
+This builds and runs two containers:
+
+| Service | Built from | Published port | What it is |
+|---|---|---|---|
+| `backend` | `Dockerfile.backend` | `8000` | FastAPI backend — same code path as the manual setup. |
+| `frontend` | `Dockerfile.frontend-web` | `5173` | The React `frontend-web/` UI, running Vite's dev server bound to `0.0.0.0` inside the container. |
+
+Open **http://localhost:5173** — this is `frontend-web/`, the same UI
+described throughout this README, not Streamlit. The frontend container
+talks to the backend over Docker's internal network
+(`VITE_BACKEND_URL=http://backend:8000`, resolved server-side by Vite's
+own proxy — the same proxy mechanism used for local `npm run dev`); the
+browser on your host machine only ever talks to `localhost:5173` and
+never needs to resolve `backend` itself.
+
+The legacy Streamlit UI is **not** part of this Docker path.
+`Dockerfile.frontend` (Streamlit) still exists and still builds
+standalone if you explicitly target it
+(`docker build -f Dockerfile.frontend .`), but `docker-compose.yml`'s
+`frontend` service no longer references it — it was not deleted only
+because nothing requires deleting it, not because it's still recommended.
+
+**Windows note**: Docker is the platform-isolation path specifically
+*because* it avoids conda/Windows solver risk (§20) — the same Linux
+container image runs regardless of host OS via Docker Desktop. That said,
+**Windows execution of this Docker setup has not been physically tested
+this pass.** Docker Desktop with the WSL2 backend is required on Windows;
+beyond that, this should behave identically to macOS/Linux since nothing
+in either Dockerfile is OS-conditional, but treat that as expected, not
+demonstrated.
 
 ## 22. Five-minute panel demo
 
