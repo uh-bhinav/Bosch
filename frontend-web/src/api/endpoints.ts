@@ -18,6 +18,7 @@ import type {
   HealthResponse,
   MoldHalfExportResponse,
   PartingLineAnalysisResponse,
+  PartingLineV2Response,
   PartsListResponse,
   PartSummaryResponse,
   UndercutsAnalysisResponse,
@@ -128,6 +129,41 @@ export function getPartingLine(filename: string, direction: Vec3): Promise<Parti
     include_mesh: false,
     include_undercut_conflicts: false,
   });
+}
+
+/**
+ * F8: the AUTHORITATIVE parting-line curve -- `/parting-line-v2`, the same
+ * engine `/core-cavity` already uses internally for the real face split
+ * (`analyse_parting_line`, via `resolve_authoritative_parting_line`). This
+ * endpoint never runs the direction optimizer itself (enforced backend-side
+ * by `test_no_module_imports_the_direction_optimizer`) -- it always takes
+ * `direction` as a literal, already-resolved vector, exactly like the
+ * legacy `getPartingLine` it replaces for the Parting Line tool. Threads the
+ * SAME `core_pin_face_refs`/`delegations` authorization the primary
+ * core-cavity call used, so the curve shown here is consistent with
+ * whatever solid split it's illustrating -- never a second, differently-
+ * authorized run.
+ */
+export function getPartingLineV2(
+  filename: string,
+  direction: Vec3,
+  authorization: ManualAnalysisAuthorization = {},
+): Promise<PartingLineV2Response> {
+  const params: Record<string, string | number | boolean> = {
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    // F10 §6: include_mesh_geometry stays false (no points/faces -- geometry
+    // is already loaded from the primary core-cavity call) but include_mesh
+    // must be true to get face_ids + pv2_core_pin_rgb/pv2_delegation_rgb --
+    // the only source of "which faces are the authorized core-pin/delegation
+    // groups", needed to visualize authorization the same way draft/
+    // undercuts/core-cavity are already visualized.
+    include_mesh: true,
+    include_mesh_geometry: false,
+    ...authorizationParams(authorization),
+  };
+  return apiGet<PartingLineV2Response>(`/parts/${encodeURIComponent(filename)}/parting-line-v2`, params);
 }
 
 /**

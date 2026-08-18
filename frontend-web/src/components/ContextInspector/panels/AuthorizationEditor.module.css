@@ -45,11 +45,13 @@
 
 .entryText {
   flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--text-secondary);
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .removeButton {
@@ -84,6 +86,7 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
   flex: 1 1 auto;
+  min-width: 0;
 }
 
 .fieldRow {
@@ -93,6 +96,8 @@
 }
 
 .textInput {
+  width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-primary);

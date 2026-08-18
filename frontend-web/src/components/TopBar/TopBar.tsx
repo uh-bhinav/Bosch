@@ -17,7 +17,7 @@ import { stageLabelForElapsed, useElapsedSeconds } from '../../analysis/useElaps
 import { useAnalysisStore } from '../../store/analysisStore';
 import { readViewportBackground, useTheme } from '../../theme/useTheme';
 import { getViewportEngine } from '../../viewport/engineSingleton';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import styles from './TopBar.module.css';
 
 const PIPELINE_LABEL: Record<string, string> = {
@@ -36,6 +36,23 @@ export function TopBar() {
   const isRunning = pipelineStatus === 'running';
   const elapsedSeconds = useElapsedSeconds(isRunning);
   const { theme, toggleTheme } = useTheme();
+
+  // F13 §2: a real click-toggled popover -- the previous `title` attribute
+  // relied on the browser's native hover tooltip, which is slow, easy to
+  // miss, and unreliable across browsers/devices; a click target is always
+  // discoverable and works the same way on desktop and touch.
+  const [showModeInfo, setShowModeInfo] = useState(false);
+  const modeInfoRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!showModeInfo) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (modeInfoRef.current && !modeInfoRef.current.contains(event.target as Node)) {
+        setShowModeInfo(false);
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [showModeInfo]);
 
   // The three.js scene background is a real THREE.Color, not CSS -- it must
   // be re-read and re-applied explicitly whenever the theme flips (mount
@@ -63,21 +80,49 @@ export function TopBar() {
 
       <div className={styles.spacer} />
 
-      <div className={styles.modeToggle} role="group" aria-label="Workstation mode">
+      <div className={styles.modeGroup} ref={modeInfoRef}>
+        <div className={styles.modeToggle} role="group" aria-label="Workstation mode">
+          <button
+            type="button"
+            className={mode === 'guided' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => setMode('guided')}
+          >
+            Guided (Recommended)
+          </button>
+          <button
+            type="button"
+            className={mode === 'expert' ? styles.modeButtonActive : styles.modeButton}
+            onClick={() => setMode('expert')}
+          >
+            Expert
+          </button>
+        </div>
         <button
           type="button"
-          className={mode === 'guided' ? styles.modeButtonActive : styles.modeButton}
-          onClick={() => setMode('guided')}
+          className={styles.modeInfo}
+          onClick={() => setShowModeInfo((v) => !v)}
+          aria-expanded={showModeInfo}
+          aria-label="What do Guided and Expert mean?"
         >
-          Guided
+          ⓘ
         </button>
-        <button
-          type="button"
-          className={mode === 'expert' ? styles.modeButtonActive : styles.modeButton}
-          onClick={() => setMode('expert')}
-        >
-          Expert
-        </button>
+        {showModeInfo && (
+          <div className={styles.modeInfoPopover} role="dialog" data-testid="mode-info-popover">
+            <p>
+              <strong>Guided (Recommended)</strong> — the normal DfM workflow. Follow the recommended analysis
+              sequence from import → draft → pull direction → undercuts → parting line → core/cavity → side
+              actions.
+            </p>
+            <p>
+              <strong>Expert</strong> — advanced engineering workflow. Provides individual analysis controls,
+              manual direction testing, authorization configuration, and lower-level diagnostic information.
+            </p>
+            <p className={styles.modeInfoFootnote}>
+              Both modes read and write the SAME analysis state. Switching between them never reruns analysis,
+              resets results, or changes what was analyzed.
+            </p>
+          </div>
+        )}
       </div>
 
       {isRunning ? (

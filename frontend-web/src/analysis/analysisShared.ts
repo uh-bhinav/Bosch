@@ -12,7 +12,7 @@
 
 import * as THREE from 'three';
 import { ApiError } from '../api/client';
-import { getDraft, getPartingLine, getSideCoreDetail, getUndercuts, type ManualAnalysisAuthorization } from '../api/endpoints';
+import { getDraft, getPartingLineV2, getSideCoreDetail, getUndercuts, type ManualAnalysisAuthorization } from '../api/endpoints';
 import type { CoreCavityAnalysisResponse } from '../api/types';
 import type { PullDirectionSource, Vec3 } from '../domain/types';
 import { adaptDisplayMesh } from '../geometry/meshAdapter';
@@ -111,7 +111,11 @@ async function runFollowUpAnalyses(
 
   store.getState().setPartingLineStage('running');
   try {
-    const partingLine = await getPartingLine(filename, direction);
+    // F8: the authoritative v2 engine, not the legacy `/parting-line` --
+    // same authorization (`core_pin_face_refs`/`delegations`) the primary
+    // core-cavity call used, so this curve matches whatever split it's
+    // illustrating.
+    const partingLine = await getPartingLineV2(filename, direction, authorization);
     store.getState().setPartingLineResult(partingLine);
     store.getState().setPartingLineStage('done');
   } catch (error) {

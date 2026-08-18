@@ -17,6 +17,7 @@ import { Legend } from './Legend';
 import styles from './sharedPanel.module.css';
 
 export function UndercutsPanel() {
+  const mode = useAnalysisStore((s) => s.mode);
   const currentPart = useAnalysisStore((s) => s.currentPart);
   const pullDirection = useAnalysisStore((s) => s.pullDirection);
   const undercutsResult = useAnalysisStore((s) => s.undercutsResult);
@@ -56,7 +57,7 @@ export function UndercutsPanel() {
           </p>
         )}
 
-        {currentPart && (
+        {currentPart && mode === 'expert' && (
           <button
             type="button"
             className={styles.runButton}
@@ -70,6 +71,9 @@ export function UndercutsPanel() {
           >
             Run Undercut Detection
           </button>
+        )}
+        {currentPart && mode === 'guided' && !undercuts && (
+          <p className={styles.hint}>Switch to Expert mode to run undercut detection individually.</p>
         )}
       </section>
 
@@ -107,6 +111,11 @@ export function UndercutsPanel() {
           {summary && (
             <section className={styles.section}>
               <h4 className={styles.sectionTitle}>Legend</h4>
+              <p className={styles.hint}>
+                The viewport shows every face with real undercut evidence in a single RED so nothing is missed at a
+                glance. The category breakdown below is the same backend evidence-source/severity detail, shown as
+                counts rather than repainting the model in ten shades.
+              </p>
               <Legend
                 items={Object.entries(summary.legend)
                   .filter(([key]) => (summary.counts[key] ?? 0) > 0)

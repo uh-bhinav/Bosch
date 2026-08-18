@@ -49,6 +49,7 @@ function toTuple3(text: [string, string, string]): Vec3 {
 }
 
 export function PullDirectionPanel() {
+  const mode = useAnalysisStore((s) => s.mode);
   const currentPart = useAnalysisStore((s) => s.currentPart);
   const pipelineStatus = useAnalysisStore((s) => s.pipelineStatus);
   const recommendedResult = useAnalysisStore((s) => s.recommendedResult);
@@ -102,6 +103,13 @@ export function PullDirectionPanel() {
     <div className={styles.panel} data-testid="pull-direction-panel">
       <section className={styles.section}>
         <h4 className={styles.sectionTitle}>Recommended</h4>
+        <p className={styles.hint}>
+          The automatic optimizer's own search result -- it may pick a different axis than any specific direction
+          you expect (e.g. not +Z), because it searches for a direction that is ALREADY feasible with no
+          authorization needed. A direction that only becomes feasible WITH engineering authorization (see Parting
+          Line / Engineering Authorization) is a separate, deliberately-chosen manual case below, not
+          something the optimizer will find on its own.
+        </p>
         {recommendedResult && recommendedVerdict ? (
           <div className={styles.resultCard} data-testid="recommended-result-card">
             <div className={styles.resultRow}>
@@ -127,7 +135,13 @@ export function PullDirectionPanel() {
       </section>
 
       <section className={styles.section}>
-        <h4 className={styles.sectionTitle}>Manual</h4>
+        <h4 className={styles.sectionTitle}>Manual (Expert)</h4>
+        {mode === 'guided' && (
+          <p className={styles.hint}>
+            Guided mode resolves the pull direction automatically via "Run Full Analysis." These manual controls
+            still work in Guided mode too -- switch to Expert for the focused manual/authoritative workflow.
+          </p>
+        )}
         <Legend
           items={[
             { color: 'var(--accent)', label: 'Resolved direction (current result, every tool)' },

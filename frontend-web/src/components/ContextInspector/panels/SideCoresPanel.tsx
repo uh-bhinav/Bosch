@@ -18,12 +18,20 @@ function formatVolume(mm3: number | undefined): string {
   return `${mm3.toLocaleString(undefined, { maximumFractionDigits: 1 })} mm³`;
 }
 
+function formatVec3(v: [number, number, number]): string {
+  return `(${v.map((c) => c.toFixed(3)).join(', ')})`;
+}
+
 export function SideCoresPanel() {
   const currentPart = useAnalysisStore((s) => s.currentPart);
   const analysisResult = useAnalysisStore((s) => s.analysisResult);
   const sideCoreStatus = useAnalysisStore((s) => s.sideCoreStatus);
   const sideCoreDetail = useAnalysisStore((s) => s.sideCoreDetail);
   const sideCoreError = useAnalysisStore((s) => s.sideCoreError);
+  const partingLineResult = useAnalysisStore((s) => s.partingLineResult);
+  const setSelectedFaceIds = useAnalysisStore((s) => s.setSelectedFaceIds);
+
+  const validatedDelegations = partingLineResult?.selected?.feasibility?.validated_delegations ?? [];
 
   if (!currentPart) {
     return <p className={styles.hint}>Load a part first.</p>;
@@ -120,6 +128,40 @@ export function SideCoresPanel() {
             {analysisResult.orchestration.delegated_face_ids.length} face(s) were delegated to a secondary action by
             the current authorization, from the Pull Direction tool.
           </p>
+        </section>
+      )}
+
+      {validatedDelegations.length > 0 && (
+        <section className={styles.section} data-testid="side-action-groups">
+          <h4 className={styles.sectionTitle}>Side-Action Groups (Validated)</h4>
+          <p className={styles.hint}>
+            Backend-validated for the currently selected candidate/direction -- the viewport draws a movement arrow
+            for each group directly from its own <code>movement_direction</code>, never a guessed vector.
+          </p>
+          {validatedDelegations.map((delegation, i) => (
+            <div key={i} className={styles.resultCard}>
+              <div className={styles.resultRow}>
+                <span>Movement type</span>
+                <span className={styles.mono}>{delegation.movement_type}</span>
+              </div>
+              <div className={styles.resultRow}>
+                <span>Movement direction</span>
+                <span className={styles.mono}>{formatVec3(delegation.movement_direction)}</span>
+              </div>
+              <div className={styles.resultRow}>
+                <span>Face count</span>
+                <span className={styles.mono}>{delegation.face_ids.length}</span>
+              </div>
+              <button
+                type="button"
+                className={styles.faceListButton}
+                onClick={() => setSelectedFaceIds(delegation.face_ids)}
+                title={`Select this group's ${delegation.face_ids.length} face(s) in the viewport`}
+              >
+                Select {delegation.face_ids.length} face{delegation.face_ids.length === 1 ? '' : 's'}
+              </button>
+            </div>
+          ))}
         </section>
       )}
     </div>

@@ -83,6 +83,31 @@ export interface OrchestrationResult {
  * loosely typed -- F3 only reads `display_mesh`'s overlay arrays and
  * `orchestration`'s status fields, not the full face-classification detail.
  */
+/**
+ * F13: `_engineering_candidate_summary()` (backend/api/main.py) -- ONLY
+ * present when the automatic search did NOT reach a verified optimum. Every
+ * field here already existed on the search's own per-candidate result
+ * (`DirectionCandidateResult`, backend/geometry/direction_optimizer.py) and
+ * was already computed during the SAME search `/core-cavity` already runs;
+ * this is a slice of that existing evidence, not a new computation. Per the
+ * backend's own docstring: a routing hint (a real, evidence-based signal
+ * that a direction has a plausible engineering mechanism-class candidate
+ * worth authorization review), NEVER a feasibility guarantee.
+ * `same_as_automatic_direction=true` means the automatic direction itself
+ * carries this signal (same direction, just needs authorization);
+ * `false` means a DIFFERENT direction from the search's own candidate pool
+ * does.
+ */
+export interface EngineeringCandidateSummary {
+  direction: [number, number, number];
+  label: string;
+  score: number;
+  feature_acceptability: string;
+  secondary_tooling_feature_count: number;
+  reason: string;
+  same_as_automatic_direction: boolean;
+}
+
 export interface CoreCavityAnalysisResponse {
   part: Record<string, unknown>;
   core_cavity: Record<string, unknown>;
@@ -91,6 +116,7 @@ export interface CoreCavityAnalysisResponse {
   orchestration?: OrchestrationResult;
   solid_split?: Record<string, unknown> | null;
   display_mesh?: DisplayMeshPayload;
+  engineering_candidate?: EngineeringCandidateSummary | null;
   /**
    * F7: only present when the request set `generate_side_core=true`
    * (`getSideCoreDetail`, api/endpoints.ts) -- `SideCoreResult.to_dict()`
@@ -266,6 +292,150 @@ export interface PartingLineAnalysisResponse {
   parting_line_paths: PartingLinePathsPayload;
   analysis_quality: Record<string, unknown>;
   display_mesh?: DisplayMeshPayload;
+}
+
+/**
+ * F8: `GET /parts/{filename}/parting-line-v2`'s response body (backend/api/
+ * main.py:part_parting_line_v2) -- `PartingLineV2Result.to_dict()`
+ * (backend/geometry/parting_line_v2/engine.py) plus the endpoint's own
+ * `engine`/`status_note`/`undercuts`/`parting_line_path`/`display_mesh`
+ * additions. THIS, not the legacy `/parting-line` endpoint, is the
+ * authoritative parting-line engine -- the same one `/core-cavity` already
+ * uses internally (via `resolve_authoritative_parting_line`) for the real
+ * face-classification/solid-split result. `candidate`/`score`/`regions`
+ * nested shapes are loosely typed to the fields this phase actually reads
+ * (`PartingLoopCandidate.to_dict()`/`CandidateScore.to_dict()`/
+ * `FeasibilityReport.to_dict()`, backend/geometry/parting_line_v2/types.py)
+ * -- the rest passes through as `Record<string, unknown>` rather than being
+ * exhaustively re-declared.
+ */
+export interface PartingLineV2CandidateScore {
+  coverage: number;
+  undercut_proximity: number;
+  pull_axis_span_mm: number;
+  ambiguous_area_fraction: number;
+  excess_turning: number;
+  length_3d_mm: number;
+  stable_id: string;
+  won_at_tier: string | null;
+  coverage_is_exact: boolean;
+}
+
+/** `SideActionReferral.to_dict()` (backend/geometry/parting_line_v2/types.py) -- a loop disqualified as a main-split candidate because it crosses an undercut, routed onward rather than declared infeasible. */
+export interface PartingLineV2Referral {
+  feature_ids: number[];
+  conflicting_segment_ids: number[];
+  conflict_length_mm: number;
+  release_direction_hint: [number, number, number] | null;
+  note: string;
+}
+
+/**
+ * `DelegatedSecondaryAction.to_dict()` (backend/geometry/parting_line_v2/
+ * contracts.py) as it appears inside a candidate's `feasibility.
+ * validated_delegations` -- a backend-VALIDATED (not merely user-submitted)
+ * secondary-mechanism claim for this specific candidate/direction.
+ * `movement_direction` is real backend data (D-044) suitable for drawing a
+ * side-action arrow; never invent one for a group that isn't listed here.
+ */
+export interface PartingLineV2ValidatedDelegation {
+  face_ids: number[];
+  movement_direction: [number, number, number];
+  movement_type: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface PartingLineV2Feasibility {
+  passed: boolean;
+  failed_gate: string | null;
+  reason: string;
+  measurements: Record<string, number>;
+  referral?: PartingLineV2Referral | null;
+  validated_delegations?: PartingLineV2ValidatedDelegation[];
+}
+
+/**
+ * `CorePinInterface.to_dict()` (backend/geometry/parting_line_v2/types.py)
+ * -- pure reporting metadata: a coaxial face this candidate's H3 evaluation
+ * treated as a tooling-assigned core-pin split. Never read by any gate or
+ * by ranking; the only consumer is this kind of diagnostic display.
+ */
+export interface PartingLineV2CorePinInterface {
+  face_id: number;
+  split_param: number;
+  axis_direction: [number, number, number];
+  reason: string;
+}
+
+export interface PartingLineV2Candidate {
+  candidate_id: number;
+  discovered_by: string;
+  is_closed: boolean;
+  loop_count: number;
+  segment_count: number;
+  point_count: number;
+  points: [number, number, number][];
+  feasibility: PartingLineV2Feasibility | null;
+  score: PartingLineV2CandidateScore | null;
+  core_pin_interfaces?: PartingLineV2CorePinInterface[];
+  [key: string]: unknown;
+}
+
+/**
+ * `FaceClassification.to_dict()` (backend/geometry/parting_line_v2/types.py)
+ * -- one entry per face in the selected candidate's region split.
+ * `topological_side` is the REAL, H3-graph-connectivity-derived answer to
+ * "which side does this face actually belong to" -- authoritative even for
+ * a `label==='split'`/`'ambiguous'` ("parting zone") face, which `label`
+ * alone cannot answer. Used for the Core/Cavity tool's "Parting Zone OFF"
+ * fallback coloring (F13 §6) -- never a guess, the same field H3 itself
+ * used to build the region split.
+ */
+export interface PartingLineV2FaceClassification {
+  face_id: number;
+  label: 'cavity' | 'core' | 'split' | 'ambiguous';
+  cavity_area_mm2: number;
+  core_area_mm2: number;
+  topological_side: 'cavity' | 'core' | 'split' | 'unknown';
+}
+
+export interface PartingLineV2RegionClassification {
+  cavity_face_count: number;
+  core_face_count: number;
+  faces: PartingLineV2FaceClassification[];
+  [key: string]: unknown;
+}
+
+export interface PartingLineV2Response {
+  level: string;
+  outcome: 'feasible' | 'referred_to_side_action' | 'no_feasible_candidate';
+  pull_direction: { direction: [number, number, number]; source: string } | Record<string, unknown>;
+  selected: PartingLineV2Candidate | null;
+  candidate_count: number;
+  scorecard: PartingLineV2Candidate[];
+  rejection_summary: Record<string, number>;
+  bounds: Record<string, unknown>;
+  regions: PartingLineV2RegionClassification | null;
+  best_rejected_candidate_id: number | null;
+  best_rejected_failed_gate: string | null;
+  best_rejected_reason: string | null;
+  referrals: PartingLineV2Referral[];
+  part_projected_area_mm2: number;
+  coverage_is_exact: boolean;
+  bbox_diagonal_mm: number;
+  timings: Record<string, unknown>;
+  notes: string[];
+  engine: 'parting_line_v2';
+  status_note: string;
+  undercuts?: Record<string, unknown>;
+  parting_line_path?: {
+    label: string;
+    points: [number, number, number][];
+    hex: string;
+    width: number;
+  };
+  display_mesh?: DisplayMeshPayload;
+  [key: string]: unknown;
 }
 
 /** `POST /parts/upload`'s response body (backend/api/main.py:part_upload). */

@@ -11,17 +11,22 @@
 export type Vec3 = readonly [number, number, number];
 
 /**
- * The eight tool-rail destinations (F0 §3.1/§5). F1 renders these as
- * navigation-only shell items; each tool's real analysis view arrives in a
- * later phase.
+ * The nine tool-rail destinations. Order (F10 §3) matches the Guided
+ * narrative -- Import -> Draft -> Pull Direction -> Undercuts -> Parting
+ * Line -> Core/Cavity -> Side Cores -> Diagnostics -> Report -- purely a
+ * navigation/display order, not an execution order: "Run Full Analysis"
+ * (analysis/analysisShared.ts) always resolves the pull direction FIRST
+ * (the one call that also runs core-cavity), then fetches draft/undercuts/
+ * parting-line-v2/side-core-check using that same resolved direction,
+ * regardless of which order the tools are listed in here.
  */
 export const TOOL_IDS = [
   'import',
-  'pull-direction',
   'draft',
+  'pull-direction',
+  'undercuts',
   'parting-line',
   'core-cavity',
-  'undercuts',
   'side-cores',
   'diagnostics',
   'report',
@@ -38,11 +43,11 @@ export interface ToolDescriptor {
 
 export const TOOLS: readonly ToolDescriptor[] = [
   { id: 'import', label: 'Import', glyph: 'IM' },
-  { id: 'pull-direction', label: 'Pull Direction', glyph: 'PD' },
   { id: 'draft', label: 'Draft', glyph: 'DR' },
+  { id: 'pull-direction', label: 'Pull Direction', glyph: 'PD' },
+  { id: 'undercuts', label: 'Undercuts', glyph: 'UC' },
   { id: 'parting-line', label: 'Parting Line', glyph: 'PL' },
   { id: 'core-cavity', label: 'Core / Cavity', glyph: 'CC' },
-  { id: 'undercuts', label: 'Undercuts', glyph: 'UC' },
   { id: 'side-cores', label: 'Side Cores', glyph: 'SC' },
   { id: 'diagnostics', label: 'Diagnostics', glyph: 'DX' },
   { id: 'report', label: 'Report', glyph: 'RP' },

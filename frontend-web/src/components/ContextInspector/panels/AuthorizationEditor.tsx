@@ -14,6 +14,7 @@
  */
 
 import { useState } from 'react';
+import { runManualAnalysis } from '../../../analysis/runManualAnalysis';
 import { useAnalysisStore } from '../../../store/analysisStore';
 import styles from './AuthorizationEditor.module.css';
 
@@ -62,6 +63,36 @@ function VectorFields({ labelPrefix, value, onChange }: VectorFieldsProps) {
   );
 }
 
+/**
+ * F8: byte-identical to Streamlit's "Load Part3 +Z reference example
+ * (candidate 110)" button (`frontend/app.py`, `pv2_load_example`) -- the
+ * one known-good authorization example the reference UI ships, not a newly
+ * invented one. Only meaningful against Part3.stp at +Z; loading it against
+ * a different part/direction is still valid JSON, just not necessarily
+ * geometrically applicable.
+ */
+const REFERENCE_EXAMPLE = {
+  corePinFaceRefs: [
+    { face_id: 35, axis_direction: [0, 0, 1] as [number, number, number], reason: 'straight coaxial through-bore' },
+  ],
+  delegations: [
+    {
+      face_ids: Array.from({ length: 17 }, (_, i) => i), // 0..16
+      movement_direction: [1, 0, 0] as [number, number, number],
+      movement_type: 'radial_slide',
+      source: 'manual_engineering',
+      note: 'original rib stack, radial outward +X',
+    },
+    {
+      face_ids: Array.from({ length: 17 }, (_, i) => i + 18), // 18..34
+      movement_direction: [-1, 0, 0] as [number, number, number],
+      movement_type: 'radial_slide',
+      source: 'manual_engineering',
+      note: 'mirror rib stack, radial outward -X',
+    },
+  ],
+};
+
 export function AuthorizationEditor() {
   const corePinFaceRefs = useAnalysisStore((s) => s.corePinFaceRefs);
   const delegations = useAnalysisStore((s) => s.delegations);
@@ -69,8 +100,30 @@ export function AuthorizationEditor() {
   const removeCorePinFaceRef = useAnalysisStore((s) => s.removeCorePinFaceRef);
   const addDelegation = useAnalysisStore((s) => s.addDelegation);
   const removeDelegation = useAnalysisStore((s) => s.removeDelegation);
+  const clearAuthorization = useAnalysisStore((s) => s.clearAuthorization);
   const manualPullDirection = useAnalysisStore((s) => s.manualPullDirection);
   const selectedFaceIds = useAnalysisStore((s) => s.selectedFaceIds);
+  const currentPart = useAnalysisStore((s) => s.currentPart);
+  const pullDirection = useAnalysisStore((s) => s.pullDirection);
+  const pipelineStatus = useAnalysisStore((s) => s.pipelineStatus);
+
+  const loadReferenceExample = () => {
+    clearAuthorization();
+    REFERENCE_EXAMPLE.corePinFaceRefs.forEach(addCorePinFaceRef);
+    REFERENCE_EXAMPLE.delegations.forEach(addDelegation);
+  };
+
+  // F11 §3: the reference example is calibrated for +Z specifically -- the
+  // automatic optimizer is free to (and, on Part3, typically does) resolve
+  // a DIFFERENT direction where no authorization was ever needed, since
+  // `/parting-line-v2` never imports or depends on the direction optimizer
+  // (backend-enforced). Rather than silently substituting +Z anywhere, this
+  // is a separate, explicitly-labeled action: it runs the full core-cavity
+  // pipeline at the literal (0,0,1) vector with whatever authorization is
+  // currently configured, so the relationship ("+Z becomes feasible only
+  // WITH this authorization") is visible, not assumed.
+  const isRunning = pipelineStatus === 'running';
+  const directionIsZ = pullDirection ? pullDirection[0] === 0 && pullDirection[1] === 0 && pullDirection[2] === 1 : false;
 
   const [pinFaceId, setPinFaceId] = useState('');
   const [pinAxis, setPinAxis] = useState<[string, string, string]>(
@@ -102,6 +155,48 @@ export function AuthorizationEditor() {
 
   return (
     <div className={styles.editor} data-testid="authorization-editor">
+      <div className={styles.fieldRow}>
+        <button
+          type="button"
+          className={styles.useSelectedButton}
+          onClick={loadReferenceExample}
+          title="Loads the same known-good example the Streamlit reference UI ships -- only geometrically meaningful against Part3.stp at +Z (candidate 110)."
+        >
+          Load Part3 +Z reference example (candidate 110)
+        </button>
+        <button type="button" className={styles.useSelectedButton} onClick={clearAuthorization}>
+          Clear authorization
+        </button>
+      </div>
+
+      {(corePinFaceRefs.length > 0 || delegations.length > 0) && (
+        <div className={styles.section}>
+          <p className={styles.sectionHint}>
+            This is an ENGINEER-SUPPLIED reference example, not a discovered or automatic result. It is
+            geometrically meaningful for Part3.stp specifically at pull direction +Z (0, 0, 1) -- the automatic
+            optimizer is free to resolve a different direction where no authorization is needed at all; that is
+            expected, not a bug. Use the button below to demonstrate the +Z case directly, independent of whatever
+            direction "Run Full Analysis" resolved.
+          </p>
+          <button
+            type="button"
+            className={styles.useSelectedButton}
+            disabled={!currentPart || isRunning}
+            onClick={() => void runManualAnalysis([0, 0, 1], corePinFaceRefs, delegations)}
+            title="Runs the full core/cavity pipeline at the literal +Z direction with the current authorization -- separate from the automatic optimizer's own recommended direction."
+          >
+            Try +Z With This Authorization
+          </button>
+          {pullDirection && !directionIsZ && (
+            <p className={styles.sectionHint}>
+              Current resolved direction is ({pullDirection.map((v) => v.toFixed(2)).join(', ')}), not +Z --
+              "Continue Analysis with This Authorization" above re-runs at THAT direction; use "Try +Z" here to
+              specifically reproduce the +Z / candidate-110 case.
+            </p>
+          )}
+        </div>
+      )}
+
       <section className={styles.section}>
         <h4 className={styles.sectionTitle}>Core-pin face references</h4>
         <p className={styles.sectionHint}>

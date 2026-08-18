@@ -19,6 +19,7 @@ import { TopBar } from '../components/TopBar/TopBar';
 import { ToolRail } from '../components/ToolRail/ToolRail';
 import { ContextInspector } from '../components/ContextInspector/ContextInspector';
 import { StatusStrip } from '../components/StatusStrip/StatusStrip';
+import { ResizeHandle } from './ResizeHandle';
 import { Viewport } from '../viewport/Viewport';
 import { useOverlaySync } from '../viewport/useOverlaySync';
 import { useAnalysisStore } from '../store/analysisStore';
@@ -66,6 +67,7 @@ export function WorkstationShell() {
         <main className={styles.viewportArea}>
           <Viewport />
         </main>
+        <ResizeHandle />
         <ContextInspector />
       </div>
       <StatusStrip />

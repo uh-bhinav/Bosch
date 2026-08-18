@@ -173,7 +173,11 @@ describe('WorkstationShell Guided analysis', () => {
     const inspector = screen.getByTestId('inspector');
     const panel = within(inspector).getByTestId('analysis-summary-panel');
     expect(within(panel).getByText('Feasible — mold split generated')).toBeInTheDocument();
-    expect(within(panel).getByText('3')).toBeInTheDocument(); // cavity face count
+    // F13: the tool now also renders a legend with its own per-category
+    // count (same "3"), so this must be scoped to the verdict grid
+    // specifically, not the whole panel, to stay unambiguous.
+    const verdictCounts = within(panel).getByTestId('core-cavity-verdict-face-counts');
+    expect(within(verdictCounts).getByText('3')).toBeInTheDocument(); // cavity face count
     expect(within(inspector).queryByRole('button', { name: /run/i })).not.toBeInTheDocument();
   });
 });

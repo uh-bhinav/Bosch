@@ -139,7 +139,12 @@ describe('WorkstationShell import integration', () => {
     await user.upload(screen.getByTestId('import-file-input'), file);
     await screen.findByTestId('part-summary');
 
-    await user.click(screen.getByTestId('viewport-root'));
+    // F12: real click-to-inspect picking (ViewportEngine.pickFaceId) raycasts
+    // against the loaded mesh -- jsdom's zero-size layout can't meaningfully
+    // exercise that, so this drives the same shared selection state directly;
+    // what's actually under test is selection surviving a tool switch after
+    // import, not the raycast itself.
+    useAnalysisStore.getState().toggleFaceSelection(0);
     expect(useAnalysisStore.getState().selectedFaceIds).toEqual([0]);
 
     await user.click(screen.getByTitle('Core / Cavity'));

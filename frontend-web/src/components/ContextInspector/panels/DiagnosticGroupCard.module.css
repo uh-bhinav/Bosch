@@ -83,6 +83,8 @@
   text-align: right;
   font-family: var(--font-mono);
   font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .rowValue[data-tone='ok'] {

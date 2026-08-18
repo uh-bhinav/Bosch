@@ -15,7 +15,7 @@
  * the button on `pullDirection` being set instead of guessing +Z.
  */
 
-import { getDraft, getPartingLine, getUndercuts } from '../api/endpoints';
+import { getDraft, getPartingLineV2, getUndercuts } from '../api/endpoints';
 import type { Vec3 } from '../domain/types';
 import { useAnalysisStore } from '../store/analysisStore';
 import { describeAnalysisFailure } from './analysisShared';
@@ -58,7 +58,7 @@ export async function runUndercutsOnly(): Promise<void> {
   }
 }
 
-/** Requires `pullDirection` to already be resolved (Pull Direction tool) -- the panel is responsible for the "run Pull Direction first" gating message, this function just no-ops if called without one. */
+/** Requires `pullDirection` to already be resolved (Pull Direction tool) -- the panel is responsible for the "run Pull Direction first" gating message, this function just no-ops if called without one. Uses the v2 engine (`getPartingLineV2`), with the current authoritative configuration (`corePinFaceRefs`/`delegations`), the same authority `/core-cavity` uses for the real split. */
 export async function runPartingLineOnly(): Promise<void> {
   const state = useAnalysisStore.getState();
   const filename = state.currentPart;
@@ -67,11 +67,39 @@ export async function runPartingLineOnly(): Promise<void> {
   useAnalysisStore.getState().setPartingLineStage('running');
   useAnalysisStore.getState().setPartingLineError(null);
   try {
-    const partingLine = await getPartingLine(filename, state.pullDirection);
+    const partingLine = await getPartingLineV2(filename, state.pullDirection, {
+      corePinFaceRefs: state.corePinFaceRefs,
+      delegations: state.delegations,
+    });
     useAnalysisStore.getState().setPartingLineResult(partingLine);
     useAnalysisStore.getState().setPartingLineStage('done');
   } catch (error) {
     useAnalysisStore.getState().setPartingLineError(describeAnalysisFailure(error));
     useAnalysisStore.getState().setPartingLineStage('error');
+  }
+}
+
+/**
+ * F13 §4: Draft direction INSPECTION -- a pure visual override for the
+ * Draft tool, writing ONLY `draftInspectResult` (never `draftResult`, the
+ * resolved-direction snapshot, and never `pullDirection`/
+ * `manualPullDirection`). Calling this can never change analysis scope or
+ * trigger a rerun of anything else -- it is exactly one `/draft` fetch at
+ * whatever direction the engineer typed in to look at.
+ */
+export async function runDraftInspect(direction: Vec3): Promise<void> {
+  const state = useAnalysisStore.getState();
+  const filename = state.currentPart;
+  if (!filename) return;
+
+  useAnalysisStore.getState().setDraftInspectStage('running');
+  useAnalysisStore.getState().setDraftInspectError(null);
+  try {
+    const draft = await getDraft(filename, direction);
+    useAnalysisStore.getState().setDraftInspectResult(draft);
+    useAnalysisStore.getState().setDraftInspectStage('done');
+  } catch (error) {
+    useAnalysisStore.getState().setDraftInspectError(describeAnalysisFailure(error));
+    useAnalysisStore.getState().setDraftInspectStage('error');
   }
 }

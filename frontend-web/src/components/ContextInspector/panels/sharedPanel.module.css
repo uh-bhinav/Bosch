@@ -73,6 +73,14 @@
   color: var(--text-secondary);
 }
 
+.resultRow > * {
+  min-width: 0;
+}
+
+.grid > div {
+  min-width: 0;
+}
+
 .mono {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -177,4 +185,113 @@
 .faceListButton:hover {
   background: var(--surface-3);
   color: var(--text-primary);
+}
+
+.layerToggleList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 8px 10px;
+}
+
+.layerToggleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.layerToggleRow input[type='checkbox'] {
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.layerSwatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.vectorRow {
+  display: flex;
+  gap: 8px;
+}
+
+.vectorField {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vectorInput {
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.vectorInput:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.presetRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.presetButton {
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.presetButton:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.presetButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.inspectToggleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.inspectToggleRow input[type='checkbox'] {
+  accent-color: var(--accent);
+  cursor: pointer;
 }

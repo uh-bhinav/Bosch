@@ -21,6 +21,12 @@ export function DiagnosticsPanel() {
   const pullDirection = useAnalysisStore((s) => s.pullDirection);
   const pullDirectionSource = useAnalysisStore((s) => s.pullDirectionSource);
   const lastRunDurationMs = useAnalysisStore((s) => s.lastRunDurationMs);
+  const draftResult = useAnalysisStore((s) => s.draftResult);
+  const undercutsResult = useAnalysisStore((s) => s.undercutsResult);
+  const partingLineResult = useAnalysisStore((s) => s.partingLineResult);
+  const sideCoreStatus = useAnalysisStore((s) => s.sideCoreStatus);
+  const sideCoreDetail = useAnalysisStore((s) => s.sideCoreDetail);
+  const corePinFaceRefs = useAnalysisStore((s) => s.corePinFaceRefs);
 
   const model = useMemo(
     () =>
@@ -31,8 +37,27 @@ export function DiagnosticsPanel() {
         pullDirection,
         pullDirectionSource,
         lastRunDurationMs,
+        draftResult,
+        undercutsResult,
+        partingLineResult,
+        sideCoreStatus,
+        sideCoreDetail,
+        corePinFaceRefs,
       }),
-    [currentPartSummary, analysisResult, recommendedResult, pullDirection, pullDirectionSource, lastRunDurationMs],
+    [
+      currentPartSummary,
+      analysisResult,
+      recommendedResult,
+      pullDirection,
+      pullDirectionSource,
+      lastRunDurationMs,
+      draftResult,
+      undercutsResult,
+      partingLineResult,
+      sideCoreStatus,
+      sideCoreDetail,
+      corePinFaceRefs,
+    ],
   );
 
   if (!model.hasPart) {

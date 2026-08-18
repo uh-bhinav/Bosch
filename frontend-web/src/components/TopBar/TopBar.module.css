@@ -3,13 +3,19 @@
   flex: 0 0 var(--topbar-height);
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   padding: 0 14px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border);
   font-family: var(--font-ui);
   font-size: 13px;
   color: var(--text-primary);
+  /* F13 §3: at narrower laptop widths the right-side cluster (mode toggle,
+     run button, pipeline status, export, theme, connectivity) can outgrow
+     the window -- scroll this one row rather than silently clipping a
+     control off-screen (e.g. the mode-info popover trigger). */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .identity {
@@ -58,11 +64,75 @@
   flex: 1 1 auto;
 }
 
+.modeGroup {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .modeToggle {
   display: flex;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow: hidden;
+}
+
+.modeInfo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+}
+
+.modeInfo:hover,
+.modeInfo[aria-expanded='true'] {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.modeInfoPopover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  width: 320px;
+  max-width: 80vw;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modeInfoPopover p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.modeInfoPopover strong {
+  color: var(--text-primary);
+}
+
+.modeInfoFootnote {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  color: var(--text-tertiary) !important;
 }
 
 .modeButton,

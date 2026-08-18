@@ -32,10 +32,19 @@ export function ContextInspector() {
   const pullDirection = useAnalysisStore((s) => s.pullDirection);
   const pullDirectionSource = useAnalysisStore((s) => s.pullDirectionSource);
 
+  const inspectorWidth = useAnalysisStore((s) => s.inspectorWidth);
   const tool = TOOLS.find((t) => t.id === activeTool);
 
   return (
-    <aside className={styles.inspector} aria-label="Inspector" data-testid="inspector">
+    <aside
+      className={styles.inspector}
+      aria-label="Inspector"
+      data-testid="inspector"
+      // F12 §12: draggable width (ResizeHandle.tsx) -- overrides the CSS
+      // `--inspector-width` default via inline style, the normal way to let
+      // per-instance state win over a stylesheet default.
+      style={{ width: inspectorWidth, flexBasis: inspectorWidth, maxWidth: inspectorWidth }}
+    >
       <div className={styles.header}>
         <span className={styles.eyebrow}>{tool?.glyph}</span>
         <h2 className={styles.title}>{tool?.label}</h2>
@@ -62,11 +71,19 @@ export function ContextInspector() {
 
         <dl className={styles.factList}>
           <div className={styles.factRow}>
-            <dt>Selection</dt>
+            <dt>Analysis scope</dt>
+            <dd>Full imported part</dd>
+          </div>
+          <div className={styles.factRow}>
+            <dt title="Inspection/highlighting only -- never restricts what Full Analysis, Draft, Undercuts, or Core/Cavity operate on.">
+              Face selection (view only)
+            </dt>
             <dd>
-              {selectedFaceIds.length > 0
-                ? `${selectedFaceIds.length} face${selectedFaceIds.length === 1 ? '' : 's'}`
-                : 'None'}
+              {selectedFaceIds.length === 0
+                ? 'None'
+                : selectedFaceIds.length === 1
+                  ? `Face ${selectedFaceIds[0]}`
+                  : `${selectedFaceIds.length} faces`}
             </dd>
           </div>
           <div className={styles.factRow}>

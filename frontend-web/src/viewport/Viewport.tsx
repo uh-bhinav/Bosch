@@ -11,7 +11,7 @@
  * than component lifetime alone.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type MouseEvent } from 'react';
 import { useAnalysisStore } from '../store/analysisStore';
 import { getViewportEngine } from './engineSingleton';
 import { buildSampleMesh } from '../geometry/meshAdapter';
@@ -22,6 +22,8 @@ export function Viewport() {
   const selectedFaceIds = useAnalysisStore((s) => s.selectedFaceIds);
   const toggleFaceSelection = useAnalysisStore((s) => s.toggleFaceSelection);
   const setCamera = useAnalysisStore((s) => s.setCamera);
+  const showFaceBoundaries = useAnalysisStore((s) => s.showFaceBoundaries);
+  const setShowFaceBoundaries = useAnalysisStore((s) => s.setShowFaceBoundaries);
 
   // Mount-only: this effect's dependency array is empty, so it runs exactly
   // once for the lifetime of the app (the component is never unmounted --
@@ -43,11 +45,26 @@ export function Viewport() {
     getViewportEngine().setSelection(selectedFaceIds);
   }, [selectedFaceIds]);
 
-  const handleClick = () => {
-    // F1 placeholder interaction: proves selection round-trips through the
-    // shared store and repaints the viewport, without real face-picking
-    // (raycasting against backend face_ids) yet.
-    toggleFaceSelection(0);
+  // F10 §2: purely visual -- never touches selection, overlay coloring, or
+  // any store field an API call reads. See ViewportEngine.setShowFaceBoundaries.
+  useEffect(() => {
+    getViewportEngine().setShowFaceBoundaries(showFaceBoundaries);
+  }, [showFaceBoundaries]);
+
+  const handleClick = (event: MouseEvent<HTMLDivElement>) => {
+    // F12 §6/§11: real click-to-inspect face picking -- a click that
+    // doesn't land on the mesh (empty space, or no part loaded) leaves the
+    // current selection untouched rather than clearing it or substituting
+    // an arbitrary face. Multiple faces can accumulate: each click TOGGLES
+    // that one face, same as before.
+    const container = containerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const ndcX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    const faceId = getViewportEngine().pickFaceId(ndcX, ndcY);
+    if (faceId !== null) toggleFaceSelection(faceId);
   };
 
   const handlePointerUp = () => {
@@ -63,6 +80,24 @@ export function Viewport() {
       onPointerUp={handlePointerUp}
       role="img"
       aria-label="3D part viewport"
-    />
+    >
+      <button
+        type="button"
+        className={styles.boundaryToggle}
+        data-active={showFaceBoundaries}
+        onClick={(e) => {
+          // Purely a view control -- must never also toggle a face
+          // selection via the container's own onClick (F10 §1/§9: view
+          // state and analysis/selection state stay separate).
+          e.stopPropagation();
+          setShowFaceBoundaries(!showFaceBoundaries);
+        }}
+        onPointerUp={(e) => e.stopPropagation()}
+        aria-pressed={showFaceBoundaries}
+        title="Toggle CAD face-boundary overlay (inspection only -- never changes analysis)"
+      >
+        {showFaceBoundaries ? '☑' : '☐'} Show Face Boundaries
+      </button>
+    </div>
   );
 }

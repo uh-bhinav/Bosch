@@ -267,26 +267,71 @@ describe('deriveDiagnostics', () => {
     expect(Number(conservation.value.split(' ')[0])).toBeCloseTo(35950.051 - (9103.6221 + 25300.812 + 105.4408), 2);
   });
 
-  it('undercut feature data is honestly marked unavailable, never fabricated', () => {
+  it('undercut feature data is honestly marked unavailable when the follow-up fetch has not completed, never fabricated', () => {
+    // F9: undercuts are now genuinely fetched (a real follow-up call at the
+    // same resolved direction, analysis/analysisShared.ts) rather than
+    // permanently absent from /core-cavity -- omitting `undercutsResult`
+    // here models "the follow-up hasn't completed/wasn't run for this
+    // result yet", still a real "not available", never a fabricated value.
     const model = deriveDiagnostics(baseInput({ analysisResult: REAL_PART1_MANUAL_PLUS_Z }));
     const undercuts = findGroup(model, 'undercuts');
 
     expect(findEntry(undercuts.tier1, 'Total feature count').value).toBe(UNAVAILABLE);
-    expect(findEntry(undercuts.tier1, 'Total feature count').tooltip).toContain('/core-cavity never serializes it');
+    expect(findEntry(undercuts.tier1, 'Total feature count').tooltip).toContain('fetched separately');
     expect(findEntry(undercuts.tier2, 'Feature list').value).toBe(UNAVAILABLE);
   });
 
-  it('side-core delegation/exclusion is shown as real-but-empty, with a tooltip explaining why, not "unavailable"', () => {
-    const model = deriveDiagnostics(baseInput({ analysisResult: REAL_PART3_AUTHORIZED_REFERRED }));
-    const sideCores = findGroup(model, 'side-cores');
+  it('undercut feature data shows the real fetched result once the follow-up has completed', () => {
+    const model = deriveDiagnostics(
+      baseInput({
+        analysisResult: REAL_PART1_MANUAL_PLUS_Z,
+        undercutsResult: {
+          part: {},
+          undercuts: {
+            has_undercuts: true,
+            has_critical_undercut: false,
+            face_counts: {},
+            feature_count: 2,
+            major_undercut_features_count: 1,
+            percentages: { undercut_area_pct: 4.2 },
+            features: [
+              {
+                feature_id: 0,
+                face_ids: [10, 11],
+                is_major_feature: true,
+                severity: 'moderate',
+                undercut_type: 'pocket',
+                evidence_source: 'boolean_confirmed',
+                recommended_mold_action: 'side-action',
+                side_action_candidate: true,
+                action_confidence: 0.8,
+                action_confidence_label: 'high',
+                action_explanation: 'test fixture',
+                release_direction: [1, 0, 0],
+                depth_proxy_mm: 3.1,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const undercuts = findGroup(model, 'undercuts');
+    expect(findEntry(undercuts.tier1, 'Total feature count').value).toBe('2');
+    expect(findEntry(undercuts.tier1, 'has_undercuts')).toMatchObject({ value: 'Yes', tone: 'warn' });
+  });
 
-    const status = findEntry(sideCores.tier1, 'Status');
-    expect(status.value).toBe(UNAVAILABLE);
-    expect(status.tooltip).toContain('not requested');
+  it('side-core requirement status reflects the real conditional signal -- never a generic "not requested"', () => {
+    const unknown = deriveDiagnostics(baseInput({ analysisResult: REAL_PART3_AUTHORIZED_REFERRED }));
+    expect(findEntry(findGroup(unknown, 'side-cores').tier1, 'Requirement status').value).toBe('Not yet determined');
 
-    const delegated = findEntry(sideCores.tier2, 'Delegated face IDs');
-    expect(delegated.value).toBe('None reported');
-    expect(delegated.tooltip).toContain('Only populated when side-core generation is requested');
+    const notRequired = deriveDiagnostics(
+      baseInput({ analysisResult: REAL_PART3_AUTHORIZED_REFERRED, sideCoreStatus: 'not-required' }),
+    );
+    const notRequiredEntry = findEntry(findGroup(notRequired, 'side-cores').tier1, 'Requirement status');
+    expect(notRequiredEntry).toMatchObject({ value: 'Not required for this pull direction', tone: 'ok' });
+
+    const delegated = findEntry(findGroup(unknown, 'side-cores').tier2, 'Delegated face IDs');
+    expect(delegated.value).toBe('None');
   });
 
   it('evaluation_failures and structured side_action_referrals are marked unavailable in the Advanced group', () => {

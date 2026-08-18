@@ -22,7 +22,7 @@ import type {
   CorePinFaceRefInput,
   DelegationInput,
   DraftAnalysisResponse,
-  PartingLineAnalysisResponse,
+  PartingLineV2Response,
   PartSummaryResponse,
   PartsListResponse,
   UndercutsAnalysisResponse,
@@ -51,7 +51,37 @@ export const DEFAULT_CAMERA_STATE: CameraState = {
 export const DEFAULT_MANUAL_PULL_DIRECTION: Vec3 = [0, 0, 1];
 
 /** Which viewport overlay is active, if any. Empty until an analysis tool sets one. */
-export type OverlayId = 'draft' | 'undercuts' | 'core-cavity' | 'side-cores' | null;
+export type OverlayId = 'draft' | 'undercuts' | 'parting-line' | 'core-cavity' | 'side-cores' | null;
+
+/** F12 §5: the Core/Cavity tool's independent viewport-layer toggles. */
+export interface CoreCavityLayers {
+  partingLine: boolean;
+  /**
+   * F13 §6: DISTINCT from `partingLine` (the curve) -- whether "parting
+   * zone" faces (split/ambiguous region-classification faces) are shown as
+   * their own distinct category. When off, those faces fall back to their
+   * real `topological_side` (core or cavity, from the authoritative region
+   * classification), never left visually ambiguous.
+   */
+  partingZone: boolean;
+  core: boolean;
+  cavity: boolean;
+  corePin: boolean;
+  sideAction: boolean;
+  undercuts: boolean;
+  pullDirection: boolean;
+}
+
+export const DEFAULT_CORE_CAVITY_LAYERS: CoreCavityLayers = {
+  partingLine: true,
+  partingZone: true,
+  core: true,
+  cavity: true,
+  corePin: true,
+  sideAction: true,
+  undercuts: true,
+  pullDirection: true,
+};
 
 /**
  * F6: shared by both the STEP mold-half export and the PDF report export --
@@ -137,6 +167,24 @@ export interface AnalysisState {
   // --- viewport (F1: populated, persists across tool switches) -----------
   camera: CameraState;
   overlay: OverlayId;
+  /**
+   * F10 §2: purely visual inspection toggle -- the real topological face
+   * boundaries drawn over the shaded mesh. Independent of `overlay`
+   * (analysis coloring) and never read by any API call; toggling it can
+   * never change analysis scope or results (F10 §1/§9).
+   */
+  showFaceBoundaries: boolean;
+  /** F12 §12: user-draggable inspector width (px) -- see `shell/ResizeHandle.tsx`. Persists across tool switches like `camera`, never reset by `resetAnalysisState`. */
+  inspectorWidth: number;
+  /**
+   * F12 §5: independent visibility toggles for the Core/Cavity tool's
+   * combined viewport overlay ONLY -- `useOverlaySync.ts` reads this
+   * exclusively when `activeTool === 'core-cavity'`, so it can never leak
+   * into Draft/Undercuts/Parting Line's own overlays (F12 §15). All default
+   * `true` (show everything) so the tab looks complete before the user
+   * touches anything.
+   */
+  coreCavityLayers: CoreCavityLayers;
 
   // --- Guided "Run full analysis" (F3) ------------------------------------
   // `pipelineStatus` (above) stays the coarse idle/running/complete/blocked
@@ -213,9 +261,21 @@ export interface AnalysisState {
   undercutsResult: UndercutsAnalysisResponse | null;
   undercutsStage: FollowUpStage;
   undercutsError: string | null;
-  partingLineResult: PartingLineAnalysisResponse | null;
+  partingLineResult: PartingLineV2Response | null;
   partingLineStage: FollowUpStage;
   partingLineError: string | null;
+
+  // --- Draft direction inspection (F13 §4) ---------------------------------
+  // A PURE VISUAL override for the Draft tool -- inspecting a different
+  // direction's draft classification never touches `pullDirection`/
+  // `manualPullDirection` or triggers any analysis rerun. `null` means "show
+  // the resolved/automatic direction's draft" (the default, `draftResult`
+  // above); once set, `draftInspectResult` is a SEPARATE snapshot so the
+  // resolved-direction result is never overwritten by an inspection probe.
+  draftInspectDirection: Vec3 | null;
+  draftInspectResult: DraftAnalysisResponse | null;
+  draftInspectStage: FollowUpStage;
+  draftInspectError: string | null;
 
   // --- Side cores (F7) ------------------------------------------------------
   // `sideCoreStatus` distinguishes "this pull direction genuinely needs no
@@ -243,6 +303,9 @@ export interface AnalysisState {
   setPullDirection: (direction: Vec3 | null, source: PullDirectionSource) => void;
   setCamera: (camera: CameraState) => void;
   setOverlay: (overlay: OverlayId) => void;
+  setShowFaceBoundaries: (show: boolean) => void;
+  setCoreCavityLayer: (layer: keyof CoreCavityLayers, value: boolean) => void;
+  setInspectorWidth: (width: number) => void;
   setAnalysisResult: (result: CoreCavityAnalysisResponse | null) => void;
   setAnalysisError: (message: string | null) => void;
   setRecommendedResult: (result: CoreCavityAnalysisResponse | null) => void;
@@ -267,9 +330,13 @@ export interface AnalysisState {
   setUndercutsResult: (result: UndercutsAnalysisResponse | null) => void;
   setUndercutsStage: (stage: FollowUpStage) => void;
   setUndercutsError: (message: string | null) => void;
-  setPartingLineResult: (result: PartingLineAnalysisResponse | null) => void;
+  setPartingLineResult: (result: PartingLineV2Response | null) => void;
   setPartingLineStage: (stage: FollowUpStage) => void;
   setPartingLineError: (message: string | null) => void;
+  setDraftInspectDirection: (direction: Vec3 | null) => void;
+  setDraftInspectResult: (result: DraftAnalysisResponse | null) => void;
+  setDraftInspectStage: (stage: FollowUpStage) => void;
+  setDraftInspectError: (message: string | null) => void;
   setSideCoreStatus: (status: SideCoreStatus) => void;
   setSideCoreDetail: (result: CoreCavityAnalysisResponse | null) => void;
   setSideCoreError: (message: string | null) => void;
@@ -315,6 +382,9 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
 
   camera: DEFAULT_CAMERA_STATE,
   overlay: null,
+  showFaceBoundaries: false,
+  coreCavityLayers: DEFAULT_CORE_CAVITY_LAYERS,
+  inspectorWidth: 420,
 
   analysisResult: null,
   analysisError: null,
@@ -346,6 +416,11 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   partingLineStage: 'idle',
   partingLineError: null,
 
+  draftInspectDirection: null,
+  draftInspectResult: null,
+  draftInspectStage: 'idle',
+  draftInspectError: null,
+
   sideCoreStatus: 'unknown',
   sideCoreDetail: null,
   sideCoreError: null,
@@ -373,6 +448,10 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
     set({ pullDirection: direction, pullDirectionSource: source }),
   setCamera: (camera) => set({ camera }),
   setOverlay: (overlay) => set({ overlay }),
+  setShowFaceBoundaries: (show) => set({ showFaceBoundaries: show }),
+  setCoreCavityLayer: (layer, value) =>
+    set((state) => ({ coreCavityLayers: { ...state.coreCavityLayers, [layer]: value } })),
+  setInspectorWidth: (width) => set({ inspectorWidth: Math.round(Math.min(720, Math.max(360, width))) }),
   setAnalysisResult: (result) => set({ analysisResult: result }),
   setAnalysisError: (message) => set({ analysisError: message }),
   setRecommendedResult: (result) => set({ recommendedResult: result }),
@@ -402,6 +481,10 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   setPartingLineResult: (result) => set({ partingLineResult: result }),
   setPartingLineStage: (stage) => set({ partingLineStage: stage }),
   setPartingLineError: (message) => set({ partingLineError: message }),
+  setDraftInspectDirection: (direction) => set({ draftInspectDirection: direction }),
+  setDraftInspectResult: (result) => set({ draftInspectResult: result }),
+  setDraftInspectStage: (stage) => set({ draftInspectStage: stage }),
+  setDraftInspectError: (message) => set({ draftInspectError: message }),
   setSideCoreStatus: (status) => set({ sideCoreStatus: status }),
   setSideCoreDetail: (result) => set({ sideCoreDetail: result }),
   setSideCoreError: (message) => set({ sideCoreError: message }),
@@ -438,6 +521,10 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
       partingLineResult: null,
       partingLineStage: 'idle',
       partingLineError: null,
+      draftInspectDirection: null,
+      draftInspectResult: null,
+      draftInspectStage: 'idle',
+      draftInspectError: null,
       sideCoreStatus: 'unknown',
       sideCoreDetail: null,
       sideCoreError: null,

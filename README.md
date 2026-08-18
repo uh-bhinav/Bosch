@@ -205,6 +205,24 @@ uvicorn backend.api.main:app --reload --port 8000
 Run this from the repository root on any platform. The backend listens
 on port `8000` regardless of OS.
 
+**Make sure `conda activate dfm_agent` actually activated the environment
+you created in §5** before running `uvicorn` — if it silently does nothing,
+or `python -c "import OCC"` fails with `No module named 'OCC'` afterward,
+`uvicorn` is running against the wrong Python. This most often happens when
+the environment was created with `micromamba` rather than `conda` itself; in
+that case activate it the same way you created it, e.g.:
+
+```bash
+micromamba activate dfm_agent
+# or, if you know the environment's install path:
+conda activate /path/to/your/micromamba/envs/dfm_agent
+```
+
+`pythonocc-core`/`cadquery` only ever install correctly through
+`environment.yml`'s conda-forge channel (§5) — never `pip` — so
+`No module named OCC` always means "wrong/unactivated environment," never a
+missing package to `pip install`.
+
 `scripts/run_backend.sh` exists as a macOS/Linux convenience wrapper —
 it is a bash script and assumes a local micromamba install at
 `.micromamba/` inside the repo, which is not part of a fresh clone. It is
@@ -318,7 +336,6 @@ this way.
 | Parting line | Candidate/foundation result — real graph search and a real parting surface, but full Hou (2018) global optimization is not applied. |
 | Core/cavity split | Real Boolean solid split, verified on both real demo parts, but the Boolean tool is a labeled planar approximation of the parting surface, not the exact 3-D surface (which is topologically invalid on both parts and unfixable by standard OCC healing). |
 | Side cores | Generates the volume that must retract and its direction; does not select a tooling mechanism (lifter vs. slide vs. collapsible core). |
-| Pull-direction search timing | One real run on `Part1.stp` took ~29.6 minutes; root cause (per-direction OCC Boolean-retry variance) is not fully isolated. **See `TODO.md` — budget for this before a live, undelayed demo.** |
 | AI agent (`backend/agent/`) | A real, tool-calling agent over the geometry engine exists and is Gemini-live-verified end-to-end; Anthropic/OpenAI/Grok adapters are structurally verified but not live-tested. It is reachable via the API and the legacy Streamlit UI's "AI Agent" tab — **it is not wired into `frontend-web/`** and is not part of the demo flow in §11. |
 | Volume conservation | The solid split conserves tooling volume to ~4%, not the originally targeted 2% (documented, tolerance adjusted accordingly — not a silent failure). |
 

@@ -96,6 +96,13 @@ export function ImportPanel() {
             <span className={styles.readyDot} />
             <span className={styles.summaryName}>{currentPart}</span>
           </div>
+          <p className={styles.summaryNote}>
+            Part loaded. Every analysis (Full Analysis, Draft, Undercuts, Parting Line, Core/Cavity) always
+            covers the complete imported model -- all {currentPartSummary.solid_count} solid
+            {currentPartSummary.solid_count === 1 ? '' : 's'}, {currentPartSummary.face_count} faces, and{' '}
+            {currentPartSummary.edge_count} edges. Clicking or highlighting a face in the viewport is for
+            inspection only and never narrows what gets analyzed.
+          </p>
           <dl className={styles.summaryGrid}>
             <div>
               <dt>Faces</dt>

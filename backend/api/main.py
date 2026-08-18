@@ -18,7 +18,7 @@ from backend.geometry.side_core import (
     generate_side_cores_for_features,
 )
 from backend.geometry.draft_analyzer import analyze_draft
-from backend.geometry.direction_optimizer import optimize_mold_direction
+from backend.geometry.direction_optimizer import DirectionOptimizationResult, optimize_mold_direction
 from backend.geometry.parting_line import detect_parting_line_candidates
 from backend.geometry.parting_line_v2 import PullDirectionInput, UndercutInput
 from backend.geometry.parting_line_v2.contracts import (
@@ -684,6 +684,65 @@ def _parting_line_paths_payload(parting_line: dict[str, Any]) -> dict[str, Any]:
             },
         },
     }
+
+
+def _engineering_candidate_summary(direction: DirectionOptimizationResult) -> dict[str, Any] | None:
+    """
+    F13 (2026-08-18): when the automatic search does NOT reach a verified
+    optimum (``optimal_found=False``), surface whether the search's OWN
+    already-computed candidate pool contains a real, evidence-based signal
+    that engineering authorization could resolve it -- never a new
+    algorithm, never a guess, never a hardcoded direction. Every field this
+    reads (``feature_acceptability``, ``secondary_tooling_feature_count``,
+    ``feature_acceptability_reason``) already exists on
+    ``DirectionCandidateResult`` (``_feature_acceptability()``,
+    direction_optimizer.py) and was already computed as part of the SAME
+    ``optimize_mold_direction()`` call ``/core-cavity`` makes -- this adds
+    zero additional search cost, it only serializes a slice that was
+    previously discarded.
+
+    ``feature_acceptability == "confirmed_undercut_secondary_tooling_
+    candidate"`` means: a Boolean-CONFIRMED undercut exists at that
+    direction, and the detector's own heuristic identified a plausible
+    mechanism CLASS (side-action / lifter-or-collapsible-core /
+    draft-redesign) worth downstream engineering review. Per
+    ``_feature_acceptability``'s own docstring this is explicitly "a
+    routing hint... never a resolvability claim" -- it does NOT mean the
+    direction IS feasible, only that it is worth an engineer's attention
+    rather than dismissing the search as a dead end. Checks the automatic
+    search's OWN best-unverified candidate first (same direction, would
+    just need authorization), then falls back to the highest-scoring OTHER
+    candidate with the same signal. Returns ``None`` when the search
+    already found a verified optimum, or when nothing in the candidate
+    pool carries this signal at all (an honest "no engineering path
+    identified" case -- the caller must not fabricate one).
+    """
+    if direction.optimal_found:
+        return None
+
+    def _summarize(candidate: object, same_as_automatic: bool) -> dict[str, Any]:
+        return {
+            "direction": [round(v, 6) for v in candidate.direction],  # type: ignore[attr-defined]
+            "label": candidate.label,  # type: ignore[attr-defined]
+            "score": round(candidate.score, 6),  # type: ignore[attr-defined]
+            "feature_acceptability": candidate.feature_acceptability,  # type: ignore[attr-defined]
+            "secondary_tooling_feature_count": candidate.secondary_tooling_feature_count,  # type: ignore[attr-defined]
+            "reason": candidate.feature_acceptability_reason,  # type: ignore[attr-defined]
+            "same_as_automatic_direction": same_as_automatic,
+        }
+
+    best = direction.best_unverified_candidate
+    if best is not None and best.feature_acceptability == "confirmed_undercut_secondary_tooling_candidate":
+        return _summarize(best, same_as_automatic=True)
+
+    others = [
+        c for c in direction.candidates
+        if c.feature_acceptability == "confirmed_undercut_secondary_tooling_candidate"
+    ]
+    if not others:
+        return None
+    others.sort(key=lambda c: c.score, reverse=True)
+    return _summarize(others[0], same_as_automatic=False)
 
 
 @app.get("/")
@@ -1496,6 +1555,7 @@ def part_core_cavity(
         # never derived twice.
         undercuts_for_pl = None
         manual_invalid: object = None
+        engineering_candidate: dict[str, Any] | None = None
         if use_optimal_direction:
             direction = optimize_mold_direction(
                 part,
@@ -1506,6 +1566,7 @@ def part_core_cavity(
             pull_direction_source = "optimal_mold_direction"
             part.optimal_pull_direction = pull_direction
             undercuts_for_pl = direction.optimal_undercuts
+            engineering_candidate = _engineering_candidate_summary(direction)
         else:
             normalized, undercuts_for_pl, manual_invalid = prepare_manual_direction(part, pull_direction)
             if manual_invalid is None:
@@ -1532,6 +1593,12 @@ def part_core_cavity(
             "core_cavity": result.to_dict(),
             "pull_direction_source": pull_direction_source,
             "parting_line_v2_outcome": pl_result.outcome if pl_result is not None else None,
+            # F13: only ever non-None when use_optimal_direction=True AND the
+            # search did not reach a verified optimum -- see
+            # _engineering_candidate_summary's docstring for exactly what
+            # this is (a real, already-computed routing hint) and is not (a
+            # feasibility claim, a hardcoded direction).
+            "engineering_candidate": engineering_candidate,
         }
         if manual_invalid is not None:
             payload["orchestration"] = manual_invalid.to_dict()

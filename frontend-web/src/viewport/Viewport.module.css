@@ -12,3 +12,30 @@
   width: 100% !important;
   height: 100% !important;
 }
+
+.boundaryToggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.boundaryToggle:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.boundaryToggle[data-active='true'] {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+}

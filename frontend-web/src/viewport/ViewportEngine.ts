@@ -20,6 +20,9 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { AdaptedMesh } from '../geometry/meshAdapter';
 import type { CameraState } from '../store/analysisStore';
 import type { Vec3 } from '../domain/types';
@@ -41,7 +44,11 @@ export class ViewportEngine {
   private resizeObserver: ResizeObserver | null = null;
   private directionArrow: THREE.ArrowHelper | null = null;
   private manualPreviewArrow: THREE.ArrowHelper | null = null;
-  private partingLines: THREE.Line[] = [];
+  private sideActionArrows: THREE.ArrowHelper[] = [];
+  private partingLines: Line2[] = [];
+  private faceBoundaryLines: THREE.LineSegments | null = null;
+  private faceBoundariesEnabled = false;
+  private readonly raycaster = new THREE.Raycaster();
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -132,6 +139,12 @@ export class ViewportEngine {
     this.camera.aspect = clientWidth / clientHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(clientWidth, clientHeight);
+    // F12 §8: LineMaterial (fat lines) resolves its screen-space width from
+    // this uniform -- must be kept in sync with the actual render target
+    // size or the parting-line curve silently reverts to hairline-thin.
+    for (const line of this.partingLines) {
+      (line.material as LineMaterial).resolution.set(clientWidth, clientHeight);
+    }
   }
 
   private startRenderLoop(): void {
@@ -176,6 +189,93 @@ export class ViewportEngine {
     });
     this.meshObject = new THREE.Mesh(geometry, material);
     this.scene.add(this.meshObject);
+
+    // F10 §2: a new mesh invalidates any previously-built boundary geometry
+    // (different vertex/index buffers) -- rebuild it for the new part if the
+    // overlay is currently on, exactly like overlayColors above.
+    this.rebuildFaceBoundaries();
+  }
+
+  /**
+   * F10 §2: "Show Face Boundaries" -- an optional, purely visual overlay
+   * distinct from analysis overlays (draft/undercut/core-cavity coloring):
+   * it never touches `overlayColors`, never changes what's analyzed, and
+   * never creates a second viewer. Draws the REAL topological face
+   * boundaries (edges where two triangles carry different `face_id`s, or a
+   * mesh boundary edge used by only one triangle) computed directly from
+   * the already-loaded `AdaptedMesh` -- not every triangulation edge, which
+   * would just show the mesh's internal tessellation, not the CAD topology.
+   */
+  setShowFaceBoundaries(show: boolean): void {
+    this.faceBoundariesEnabled = show;
+    this.rebuildFaceBoundaries();
+  }
+
+  private rebuildFaceBoundaries(): void {
+    if (this.faceBoundaryLines) {
+      this.scene.remove(this.faceBoundaryLines);
+      this.faceBoundaryLines.geometry.dispose();
+      (this.faceBoundaryLines.material as THREE.Material).dispose();
+      this.faceBoundaryLines = null;
+    }
+    if (!this.faceBoundariesEnabled || !this.currentMesh) return;
+
+    const { positions, indices, faceIds } = this.currentMesh;
+    const triangleCount = indices.length / 3;
+    // F12: fixed -- STEP faces are triangulated INDEPENDENTLY by OCC and
+    // then concatenated into one buffer (backend/geometry/visualize_raw.py),
+    // so two adjacent faces' triangulations do NOT share vertex INDICES at
+    // their common edge even though the positions geometrically coincide --
+    // matching by (faceIdA, faceIdB) pairs on a shared vertex index (the
+    // previous approach) therefore never found a boundary at all. The
+    // correct, index-scheme-independent definition: within ONE face_id's
+    // own triangle set, an edge used by exactly one triangle is that face's
+    // own outer boundary (its triangulation is a manifold 2-D mesh of a
+    // single bounded surface); an edge used by two triangles of the SAME
+    // face_id is internal tessellation. This needs no cross-face matching
+    // at all, so it is correct regardless of how neighboring faces' meshes
+    // are indexed.
+    const edgeCountWithinFace = new Map<string, number>();
+    const edgeVertexPair = new Map<string, [number, number]>();
+    for (let t = 0; t < triangleCount; t++) {
+      const faceId = faceIds[t] ?? -1;
+      const a = indices[t * 3];
+      const b = indices[t * 3 + 1];
+      const c = indices[t * 3 + 2];
+      const edges: [number, number][] = [
+        [a, b],
+        [b, c],
+        [c, a],
+      ];
+      for (const [v0, v1] of edges) {
+        const [lo, hi] = v0 < v1 ? [v0, v1] : [v1, v0];
+        const key = `${faceId}_${lo}_${hi}`;
+        edgeCountWithinFace.set(key, (edgeCountWithinFace.get(key) ?? 0) + 1);
+        if (!edgeVertexPair.has(key)) edgeVertexPair.set(key, [lo, hi]);
+      }
+    }
+
+    const boundaryPositions: number[] = [];
+    for (const [key, count] of edgeCountWithinFace) {
+      if (count === 1) {
+        const [v0, v1] = edgeVertexPair.get(key)!;
+        boundaryPositions.push(
+          positions[v0 * 3], positions[v0 * 3 + 1], positions[v0 * 3 + 2],
+          positions[v1 * 3], positions[v1 * 3 + 1], positions[v1 * 3 + 2],
+        );
+      }
+    }
+    if (boundaryPositions.length === 0) return;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(boundaryPositions), 3));
+    // F12 §9: bright, high-contrast, visible over shaded overlay colors in
+    // either theme -- the previous near-black line was legible only against
+    // light default-grey faces, not saturated overlay colors.
+    const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+    this.faceBoundaryLines = new THREE.LineSegments(geometry, material);
+    this.faceBoundaryLines.renderOrder = 5;
+    this.scene.add(this.faceBoundaryLines);
   }
 
   private paintFaceColors(geometry: THREE.BufferGeometry, mesh: AdaptedMesh, colors: Float32Array): void {
@@ -262,6 +362,82 @@ export class ViewportEngine {
   }
 
   /**
+   * F13 §8: geometric centroid of a face group's own displayed triangles --
+   * the placement point for a side-action movement arrow. Plain mean of
+   * every matching triangle's vertices (not area-weighted); good enough for
+   * "put the arrow near this group," which is all an arrow origin needs to
+   * be. Returns `null` if none of `faceIds` appear in the loaded mesh.
+   */
+  getFaceCentroid(faceIds: number[]): Vec3 | null {
+    if (!this.currentMesh) return null;
+    const { positions, indices, faceIds: meshFaceIds } = this.currentMesh;
+    const wanted = new Set(faceIds);
+    const sum = new THREE.Vector3();
+    let matched = 0;
+    const triangleCount = indices.length / 3;
+    for (let t = 0; t < triangleCount; t++) {
+      if (!wanted.has(meshFaceIds[t] ?? -1)) continue;
+      for (const idx of [indices[t * 3], indices[t * 3 + 1], indices[t * 3 + 2]]) {
+        sum.add(new THREE.Vector3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]));
+        matched += 1;
+      }
+    }
+    if (matched === 0) return null;
+    sum.divideScalar(matched);
+    return [sum.x, sum.y, sum.z];
+  }
+
+  /**
+   * F13 §8: one arrow per delegated side-action group, each drawn from the
+   * REAL backend-validated `movement_direction` (D-044's
+   * `DelegatedSecondaryAction`) at that group's own face centroid -- never
+   * fabricated when the backend hasn't supplied a valid (non-zero) vector
+   * for a group, which this simply skips rather than substituting a guess.
+   * `null` clears every arrow (tool switch away from a side-action view).
+   */
+  setSideActionArrows(groups: { faceIds: number[]; direction: Vec3 }[] | null, length = 40): void {
+    for (const arrow of this.sideActionArrows) {
+      this.scene.remove(arrow);
+      arrow.dispose();
+    }
+    this.sideActionArrows = [];
+    if (!groups) return;
+    const color = 0xc86edb; // --vis-side-action
+    for (const group of groups) {
+      const dir = new THREE.Vector3(...group.direction);
+      if (dir.lengthSq() < 1e-12) continue; // no valid backend vector for this group -- skip, never invent
+      dir.normalize();
+      const origin = this.getFaceCentroid(group.faceIds);
+      if (!origin) continue;
+      const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(...origin), length, color, length * 0.3, length * 0.18);
+      this.sideActionArrows.push(arrow);
+      this.scene.add(arrow);
+    }
+  }
+
+  /**
+   * F12 §6/§11: real click-to-inspect face picking -- replaces the F1
+   * placeholder that always selected face 0 regardless of where the user
+   * clicked. Pure CPU-side geometry raycasting (three.js's `Raycaster`
+   * against the already-loaded mesh), independent of whether a WebGL
+   * context exists, so it works the same way `getFaceNormal` above already
+   * does. `ndcX`/`ndcY` are normalized device coordinates (-1..1) computed
+   * by the caller from the click position relative to the canvas -- this
+   * method holds no DOM/event knowledge of its own. Returns `null` for a
+   * click that doesn't hit the mesh (e.g. empty space) -- the caller should
+   * leave the current selection untouched in that case, not clear it or
+   * substitute an arbitrary face.
+   */
+  pickFaceId(ndcX: number, ndcY: number): number | null {
+    if (!this.meshObject || !this.currentMesh) return null;
+    this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+    const hits = this.raycaster.intersectObject(this.meshObject, false);
+    const hit = hits[0];
+    if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) return null;
+    return this.currentMesh.faceIds[hit.faceIndex] ?? null;
+  }
+
+  /**
    * F4: a live, non-interactive direction indicator for the Manual Pull
    * Direction editor -- updates as the engineer edits the vector, so the
    * direction is visible in context against the part before running
@@ -323,35 +499,44 @@ export class ViewportEngine {
   }
 
   /**
-   * F7: the parting-line curve overlay -- `parting_line_paths.raw`/`.refined`
-   * from `GET /parts/{filename}/parting-line` (backend/api/main.py's
-   * `_parting_line_paths_payload`). Draws one or more independent polylines
-   * (raw silhouette wire, Chaikin-refined curve, or both at once) directly
-   * from the backend's own point list -- never a client-side approximation.
-   * `null`/empty clears every currently drawn line. A plain `THREE.Line` (not
-   * `Line2`) -- WebGL1's line width is effectively fixed at 1px on most
-   * platforms regardless of `linewidth`, an accepted limitation for a
-   * hackathon-scope visual, not a fidelity gap in the underlying data.
+   * F7/F12 §8: the parting-line curve overlay -- `parting_line_path` from
+   * `GET /parts/{filename}/parting-line-v2` (the authoritative v2 engine's
+   * selected candidate), drawn directly from the backend's own point list,
+   * never a client-side approximation. `null`/empty clears every currently
+   * drawn line. Uses `Line2`/`LineMaterial` (three.js's "fat lines" example
+   * module) instead of plain `THREE.Line` -- WebGL1's native line width is
+   * effectively fixed at 1px on most platforms regardless of `linewidth`,
+   * which made the curve nearly invisible against a shaded, overlay-colored
+   * mesh; `LineMaterial.linewidth` is real screen-space pixels, kept in
+   * sync with the render target size in `resize()`.
    */
   setPartingLines(paths: { points: Vec3[]; colorHex: string; opacity?: number }[] | null): void {
     for (const line of this.partingLines) {
       this.scene.remove(line);
       line.geometry.dispose();
-      (line.material as THREE.Material).dispose();
+      (line.material as LineMaterial).dispose();
     }
     this.partingLines = [];
     if (!paths) return;
+    const width = this.container?.clientWidth || 1;
+    const height = this.container?.clientHeight || 1;
     for (const path of paths) {
       if (path.points.length < 2) continue;
-      const geometry = new THREE.BufferGeometry().setFromPoints(
-        path.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
-      );
-      const material = new THREE.LineBasicMaterial({
-        color: new THREE.Color(path.colorHex),
+      const flatPositions: number[] = [];
+      for (const [x, y, z] of path.points) flatPositions.push(x, y, z);
+      const geometry = new LineGeometry();
+      geometry.setPositions(flatPositions);
+      const material = new LineMaterial({
+        color: new THREE.Color(path.colorHex).getHex(),
+        linewidth: 5, // screen-space pixels, not world units
         transparent: path.opacity !== undefined && path.opacity < 1,
         opacity: path.opacity ?? 1,
+        depthTest: false, // never hidden behind the shaded mesh surface
+        worldUnits: false,
       });
-      const line = new THREE.Line(geometry, material);
+      material.resolution.set(width, height);
+      const line = new Line2(geometry, material);
+      line.computeLineDistances();
       line.renderOrder = 10;
       this.partingLines.push(line);
       this.scene.add(line);
@@ -415,6 +600,11 @@ export class ViewportEngine {
     this.manualPreviewArrow?.dispose();
     this.manualPreviewArrow = null;
     this.setPartingLines(null);
+    if (this.faceBoundaryLines) {
+      this.faceBoundaryLines.geometry.dispose();
+      (this.faceBoundaryLines.material as THREE.Material).dispose();
+      this.faceBoundaryLines = null;
+    }
     this.renderer?.dispose();
     this.renderer = null;
   }
