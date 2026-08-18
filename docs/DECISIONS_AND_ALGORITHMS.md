@@ -27,6 +27,856 @@
 
 ---
 
+# Phase 5D-1 — Bilateral accessibility-risk candidate generation: cavity-side faces (`n·d > 0`) with a concave bounding edge now also enter the Boolean-refinement candidate pool, closing a proven asymmetry without touching Boolean confirmation, proxy-undercut, scoring, or `parting_line_v2` semantics
+
+**Documentation debt, noted not hidden.** D-051 through D-055 (Phase
+5C-1 through 5C-3 and Phase 4's `topological_side`) are implemented,
+tested, and already referenced by name throughout
+`direction_optimizer.py` and `parting_line_v2/{types,regions}.py`, but
+their own decision-log entries were never appended to this file. Not
+backfilled here (out of this phase's scope, and re-deriving five
+entries' exact historical measurements from code alone risks getting
+the numbers wrong) — tracked as a `TODO.md` documentation-debt item
+instead of silently left unmentioned.
+
+## D-056 — Accessibility-risk candidate generation is now bilateral (core-side AND cavity-side), reusing the identical concave-edge requirement and threshold on both sides ⭐⭐⭐⭐
+
+**[2026-08-16] Implemented — `backend/geometry/undercut_detector.py`
+only.** No change to Boolean confirmation semantics, proxy-undercut
+semantics, severity/depth/interference calculations, evidence tiers,
+the comparator, `parting_line_v2`, or any threshold value. No new
+fixture-specific or Part-specific conditions added anywhere.
+
+**Root cause (Phase 5 re-audit).** `_compute_accessibility_risk` only
+ever tested faces with `n·d <= -threshold` (core-side). Mathematical
+justification for the original restriction: for a face `F` with outward
+normal `n` and pull direction `d`, if `n·d > 0`, sweeping `F` along `+d`
+initially moves *away* from `F`'s own adjacent material (a basic
+differential-geometry property of an outward normal on a manifold
+boundary) — so `F`'s own local sweep cannot find LOCAL self-interference
+this way, only interference with DISTANT material further along the
+sweep path. This proves core-side-only candidate generation was not an
+arbitrary shortcut. It does NOT prove cavity-side faces are risk-free:
+a cavity-side face's sweep can still hit genuine, distant material
+(e.g. a plate-top face swept upward into a small boss/cap sitting above
+it) — a real, provable gap, motivating this fix.
+
+**Fix.** `_compute_accessibility_risk(..., side: str = "core")`. New
+keyword-only parameter, default `"core"` preserves byte-identical
+behaviour for any caller that does not pass it.
+```python
+directional = signed if side == "cavity" else -signed
+if directional <= threshold:
+    continue
+```
+Algebraically equivalent to the original `if signed >= -threshold:
+continue` when `side="core"`. Condition 2 (concave bounding-edge
+requirement) is completely unchanged, reused identically for both
+sides — a cavity-side face is flagged only under the exact same
+evidence standard already applied on the core side, never a weaker one.
+`detect_undercuts` now calls this twice (`side="core"`, `side="cavity"`)
+and unions the two face-ID sets and area totals; the existing
+`check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))`
+union-with-Boolean-confirmation code path is untouched — cavity-side
+candidates flow through the identical, pre-existing Boolean-refinement
+mechanism as core-side candidates always have.
+
+**Fixture — found, not built.** The required hand-verified cavity-side
+ground truth already existed inside `UC3_spool_true_undercut.stp`
+(16 faces, hand-verified in Phase 5A) as face 10 — the exact mirror of
+face 4's already-proven 6400 mm³ core-side shelf. Face 10: area
+800 mm² (900 − 100 mm² stem footprint), normal `(0,0,1)`, `g=+1.0`
+(cavity-side), bounding edges 17/23/21/19 all `"concave"`. Hand
+computation: the 800 mm² annulus swept `+Z` passes through the empty
+gap beside the stem (z 8→22) then intersects the cap's full 30×30
+footprint over its 8 mm thickness: `800 × 8 = 6400 mm³` — independently
+re-measured this session via `_swept_face_interference_volume` and
+matching to the hand value (`rel=1e-6`). This fixture was not
+constructed for this fix — a pre-existing code comment in
+`test_undercut_detector_accessibility_union.py` (Phase 5A follow-up,
+predating this phase) had already identified this exact asymmetry as
+"newly discovered, not fixed in this correction," which is independent
+evidence this is a real, previously-known gap rather than a fixture
+tuned to pass.
+
+**Tests.**
+`tests/test_undercut_detector.py::TestAccessibilityRisk` — 3 new tests
+(cavity-side-with-concave-edge flagged, cavity-side-all-convex not
+flagged, core+cavity risk faces both detected simultaneously with
+correct area sum). 10/10 in the class, 73/73 combined with
+`test_undercut_detector_semantics.py`.
+`tests/test_undercut_detector_accessibility_union.py` — `test_C`'s
+stale "not reachable via default path" assertion removed; new `test_C2`
+proves face 10 is now reachable through the exact
+`direction_optimizer.py`-matching default call
+(`boolean_check_all_faces=False`), confirmed, with both faces'
+6400 mm³ independently re-verified; new `test_C3` is the negative
+control (UC3 face 2, cavity-side, all-convex edges, never flagged).
+10/10 passed.
+Full regression: `test_undercut_detector.py` + `_semantics.py` +
+`_accessibility_union.py` = 83/83. `test_direction_optimizer.py` +
+`test_direction_optimizer_feature_acceptability.py` = 51/51 (one test,
+`test_uc4_real_fixture_no_longer_verified_acceptable`, needed its
+sanity-check assertion updated — see "UC4 side effect" below; not a
+regression). `test_direction_optimizer_evidence_tiers.py` (real Part1/
+Part3/Dhukkan/UC3 geometry) run in full; see CHANGELOG.md for the
+pass/fail count recorded at completion.
+
+**Part1 — required to stay explained, not cosmetically forced.**
+Fresh measurement, both principal directions along the part's own
+symmetry axis: `boolean_confirmed_face_ids` is still `[]` at both `+Z`
+and `-Z`, unchanged from the pre-fix baseline. The bilateral fix does
+add new *candidates* that were never Boolean-tested before this fix
+(e.g. faces 28/46 at `+Z`, `g=+1.0`, cavity-side, concave edge) — the
+candidate pool measurably grew (`candidate_unconfirmed_face_ids` now
+includes faces that were previously never checked) — but every one of
+them, without exception, Boolean-tests to zero interference. This is
+the expected, honest outcome for a part with no real cavity-side
+undercuts along that axis: more geometry is now being checked, and the
+answer is still "clean," for the correct reason (no material found),
+not because nothing new was tested.
+
+**UC4 side effect (not a bug, flagged not hidden).**
+`UC4_small_deep_pocket_on_large_plate.stp` reuses UC3's exact
+stem/cap geometry atop a much larger diluting plate. Its own plate-top
+face (39,900 mm², `g=+1.0`, concave annulus around the stem gap) is the
+same kind of genuine cavity-side mirror as UC3's face 10, and is now
+also correctly Boolean-confirmed (`interference_volume_mm3` doubles
+from 6400 to 12800, matching a second independently hand-verifiable
+800 mm²×8 mm=6400 mm³ overlap with the cap). Because
+`confirmed_undercut_pct` attributes a face's *entire* area to
+"confirmed" once any interference is found on it — a pre-existing,
+unchanged whole-face-granularity trait of that metric, explicitly out
+of this phase's scope to alter (severity/depth/interference
+calculations were required to stay untouched) — UC4's confirmed area
+jumps from ~0.89% to ~45.46%, well past the 10% suitability threshold.
+This means UC4 no longer demonstrates the original Phase 5C-3
+"small-area-but-critical" failure mode on its own area metric; it still
+correctly demonstrates that a confirmed critical feature blocks
+`verified_acceptable`, now via both the area rule and
+`feature_acceptability` independently. `test_uc4_real_fixture_no_longer_verified_acceptable`'s
+docstring and stale `< 10%` sanity-check assertion were updated to
+describe this; no fixture geometry, threshold, or production code was
+changed to "fix" this number.
+
+**False positives.** None found. Every cavity-side face flagged in this
+session's regression genuinely satisfies the concave-edge evidence
+requirement, and every Boolean-confirmed cavity-side face
+(UC3 face 10, UC4's plate-top face) has an independently hand-computed,
+matching swept-volume value. The negative controls
+(`test_C3`/`test_cavity_side_all_convex_edges_not_accessibility_risk`,
+UC3 face 2, Part1's clean-along-axis result) all held.
+
+**Runtime impact.** `_compute_accessibility_risk` is now called twice
+per direction instead of once (same per-face cost, same concave-edge
+precomputation reused from `step_loader`); the candidate pool handed to
+Boolean refinement grows on parts with concave cavity-side topology
+(Part1: from ~26 core-side candidates to 68 total candidates at each of
+`+Z`/`-Z`), proportionally increasing Boolean-refinement wall time on
+those directions. Not separately profiled this session beyond the
+regression suite's own run times (see CHANGELOG.md).
+
+**Remaining detector gap.** The whole-face-area-counts-as-confirmed
+granularity issue surfaced by the UC4 side effect above is real and
+pre-existing (not introduced by D-056), and now more visible because
+bilateral candidate generation makes it more likely that a large,
+mostly-clear face with one small genuine pocket gets Boolean-confirmed.
+Not fixed here — flagged for a future phase, since fixing it would mean
+changing interference/area accounting, explicitly out of 5D-1's scope.
+
+**Where.** `backend/geometry/undercut_detector.py:_compute_accessibility_risk`
+(~line 3190-3260), call site in `detect_undercuts` (~line 3405-3425).
+
+---
+
+# Phase 5D-2 — Bosch Part1 reference-image forensic comparison (D-057) and `confirmed_undercut_pct` metric audit (D-058)
+
+## D-057 — Direct 3-D rendering comparison shows the Bosch reference image does NOT depict Part1.stp; no face-level mapping is claimed ⭐⭐⭐⭐
+
+**[2026-08-16] Read-only investigation, no code changed.** The user
+provided the actual Bosch "Undercuts" reference image for the first
+time this session (previously absent from the repo — D-042 explicitly
+withheld any alignment claim pending this). Rendered `Part1.stp` via
+`pyvista` off-screen rendering (`build_raw_mesh`/`to_pyvista`, reusing
+`visualize_raw.py` unmodified) from 5 angles (isometric ×3, top-down
+orthographic, bottom-up orthographic/perspective) for direct visual
+comparison — the first time this investigation has had actual rendered
+Part1 geometry to compare against the reference, rather than relying on
+field-level inference alone.
+
+**Finding.** Part1.stp is a radially 4-fold-symmetric snap-fit cap:
+closed top face bearing a raised/engraved logo medallion, 4 identical
+rim scallop-slots at the top edge midpoints (90° apart), and 4 identical
+tall cantilever legs on the underside arranged around a central stepped
+cylindrical boss, each leg separated from its neighbors by a straight
+vertical slot. The Bosch reference image shows two objects, each a
+single rectangular box, hollow-shell (cyan interior clearly visible
+through one open face), with exactly ONE side-wall slot and ONE
+flat cantilever blade/rib passing through ONE bottom slot — no rim
+logo, no 4-fold symmetry, no closed top. These are two different part
+designs: different symmetry order (4-fold vs. none), different feature
+count (4 legs vs. 1 blade; 4 slots vs. 1-2), different topology (Part1
+has a closed top; the Bosch parts are open-shell). **Direct visual
+comparison, not inference, is the basis for this finding** — screenshots
+retained in session scratch (`part1_view1/2.png`, `part1_bottom1.png`,
+`part1_top_ortho.png`).
+
+**Consequence.** No face-ID-level (or even feature-level) mapping from
+the Bosch image's red dot/line markers to any `Part1.stp` face is
+possible, honest, or attempted. Per explicit instruction, none was
+invented. The Bosch image is almost certainly a generic illustrative
+"what an undercut looks like" training graphic (consistent with its
+plain "Undercuts" caption, no part number, no dimensions, no source
+attribution), not a rendered analysis of this project's Part1 fixture.
+This does not mean the image is useless — see the type-level discussion
+in the full 5D-2 report (delivered in-session, not duplicated here) —
+but it forecloses any claim of Bosch alignment, "false positive," or
+"false negative" being validated against Part1 specifically, and this
+finding supersedes any future attempt to tune detector behavior toward
+reproducing this image's marker pattern on Part1.
+
+**Where.** No code touched. Rendering script:
+session scratch only (not committed — reproducible from
+`backend/geometry/visualize_raw.py` + `pyvista`, both already in the
+repo/environment).
+
+## D-058 — `confirmed_undercut_pct` measures whole-face area attributed to any confirmed interference, not actual interfering footprint; not face-tessellation-invariant; recommendation is EXTEND, not fixed this phase ⭐⭐⭐
+
+**[2026-08-16] Read-only investigation, no code changed.** Traced
+`_confirmed_undercut_pct` (`direction_optimizer.py:1128-1146`) exactly:
+`100 * sum(part.get_face(fid).area for fid in boolean_confirmed_face_ids)
+/ max(total_analysed_area_mm2, 1.0)`, where `total_analysed_area_mm2` is
+the sum of every face's full area on the whole part (`undercut_detector.py:3345-3351`,
+`total_area += face.area` for every `normal_valid` face, unconditionally).
+
+**What it actually measures.** Option A of the three posed alternatives:
+"total face area containing any confirmed interference," as a fraction
+of whole-part surface area — NOT "actual physically interfering area"
+(would require the overlap footprint, not the whole confirmed face's
+area) and NOT any volumetric measure.
+
+**Structural defect, not just an edge case.** Because the unit of area
+measurement is "whichever polygon the CAD author's face boundary happens
+to be," the metric is **not invariant to how a surface was tessellated
+into faces at authoring/export time.** Two STEP files representing the
+physically identical undercut, differing only in whether a large planar
+region was authored as one face or split into several, would report
+different `confirmed_undercut_pct` values for identical real geometry.
+D-056's own regression exposed a live instance: UC4's plate-top face
+(39,900 mm², one B-Rep face) has a genuine, hand-verified 6400 mm³/
+800 mm² overlap with the cap above it — identical in magnitude to UC3's
+own already-accepted face 10 — yet counts its **entire** 39,900 mm² as
+"confirmed," pushing `confirmed_undercut_pct` from ~0.89% to ~45.46%
+for the same physical interference UC3 reports as ~13.6%.
+
+**Where it currently matters.** `_is_direction_suitable_boolean`'s own
+threshold check on this value is confirmed **inert** (D-053's own
+comment: return value discarded by its only caller,
+`_evidence_tier`/`_feature_acceptability` are the actual acceptance
+gate since D-053/D-054) — so the binary accept/reject decision is
+already safe from this defect. It is NOT inert in scoring:
+`direction_optimizer.py:723-725`,
+`cfg.scoring_confirmed_undercut * confirmed_undercut_pct` feeds the
+continuous score, which is the second key in D-052's comparator
+(`(tier_rank, score, accessibility_risk_area_pct, ...)`) — i.e. it can
+still swing tie-breaking and relative ranking *within* a tier, purely as
+a function of face-tessellation granularity rather than real
+interference magnitude.
+
+**Recommendation: EXTEND, not KEEP-as-is, not REDESIGN.** Do not remove
+or replace `confirmed_undercut_pct` — it is cheap (no new geometry ops),
+existing thresholds/tests are calibrated against it, and in the common
+case observed so far (UC3, Part1's currently-empty confirmed set) it is
+not pathological. The defect is real but narrow: it only misleads when
+a single confirmed face's own area is large relative to its actual
+overlap. Recommended future direction (NOT implemented this phase,
+consistent with an additive pattern already used successfully in this
+project — D-055's `topological_side` alongside `label`): add a second,
+complementary metric representing genuine interfering footprint or
+volume fraction, expose both, and let callers (scoring, evidence tier)
+choose the meaningful one per their own semantics — never overload the
+existing field's meaning.
+
+**Where.** `backend/geometry/direction_optimizer.py:1128-1146` (`_confirmed_undercut_pct`),
+`:723-725` (scoring use), `backend/geometry/undercut_detector.py:3345-3351`
+(`total_area` accumulation). No code changed.
+
+---
+
+# Phase 6 — Original pull-direction-timeout/false-positive handoff reconciliation + Part1/Part3 convergence audit (D-059)
+
+## D-059 — The pre-R1-R5 handoff's core diagnosis (candidate-pool bloat, T1) is stale and no longer reproduces; the CURRENT Part1 bottleneck is per-direction Boolean-retry cost variance across 18 mandatorily-refined directions, measured at 1775s; the evidence-driven winner is a diagonal, not +Z ⭐⭐⭐⭐⭐
+
+**[2026-08-16] Read-only audit, no code changed.** Reconciled an older
+handoff document (`docs/handoff/text-11E3934B4476-1.txt`, pre-dating
+D-042/D-046 by its own field-name vocabulary — `parting_ids` as the
+sole classification, `boolean_validation_complete`,
+`boolean_check_all_core_side`, a green `no_interference` render style —
+none of which exist in current code) against the actual current
+codebase and live measurement.
+
+**Reconciliation summary.** Of the handoff's 3 core fixes: Fix D
+(exclude `|n·d|≤0.01` faces from the candidate pool) was **not
+implemented as proposed** — superseded by D-046's narrower, earlier,
+already-in-place `boolean_near_zero_g_threshold=1e-6` guard applied at
+the point of the sweep (not at candidate-generation) plus the
+independently-existing convexity-suppression pass, which together
+already cut Part1 +Z's raw 78-face proxy set to 26 before Boolean
+testing. Fix B+C/tertiary (remove the 150-face expanded final-pass
+validation and `boolean_check_all_core_side`) is **already absent from
+current code** — every `_cached_detect_boolean_undercuts` call site now
+uses the same `cfg.boolean_refine_max_faces=80` uniformly (verified: 5
+call sites, all identical), `final_direction_max_boolean_faces` does not
+exist in `config.yaml`/`config.py`. Fix E (rename a green
+`no_interference` render style) is **moot** — that style, and the whole
+`boolean_no_interference_face_ids`/`boolean_failed_face_ids`-as-primary
+data model it referenced, no longer exists; the current three-bucket
+contract (D-046) and visual style table have no green category at all.
+The proposed instrumentation (`logging.info` calls, `_dump_face_diagnostic()`,
+`boolean_volume_by_face` field) and the `test_undercut_semantic_contract.py`
+test file were **never implemented** under those names.
+
+**Live measurement, current code, Part1 +Z (this session).**
+`check_ids` (proxy ∪ bilateral risk, post-convexity-suppression) = 68
+faces — NOT the handoff's claimed ~230. `boolean_refine_max_faces=80`
+budget is never hit; **zero candidates are truncated**. 4 faces
+(207/215/222/230, the same BSpline leg-transition faces identified in
+D-057's Bosch comparison) genuinely **fail** Boolean refinement (an OCC
+op failure, not a false confirmation) → routed to `manual-review`,
+never `boolean_confirmed`. `boolean_confirmed_face_ids=[]`. **The
+handoff's T1 (candidate-pool bloat) and U1 (perpendicular-dot false
+positives) do not reproduce on current code and current Part1
+geometry** — both were evidently already resolved by work done earlier
+in this project (D-042/D-046/convexity-suppression), independent of
+and prior to this specific handoff's own proposed fixes.
+
+**Live measurement, `optimize_mold_direction(Part1.stp)`, full run,
+this session.** `ELAPSED=1775.1s` (~29.6 min) — worse than both the
+handoff's own ">240s" trigger and its "<30s" target, and worse than the
+user-cited ~1196s. `search_stage_reached=2`, `direction_cache_misses=18`
+(all 18 of Stage 1's 6 principals + Stage 2's 12 diagonals genuinely
+Boolean-refined, per D-048's unconditional-refinement policy — matches
+design, not a bug), `boolean_survivor_candidate_count=17` (barely any
+Stage-3 pruning benefit since almost every Stage 1+2 candidate is
+already Boolean-refined by design). Root cause of the 1775s is **not**
+pool truncation (ruled out directly above) but per-direction OCC
+Boolean-retry cost variance across those 18 mandatory refinements — the
+same "144s-1122s run-to-run variance, consistent with but not
+independently root-caused as OCC's own Boolean-retry brittleness"
+already flagged, unresolved, in D-048's own entry. This session's 1775s
+is a new, worse data point for that same still-open, still-unsolved
+performance question — not a new phenomenon.
+
+**The winner is NOT +Z.** `best_direction=(-0.707, 0.000, +0.707)`
+(a 45° diagonal), `optimal_found=True`, `evidence_tier=verified_acceptable`,
+`confirmed_undercut_pct=0.0`, `feature_acceptability=clean`. Direct
+comparison: +Z itself has the 4 Boolean-FAILED BSpline faces above
+(not clean), while the winning diagonal has zero. **This is the
+evidence-driven system doing its job correctly, not malfunctioning** —
+forcibly converging Part1 to +Z (as both the original handoff's AC1 and
+a later request's stated target both assumed) would mean preferring a
+direction the detector's own honest evidence rates lower, purely to
+match an a priori assumption neither handoff independently re-verified
+against current evidence. Flagged as the single most important finding
+of this audit, not a task to silently execute.
+
+**Full detail:** delivered in-session as the combined "Handoff
+Reconciliation + Convergence Audit" report (2026-08-16). Not duplicated
+here in full; this entry preserves the decisive measured facts.
+
+---
+
+# Phase 4 — Core/cavity gray-face reporting gap (D-049) and ambiguous-face classification forensic audit (D-050)
+
+## D-050 — Ambiguous-face classification forensic audit: no cancellation defect demonstrated on either real part; `mean_g`-only semantics kept unchanged ⭐⭐⭐
+
+**[2026-08-16] Read-only investigation, no code changed.**
+`backend/geometry/parting_line_v2/regions.py`'s `classify_regions()` labels
+a face `"ambiguous"` iff `abs(mean_g) <= silhouette_epsilon` and it does not
+touch the parting loop. The theoretical concern audited: could a genuinely
+curved/saddle face have `min_g` substantially negative and `max_g`
+substantially positive (real draft in both directions) while `mean_g`
+happens to average out near zero, causing a real cavity/core-determinate
+face to be mislabeled ambiguous by an averaging artifact?
+
+**Method.** Direct instrumentation of the already-computed
+`FaceClassification.mean_g/min_g/max_g/sample_count` (11x11 UV sampling,
+unmodified) for every `"ambiguous"`-labeled face on Part1 (+Z, no
+authorization, selected candidate 49) and Part3 candidate 110
+(authorized), cross-referenced with `part.faces[...].surface_type`,
+`part.face_adjacency` (loop-adjacency), and H3 component membership.
+
+**Finding.** Zero faces on either part show a real straddle: the maximum
+`max_g - min_g` spread across the ENTIRE ambiguous population is
+`4.56e-15` (Part1) and `1.41e-16` (Part3 candidate 110) — 13-14 orders of
+magnitude below `silhouette_epsilon=0.02`, i.e. IEEE-754 floating-point
+noise, not a geometric signal. `g` is zero to float precision at every one
+of 121 sampled points on every ambiguous face on both parts — genuine
+zero-draft geometry (planar ribs/walls parallel to the pull axis, bores/
+bosses coaxial with it), not curvature cancellation. `RegionClassification.
+inconsistent_face_ids` (the pipeline's own pre-existing straddle detector,
+applied to ALL cavity/core-labeled faces, not just ambiguous ones) is
+empty on both parts — the failure mode does not manifest anywhere in
+either model, not only within the currently-ambiguous population.
+
+**Decision.** Classification semantics (`abs(mean_g) <= silhouette_epsilon`)
+are kept UNCHANGED. No min/max-based criterion, no new threshold, no
+CASE-B/C special-casing implemented — there is no measured defect to fix,
+and building one against fixtures that cannot confirm or falsify it would
+be exactly the "tune to desired output" failure this audit was
+commissioned to avoid.
+
+**Residual, honestly flagged, NOT a current defect.** A future part with a
+genuinely doubly-curved/saddle zero-draft-band face (meaningfully negative
+AND positive sampled `g` averaging near zero) is not demonstrated to exist
+on Part1 or Part3, but is not ruled out by this audit either — the
+`min_g`/`max_g` data needed to detect it is already captured in
+`FaceClassification` and needs no schema change if such a face is ever
+observed. Logged in `.claude/memory/known-gaps.md` under "Unproven
+Observations."
+
+**Where.** No file changed. Evidence: this session's forensic run against
+`backend/geometry/parting_line_v2/regions.py::classify_regions` +
+`FaceClassification` (unmodified), real `Part1.stp`/`Part3.stp`.
+
+---
+
+## D-049 — Best-rejected H3-passing candidate's already-computed `RegionClassification` now exposed via explicit, separate top-level fields; `regions` continues to mean only "the accepted split" ⭐⭐⭐
+
+**[2026-08-16] Implemented — `backend/geometry/parting_line_v2/engine.py`
+(new fields only) and `frontend/app.py` (new opt-in preview + corrected
+stale caption). No change to `separate_surface()`, `classify_regions()`,
+H0-H7, `ranking.py`, the pull-direction optimizer, undercut detection,
+core-pin semantics, or delegation semantics.**
+
+**Root cause (Phase 4 forensic audit).** When no candidate passes every
+gate (`selected=None`, e.g. Part3 at `+Z` with no manual core-pin/
+delegation authorization: 159/310 candidates fail H3, 151/310 fail H4),
+`PartingLineV2Result.regions` was hard-wired to `regions_by_candidate.get
+(selected.candidate_id) if selected else None` — always `None` in this
+case. Every face then rendered flat neutral gray in the frontend with zero
+explanation, DESPITE Phase 3A already retaining a full, real
+`RegionClassification` for the best-ranked rejected H3-passing candidate
+in `regions_by_candidate` (and even attaching it to that candidate's own
+object in the scorecard) — the data existed and was silently discarded
+before reaching the API/frontend. Not a classification-algorithm defect;
+an information-exposure gap.
+
+**Fix.** Reused the pre-existing, deterministic `best_rejected_id`
+selection (lowest `h4_orientation_violation_fraction` among non-selected,
+H3-passing candidates — unchanged, not re-invented) and exposed it through
+four new, explicitly separate `PartingLineV2Result` fields:
+`best_rejected_candidate_id`, `best_rejected_regions`,
+`best_rejected_failed_gate`, `best_rejected_reason`. `regions` itself is
+untouched and never overloaded. Frontend: corrected a now-false caption
+("region classification is only computed for the passing candidate") and
+added an opt-in (default-off), separately-rendered viewport preview
+banner-labeled "BEST REJECTED CANDIDATE {id} — PREVIEW ONLY" with the
+concrete gate/reason, explicitly stating it is not feasible, not a valid
+parting line, and not a final core/cavity split.
+
+**Verified.** Part3 `+Z` no-auth: `regions=None` (unchanged), 
+`best_rejected_candidate_id=218` (lowest-violation H3-passing rejection,
+7.2% H4 violation — not hardcoded to candidate 110), `best_rejected_
+regions` populated (316 cavity / 3 core / 95 ambiguous faces). Part3
+candidate 110 (authorized): frozen Phase 3A values byte-identical
+(`cavity_face_ids` len 410, `core_face_ids=={35,36,37,320,321}`,
+`ambiguous_area_fraction==0.3271748971395147`, face-35 split areas
+1302.33/130.23 mm²). Part1 `+Z`: unchanged (`selected.candidate_id==49`,
+area fractions unchanged). `rejection_summary` gate counts on Part3
+no-auth (`{"H3": 159, "H4": 151}`) confirm H0-H7 evaluation itself
+untouched.
+
+**Tests.** `tests/test_parting_line_v2_best_rejected.py` (new, 9 tests,
+all 8 items requested by the implementing instruction). Full regression:
+13 Phase 3A region-balance + 12 core-pin + 17 delegation + 34 API/Level-1
+= 85/85 passed, 0 regressions.
+
+---
+
+# Phase 5B — Pull-direction optimizer: tiered evidence-based selection replaces raw-score sorting across candidates with fundamentally different verification status
+
+## D-048 — All 6 principal axes and 12 configured diagonals are now always Boolean-refined regardless of the cheap bad_pct/accessibility_risk_pct screen; final selection is evidence-tier-first, score-second; the optimizer can now honestly report "no verified optimum" instead of silently returning an unverified best-scoring candidate ⭐⭐⭐⭐
+
+**[2026-08-16] Implemented — `backend/geometry/direction_optimizer.py`
+only. No change to `_compute_accessibility_risk`, the undercut detector,
+H0-H7, `parting_line_v2`, core-pin/delegation, or the frontend.**
+
+**Root cause (Phase 5B audit).** `_is_direction_suitable_cheap` (bad_pct
+<=30%, accessibility_risk_pct<=15%) gated WHETHER a Stage 1/2 candidate
+was ever Boolean-refined at all. Measured live: every one of Part1's 6
+principal axes fails this gate (bad_pct 43-72%), so none were ever
+Boolean-verified by the optimizer's own search, before or after D-046/
+D-047 — those detector fixes, however correct, were structurally
+unreachable for the directions with the strongest manufacturing
+precedent. Separately, the final selection (`scored.sort(key=score);
+best=scored[0]`) mixed candidates verified by different formulas (cheap
+vs. Boolean-refined) and candidates never verified at all in one raw sort,
+letting an unverified candidate's lower numeric score silently outrank a
+verified one's.
+
+**Fix.**
+1. Stage 1+2 (6 principal + 12 configured diagonals) are now ALWAYS
+   Boolean-refined, unconditionally. The cheap screen is no longer a
+   pre-Boolean gate for these — it remains exactly as before for the
+   Stage-3 spherical grid, where verifying every point really would be
+   too expensive (`_select_boolean_refinement_candidates`, untouched).
+2. Every `DirectionCandidateResult` now carries an explicit
+   `evidence_tier` (`"verified_acceptable"` | `"verified_undercuts_present"`
+   | `"unverified"`) and `confirmed_undercut_pct` (0.0 when unverified —
+   never confused with "confirmed clean").
+3. Final selection (`_tiered_best`) compares tier first, score second —
+   an unverified candidate's score is never compared against a verified
+   one's.
+4. `DirectionOptimizationResult` gains `optimal_found` (True only when
+   the winner's own tier is `"verified_acceptable"`), `best_evidence_tier`,
+   `best_unverified_candidate` (populated, separately labeled, when
+   `optimal_found=False`), and a permanent `residual_detector_limitation_note`
+   documenting D-047's own known core-side-only gap — `evidence_tier=
+   "verified_acceptable"` means no undercut was found BY THIS METHOD, not
+   that none exists.
+5. `best_direction`/`best_score`/`best_label` remain always-populated
+   `Vec3`/`float`/`str` (backward compatible with every existing caller —
+   `direction_optimizer.py`'s own agent-tool and v1 core-cavity consumers,
+   verified unchanged) even when `optimal_found=False`, so no existing
+   caller breaks; the new fields are the only way to detect the
+   unvalidated case.
+
+**Measured result, real parts, all 6 principal directions (this session,
+post-implementation).** Part3: all 6 principal axes now boolean_refined
+(previously only `+X`/`-X` were ever checked) — `+X`, `+Y`, `-Y`, `+Z`,
+`-Z` all `"verified_acceptable"` (0% confirmed); `-X` also technically
+acceptable at 9.8% confirmed (just under the 10% threshold) but loses on
+score to `+X`'s cleaner result — winner unchanged from pre-Phase-5B
+(`+X`), now for the right, fully-verified reason instead of an unverified
+default. Dhukkan: `+X` correctly demoted to `"verified_undercuts_present"`
+(10.8% confirmed, over threshold); winner unchanged (`+Z`), now
+tier-justified. **UC3 (hand-verified ground truth) — the clean proof of
+correctness**: `+Z`/`-Z` (the fixture's real, hand-computed 6400 mm³
+undercut axis) are correctly `"verified_undercuts_present"` (13.6%
+confirmed, rejected); `+X`/`-X`/`+Y`/`-Y` (verified clean by
+construction) are all `"verified_acceptable"` (0% confirmed) — the
+optimizer now separates true-bad from true-good axes on this fixture
+using real Boolean evidence for BOTH conclusions, not heuristics. Part1:
+all 6 principal axes now boolean_refined=True (confirmed directly,
+matching the audit's own prediction); the overall search now reaches
+`optimal_found=True` at Stage 2 (a validated diagonal) — the first time
+in this entire investigation that Part1 has produced a genuinely
+Boolean-verified, acceptable answer rather than relying on unverified or
+degenerate-volume evidence.
+
+**Performance note, not silently absorbed.** Always-Boolean-refining all
+18 Stage 1+2 candidates measurably increases Part1's runtime, and its
+observed cost varied substantially run-to-run in this session (144s to
+1122s for otherwise-identical calls) — consistent with OCC's own
+documented Boolean-retry brittleness (`boolean_retry_offset_multipliers`)
+rather than a bug in this change, but not independently root-caused
+further this session. Flagged as a real, unresolved performance-variance
+observation for a future phase, not swept under the rug.
+
+**Tests.** `tests/test_direction_optimizer.py`: 2 pre-existing tests
+updated (`search_stage_reached==3` no longer means "search exhausted" —
+Phase 5B redefined it to mean "which candidate pool the winner came
+from"; both updated to assert the new, more precise `optimal_found`/
+`best_evidence_tier` honesty fields instead, which is what they were
+actually trying to test). `tests/test_direction_optimizer_evidence_tiers.py`
+(new): tier-comparator correctness (deterministic, mock-based), Part1/
+UC3 principal-axis Boolean-refinement characterization, no-acceptable-
+candidate honesty (mock-based), Stage-3 triage-still-prunes (forced via
+an unsatisfiable-threshold override, since UC3 now legitimately exits
+early at Stage 2 — itself a positive side-effect of this fix), Part3/
+Dhukkan/Part1 explainability and mirror-symmetry checks against live
+real-part data. Full existing mock-based regression
+(`test_direction_optimizer.py`): 28 passed, 0 failed.
+
+**Full detail:** see the Phase 5B implementation deliverable report
+(2026-08-16 session) for the complete before/after tables and the
+answer to "can the optimizer now legitimately claim meaningful undercut
+evidence".
+
+---
+
+# Phase 5A follow-up — Boolean candidate selection was draft-proxy-only, silently missing wrong-sign shelf undercuts; now the union of draft-proxy and accessibility-risk candidates
+
+## D-047 — `check_ids` for Boolean verification is now `proxy_undercut_ids ∪ accessibility_risk_face_ids`; a face with excellent draft magnitude but the wrong sign relative to its local topology (e.g. a shelf underside) can now reach confirmation ⭐⭐⭐⭐
+
+**[2026-08-16] Implemented — `undercut_detector.py` only. No change to
+`direction_optimizer.py`, `_compute_accessibility_risk`,
+`_face_access_direction`, `draft_angle_deg`, H0-H7, `parting_line_v2`,
+core-pin/delegation, or the frontend.**
+
+**Root cause.** `draft_angle_deg = asin(|g|)` is correctly sign-blind (it
+answers a scuffing question, not a trapping question). The proxy pass
+(`proxy_undercut_ids`) gates on this sign-blind angle, so a face with
+`g=-1` (excellent draft magnitude, wrong sign — a classic shelf
+underside) has `draft_angle_deg=90°` and is never a proxy candidate. Under
+default settings (`boolean_check_all_faces=False`, which is exactly what
+`direction_optimizer.py:408` hardcodes), such a face was never Boolean-
+verified at all — invisible, not merely unconfirmed. `_compute_
+accessibility_risk` (core-side `g<-threshold` AND >=1 concave bounding
+edge) already existed, already correctly distinguished this class of face
+from an ordinary negative-g face with no real risk, and was already
+independently tested — but was never wired into Boolean candidate
+selection, only used as a `direction_optimizer.py` scoring term.
+
+**Fix.** `check_ids = proxy_undercut_ids ∪ accessibility_risk_face_ids`
+when `boolean_check_all_faces=False`. Both candidate-generation passes
+are unchanged; only which of their outputs feed the (unchanged) Boolean
+verification step.
+
+**Hand-verified proof, `UC3_spool_true_undercut.stp`** (built in Phase
+5A): face 4 (genuine trapped shelf, `g=-1`) was previously invisible to
+the default path; now confirmed at exactly `6400 mm³`, sourced purely via
+`accessibility_risk` (`candidate_sources[4] == ["accessibility_risk"]`).
+Face 15 (`g=-1`, same magnitude, no concave boundary, genuinely NOT an
+undercut) remains correctly absent from every bucket — proving the fix
+does not classify every negative-g face as an undercut. Face 10
+(`g=+1` at `+Z`) is discoverable at `-Z` (where it becomes core-side) or
+via `boolean_check_all_faces=True`, but **not** at `+Z` under the default
+path — see "Newly discovered, not fixed" below.
+
+**Provenance.** `UndercutDetectionResult.proxy_only_face_ids` (Phase 5A)
+renamed to `candidate_unconfirmed_face_ids` (zero external consumers at
+rename time, verified by repo-wide search) — "proxy only" became
+misleading once a face can be a Boolean candidate without ever being a
+draft-proxy candidate. New `candidate_sources: dict[int, list[str]]`
+records, per processed face, `"draft_proxy"`, `"accessibility_risk"`, or
+both, answering "why was this face sent to Boolean verification."
+
+**Measured impact on real parts (Part1/Part3/Dhukkan, all 6 principal
+directions) — the significant finding of this phase.** Part1 at `+Z`/`-Z`
+remains 0 confirmed (40 and 2 additional accessibility-risk candidates
+respectively, all Boolean-checked and correctly cleared — corroborating
+Phase 5A's `boolean_check_all_faces=True` finding that Part1 has no local
+undercut along the Z axis). But at **`+X`: 19 newly confirmed faces**
+(previously entirely invisible), **`-X`: 12**, **`+Y`: 4** — all sourced
+purely via `accessibility_risk`, none previously reachable. Spot-verified
+non-degenerate: sampled faces carry meaningful `g` (−0.69 to −1.00, far
+from the D-042 danger zone) and physically plausible interference
+volumes (0.4-1433 mm³, no whole-part-volume signature). **Part1 was not
+as undercut-free at off-axis directions as the pre-fix detector reported
+— this was a real, previously-hidden false negative, not a synthetic
+corner case.** Part3/Dhukkan: no new confirmations at any tested
+direction — their accessibility-risk candidates (where any exist) all
+checked out clean, a real result, not evidence the fix "doesn't work"
+(cross-validated against the same non-degenerate-volume signature check).
+
+**Newly discovered, not fixed in this phase.** `_compute_accessibility_
+risk` only tests core-side (`signed < -threshold`) faces by design — a
+cavity-side (positive-g) equivalent of a trapped shelf (UC3 face 10, at a
+pull direction where it is NOT core-side) has no analogous
+candidate-generation signal and remains reachable only via
+`boolean_check_all_faces=True`. This is a narrower, direction-relative
+gap (resolved for a given face once the pull direction makes it
+core-side) rather than a universal blind spot, and is flagged for a
+future phase rather than fixed here, per the explicitly bounded scope of
+this correction.
+
+**Tests.** `tests/test_undercut_detector_accessibility_union.py` (new, 8
+tests, matrix A-I minus H): face 4 confirmed via the default path, face 15
+never nominated, face 10 discoverable only via `boolean_check_all_faces`
+(documenting the asymmetry above), provenance correctness (single- and
+dual-source), near-zero-g guard composes correctly with the new candidate
+source, three-bucket disjointness, and direct reproduction of
+`direction_optimizer.py`'s exact call signature proving the fix is visible
+through the unmodified consumer path. Full regression
+(`test_undercut_detector.py` + both new semantic files +
+`test_direction_optimizer.py` + `test_draft_analyzer.py` +
+`test_parting_line_v2_contracts.py` + `test_step_loader.py`): 306 passed,
+0 failed — zero pre-existing tests needed updating this time (unlike
+Phase 5A's near-zero-g fix, this change only adds new confirmations, it
+never removes an existing one that a mock fixture depended on).
+
+**Full detail:** see the Phase 5A follow-up deliverable report
+(2026-08-16 session) for the complete before/after table and the explicit
+"is the detector trustworthy for Phase 5B" verdict.
+
+---
+
+# Phase 5A — Undercut detector: near-zero-g swept-volume degeneracy (D-042) fixed by exclusion, not repair; three-bucket evidence contract replaces the single flat undercut_face_ids set
+
+## D-046 — `_swept_face_interference_volume` is mathematically well-posed only for faces with meaningfully non-zero g; faces tangent to the pull direction are now excluded from the sweep entirely (`boolean_not_applicable`) rather than fed to a test that cannot answer the question for them ⭐⭐⭐⭐
+
+**[2026-08-16] Implemented — `undercut_detector.py`, `backend/config.py`,
+`config.yaml`. No change to `direction_optimizer.py`, `parting_line_v2`,
+H0-H7, or any candidate-generation/ranking code (explicitly out of scope
+for this phase).**
+
+**Root cause, proven not assumed.** `BRepPrimAPI_MakePrism` extrudes a face
+along the access direction chosen by `_face_access_direction`
+(`n.d>=0 -> +d`, `n.d<0 -> -d`). This is well-posed only when the sweep
+direction has a meaningful component along the face's own normal. When
+`g=n.d` is at or below floating-point noise (the sweep direction lies in
+the face's own plane), the resulting "prism" is degenerate and its
+intersection with the part collapses toward the part's own volume rather
+than a local shadow. Isolated directly this session on a hand-built
+synthetic fixture (`UC1_step_pyramid_tangent_walls.stp`, true volume 18560
+mm^3 by construction): a face with `g=0.0` exactly reports `18560.000
+mm^3` (the whole part); the identical face at `g=-1e-16` still reports
+`18560.000`; at `g=-1e-14` it already reports the correct `0.0`. The
+danger zone is the floating-point noise floor, not a "small g" region in
+any practical sense.
+
+**Threshold.** `cfg.boolean_near_zero_g_threshold = 1e-6`, mirroring
+D-043's `core_pin_uniform_g_max` (also 1e-6, also "uniformly, genuinely
+tangent to the pull direction") rather than inventing a new number.
+Measured margin above the actual noise floor (~1e-16): 9+ orders of
+magnitude — deliberately conservative, verified a face just outside the
+tolerance (e.g. `g=1e-5`) still computes correctly and is not excluded.
+
+**`_face_access_direction` itself needs no change.** It has exactly one
+call site (inside `_swept_face_interference_volume`). Verified directly:
+for a meaningfully-signed face (`g=+1` and `g=-1` tested), it correctly
+returns `+pull`/`-pull` respectively. The fix lives entirely in its
+caller's caller (`_boolean_refine_undercuts`), which now never invokes the
+sweep at all for a near-zero-g face — the sign-flip-on-noise concern (the
+other half of D-042) is resolved structurally, since the function is never
+reached with a noise-dominated sign.
+
+**Three-bucket evidence contract.** `UndercutDetectionResult` gains
+`proxy_only_face_ids`, `boolean_confirmed_face_ids` (existing field,
+narrower meaning now), `boolean_not_applicable_face_ids` +
+`boolean_not_applicable_reasons` — disjoint by construction. The legacy
+`undercut_face_ids` union is preserved for backward compatibility
+(`direction_optimizer.py` reads it for display/reporting only, never for
+scoring — verified by reading every call site) and still includes
+not_applicable faces (flagged, uncertain — never silently cleared).
+
+**Genuine positive case, hand-verified.** A new fixture,
+`UC3_spool_true_undercut.stp` (bottom disk + narrow stem + top disk, all
+coaxial), has a real trapped shelf: the top disk's underside ring (area
+800 mm^2) swept down through the bottom disk (8mm thick) intersects
+exactly `800*8=6400` mm^3 of real material — confirmed by the corrected
+detector to that exact value. This proves the fix does not just suppress
+false positives; the mechanism still correctly confirms genuine local
+interference where one exists.
+
+**Measured consequence on real parts (Part1/Part3/Dhukkan, all 6
+principal directions).** Every proxy-flagged (low-draft) face on all
+three real fixtures, at every tested direction, has `g` below the
+threshold — meaning `boolean_confirmed_face_ids` is empty and
+`boolean_not_applicable_face_ids` equals the full proxy set in every
+case. Cross-checked with `boolean_check_all_faces=True` on Part1 +Z: 42
+additional (non-proxy) faces were checked and all cleared with zero
+interference — i.e. Part1 has zero Boolean-detectable local undercuts
+along principal axes, whether restricted to proxy candidates or not. This
+is reported as a real, honest finding, not tuned to produce it: the
+teammate's proxy pass structurally only flags faces near the zero-draft
+band, and typical axis-aligned CAD geometry's zero-draft faces are
+overwhelmingly exactly tangent (OCC's analytic planar evaluator returns
+bit-exact normals for exactly-axis-aligned planes) — so on this class of
+part, this specific local-sweep mechanism currently has very little to
+say. Flagged as a real limitation of the local-sweep approach for future
+work, not something this phase's fix should paper over.
+
+**Bosch Part1 reference (external evidence, not ground truth).** Before
+this fix, Part1 +Z's Boolean layer reported one 10-face "critical" cluster
+(depth 26.86mm — exceeding the part's own 30.78mm bbox diagonal, itself a
+symptom of the corrupted volume feeding depth estimation) plus 7 small
+perimeter features (8 features total) — a result whose *count* and
+*shape* (a handful of localized groups, not the whole part) already
+qualitatively resembled the Bosch reference's localized red-marker
+pattern, but whose *confirmation and depth evidence* rested entirely on
+now-proven-broken faces (every one of the 18 contributing faces measured
+at `g=0.0000`). After the fix: the same 26 faces (a slightly larger,
+more complete set — the old code's union formula silently dropped 9
+checked-but-unconfirmed proxy faces from its own count; the new formula
+never drops a proxy face without an explicit reason) now honestly report
+`boolean_not_applicable`, split into 14 smaller `"minor"`-severity groups
+with a physically plausible depth (0.97-1.45mm, not 26.86mm). No face-ID
+level correspondence to the Bosch image markers is claimed — that would
+require actual 3D visual comparison tooling, not available this session.
+
+**Tests.** `tests/test_undercut_detector_semantics.py` (new, 8 tests):
+`_face_access_direction` sign-correctness proof, near-zero-g boundary
+calibration lock-in, true-tangent-wall exclusion, D-042 whole-part-volume
+regression guard, genuine-undercut confirmation (exact 6400 mm^3), genuine
+open-end clearance, mushroom near-zero-g exclusion, three-bucket
+disjointness. `tests/test_undercut_detector.py`: 10 existing mock-based
+tests updated (root cause: their `_make_face` fixtures used
+axis-aligned-vs-axis-aligned normals, `g=0.0` by construction — an
+intended semantic correction to keep them exercising Boolean-confirmation
+mechanics rather than the now-excluded tangent-face category; a tiny
+`g=0.005` perturbation preserves every test's original intent). Full
+existing suite (`test_undercut_detector.py`, `test_direction_optimizer.py`,
+`test_draft_analyzer.py`, `test_parting_line_v2_contracts.py`,
+`test_step_loader.py`): 298 passed,
+0 failed.
+
+**Not done in this phase, explicitly deferred.** No wiring into H5 (still
+awaits an evidence-quality-tagged adapter decision, per the earlier Phase
+5 design report). No change to the proxy pass's inability to flag a
+good-draft-but-wrong-signed shelf face (discovered this session while
+building `UC2_mushroom_shelf_undercut.stp` — a face with `g=-1` has
+excellent draft angle and is never proxy-flagged at all under default
+settings, a distinct, real gap from D-042, flagged for a future phase, not
+fixed here). No change to `direction_optimizer.py`.
+
+---
+
+# Phase — Core/cavity accounting contract (Phase 4): H4's gate-area convention and RegionClassification's reported-area convention are two different, both-legitimate answers to "how much area is in this region," and they were always meant to diverge — this phase names that fact and makes the frontend render it truthfully, without changing either convention's math
+
+## D-045 — H4's per-region area sum and `RegionClassification.cavity_area_mm2`/`core_area_mm2` are two intentionally different area conventions over the same face set; neither is a bug, neither should be substituted for the other, and the UI must say so ⭐⭐⭐
+
+**[2026-08-16] Implemented — `frontend/app.py`, `backend/api/main.py`. No
+change to `gates.py`, `regions.py`, `engine.py`, or any H0-H7 math.**
+
+**Decision.** Two area conventions coexist, both already present in code
+before this entry, neither previously named outside inline comments:
+
+- **Gate area** (H4, `gates.py:409-427`): `area(A) = Σ_{f∈A} face.area` over
+  a region's raw H3 topological component membership. A face the parting
+  boundary crosses (`split`/tooling-split) is a member of both components
+  and is counted at full area in *both*; an `ambiguous`-labelled face is
+  still counted at full area in whichever component it topologically sits
+  in. This matches the plan's literal H4/C5 specification verbatim —
+  `docs/PARTING_LINE_ALGORITHM_PLAN.md:59,680-686` defines `area(r)`/
+  `area(A)` over the whole region, with no stated exclusion or
+  apportionment.
+- **Reported area** (`RegionClassification.cavity_area_mm2`/`core_area_mm2`,
+  `regions.py:1082-1117`): `ambiguous` area is carved into its own bucket
+  (`ambiguous_area_mm2`), and a `split` face's area is apportioned between
+  sides by real geometric evidence (axial share for a D-043 tooling split,
+  `mean_g` magnitude ratio for a genuine Track-B split), never
+  double-counted. Explicitly self-documented as diagnostic-only: "NOT a
+  feasibility gate: H3/H4 never read these" (`regions.py:906-909`).
+
+Measured on Part3 +Z candidate 110: H4's own cavity-region denominator is
+4424.787 mm²; `RegionClassification.cavity_area_mm2` reports 3651.175 mm²
+for the same candidate. Both numbers are individually correct for what
+they define; they are not the same measurement.
+
+**Frozen for this phase.** Neither convention changes. H4 keeps using gate
+area (it is the specified behaviour, not an oversight); the UI keeps
+showing reported area (it is what a human means by "how much of this part
+is cavity vs. core vs. undetermined"). The only change is that the gap
+between them is now named, documented, and surfaced to the reader instead
+of living only in a code comment.
+
+**Where.** `frontend/app.py` (`_pv2_build_face_label_map`,
+`_pv2_region_color`, v2 tab's Technical Details caption); `backend/api/
+main.py` (`pv2_region_rgb` retired — see below).
+
+**`pv2_region_rgb` retirement.** `main.py` computed a server-side
+cavity/core-only RGB array (`pv2_region_rgb`), keyed off raw H3 component
+membership (not the four-way label), on every `/parting-line-v2` request.
+A repo-wide search found zero consumers — not the frontend, not tests, not
+`backend/agent/`. Removed; the frontend already builds its own
+label-accurate coloring directly from `payload["regions"]["faces"]`, and
+already owns compositing for every other v2-tab overlay (undercuts,
+core-pin, delegation groups), so a second, non-label-aware color source
+was redundant by construction, not merely unused by oversight.
+
+**Known gap, not closed in this phase.** H4's `measurements` dict
+(`gates.py:428-429`) exposes only the final ratio
+(`h4_orientation_violation_fraction`) and the delegated-face count, never
+the raw numerator (violating area) or denominator (region area) that
+produced it. Exposing those would require a `gates.py` change, which is
+out of scope here — flagged as a small backend observability gap for a
+future phase, not implemented now.
+
+---
+
 # Phase — Secondary-action delegation (plan D-044): H4 asks whether the geometry expected to move with the primary mould direction is orientation-consistent, not whether the whole part has no undercuts — an explicitly authorized, independently validated face set that is genuinely handled by a separate secondary mechanism can be excluded from that specific test, without ever claiming the mechanism has been proven to physically release it
 
 ## D-044 — `DelegatedSecondaryAction`/`validate_delegation`: H4's per-region orientation-area sums exclude only face ids from delegation records that independently pass structural validation for THAT candidate and THAT pull direction; validation proves self-consistency, never physical release ⭐⭐⭐

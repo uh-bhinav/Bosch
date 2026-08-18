@@ -1,6 +1,6 @@
 # Project Status — DfM Agent
 
-> **Last updated**: 2026-08-15
+> **Last updated**: 2026-08-17
 > **Update this file after every change session.**
 >
 > **Master plan**: `docs/ARCHITECTURE_ROADMAP.md` — phased specification with
@@ -10,6 +10,373 @@
 > `docs/RECOVERY_PLAN.md`.
 
 ## Headline
+
+**Phase F6 (2026-08-17) — STEP mold-half export + PDF Report Builder.**
+Two minimal, additive backend changes (both investigated and disclosed
+before writing any code): (1) `GET /export/download/{filename}` — STEP
+export previously only wrote to the backend's local disk and returned a
+server-side path with NO way for a browser to retrieve the bytes; new
+`export_mold_halves()` field `download_filename` pairs with it. (2)
+`include_executive_summary` (default true) on `build_dfm_report_pdf`/
+`/export/report` — the smallest real piece of F0's identified PDF
+section-picker gap; deliberately did NOT add toggles for sections that
+are genuinely unconditional in the backend, and did NOT add a
+Diagnostics/Metrics PDF section (would make the report a dashboard dump).
+New `ExportPanel` (STEP export + PDF Report Builder, replacing the F1
+placeholder) always exports using the CURRENT already-resolved
+`pullDirection` -- never re-running the optimizer search purely to
+export; the real, disclosed consequence is that undercut/parting-line/
+solid-split are still re-derived once per export call (the backend never
+caches OCC solids between requests) and the PDF's own "Pull Direction
+Optimization" section can never appear in a frontend-generated report.
+Ready → Preparing → Generating (live elapsed seconds, no fake
+percentage) → Complete/Failed for both exports. Real-fixture-verified
+live: a real STEP export + download round-trip on Part1.stp produced a
+byte-identical, OCC-reloadable 2-solid AP214 file; a real PDF export
+produced a valid `%PDF-1.4` document. 37 new frontend tests (139/139
+total) + 10 new/regression-guard backend tests, all pre-existing backend
+suites re-run clean. Full detail: CHANGELOG.md "Phase F6".
+
+**Phase F5 (2026-08-17) — Diagnostics & Metrics workspace, F0's
+three-tier hierarchy.** No backend changes. New `src/diagnostics/
+deriveDiagnostics.ts` (pure, zero API calls) + `DiagnosticsPanel`/
+`DiagnosticGroupCard` render 8 groups (Geometry, Pull Direction Search,
+Parting Line, Core/Cavity, Undercuts, Side Cores, Performance, Advanced)
+each with Tier 1 (conclusion) / Tier 2 ("Details") / Tier 3 ("Advanced")
+progressive disclosure -- every group collapsed by default, no giant
+table. Reads only F1-F4's already-populated shared state; clicking a
+face-list row (e.g. inconsistent face IDs) selects those faces via the
+existing `setSelectedFaceIds` action -- no second selection mechanism.
+**Three substantial, confirmed backend contract gaps disclosed, not
+hidden**: pull-direction search detail (candidate count, search stage,
+best score, evidence tier, evaluation_failures), undercut feature data,
+and side-core per-feature/delegation data are ALL absent from
+`/core-cavity`'s response (verified by reading source, not assumed) --
+each shown as an explicit "Not available from current response" with the
+specific reason, never fabricated or filled via an extra (expensive)
+call. What IS real and shown: Geometry, Core/Cavity's classification +
+split volumes/sliver metrics (+ a clearly-labeled client-computed
+conservation check), Parting Line's outcome/referral text, and two real
+backend timings plus an honestly-labeled frontend-measured request
+duration (never a manufactured per-stage breakdown). 21 new tests, two of
+which are byte-accurate real captures from this session's live backend
+(Part1 "generated", Part3 candidate-110 "referred_to_side_action").
+102/102 total. Full detail: CHANGELOG.md "Phase F5".
+
+**Phase F4 (2026-08-17) — Manual Pull Direction + core-pin/delegation
+authorization wired to `resolve_manual_direction_mold`.** No backend
+changes. New `PullDirectionPanel` (recommended vs. manual, axis presets,
+"use selected face normal" via a new `ViewportEngine.getFaceNormal`, a
+live non-interactive direction arrow) and `AuthorizationEditor` (structured
+core-pin/delegation form -- not the old raw-JSON tab) both call the same
+`/core-cavity` contract F3 uses, `use_optimal_direction=false` with the
+engineer's RAW unnormalized vector -- backend C16 stays the one
+normalization/invalid-direction authority. `analysisShared.ts` (new)
+factors F3's run/apply-result machinery so a manual run shares one
+in-flight guard with the Guided run and always produces exactly one
+current `analysisResult`, while a separate `recommendedResult` snapshot
+keeps the optimizer's recommendation comparable. Real-fixture-verified
+live: zero-direction returns 200/`invalid_direction` (confirms the C18A
+fix), manual `+Z` on Part1 succeeds with a real solid split, and the real
+Part3 candidate-110 authorization payload returns `referred_to_side_action`
+live (not the frozen unit test's `feasible` -- disclosed and explained,
+not a bug: the manual path uses real undercut evidence where the unit
+test uses `UndercutInput.empty()`). 26 new tests (81/81 total). Full
+detail: CHANGELOG.md "Phase F4".
+
+**Phase F3 (2026-08-17) — Guided "Run Full Analysis" wired to the
+authoritative C14-C18A backend orchestration.** No backend changes. New
+"Run Full Analysis" button (top bar) calls the ONE authoritative endpoint
+(`GET /core-cavity?use_optimal_direction=true&solid_split=true`) that runs
+direction search -> parting line -> core/cavity split in one request; new
+`frontend-web/src/analysis/` (`runGuidedAnalysis.ts`,
+`describeAnalysisOutcome.ts`, `useElapsedSeconds.ts`) sequences the call,
+guards against duplicate requests, colors the persistent viewport from
+`display_mesh.core_cavity_rgb`, and maps `orchestration.status`/
+`parting_line_v2_outcome` to the 9 required UI states (idle/running/
+completed/blocked/invalid-direction/no-feasible-candidate/needs-side-
+action/core-cavity-failure/successful-generation) without inventing new
+backend interpretations. A live elapsed-seconds + stage-label readout
+replaces a frozen UI during the (multi-minute, real-fixture-confirmed)
+call. Status strip shows a verdict badge + detail; Expert-mode Pull
+Direction/Parting Line/Core-Cavity tabs get a read-only summary of the
+same shared result (no independent per-tool run yet -- F4+). Disclosed,
+not fixed: `evaluation_failures`/`side_action_referrals` are not
+threaded into `/core-cavity`'s orchestration payload (they live only on
+`/direction`, calling which separately would double the optimizer's
+cost) -- not needed for F3 since `parting_line_v2_outcome` alone already
+distinguishes every required state. 25 new tests (55/55 total with F1/F2).
+Full detail: CHANGELOG.md "Phase F3".
+
+**Phase F2 (2026-08-17) — real STEP import/upload wired to the F1
+workstation.** New `POST /parts/upload` (backend, `data/uploads/` — never
+`data/parts/`, uuid-prefixed filenames, shallow extension/empty/size-cap
+validation; deep STEP validation still comes from `/summary`'s existing
+`step_load_failed` path, not duplicated) plus `GET /parts` merging both
+directories. New `frontend-web/src/import/loadPart.ts` orchestrates
+validate → reset analysis state → upload → fetch summary → adapt mesh into
+the persistent `ViewportEngine` (new `frameToBoundingBox` re-frames the
+camera for new geometry) → promote to `currentPart`, only after geometry
+actually loads. New `ImportPanel` replaces the `import` tool's F1
+placeholder only; every other tool is untouched. 30/30 frontend tests (9
+F1 + 21 new), `npx tsc -b`/`oxlint`/`npm run build` all clean; 11/11 new
+backend `tests/test_api_upload.py`. No analysis pipeline, diagnostics,
+export, AI, side-action routing, or repository cleanup work done. Full
+detail: CHANGELOG.md "Phase F2".
+
+**Phase F1 (2026-08-17) — React/TypeScript workstation shell proven, new
+`frontend-web/`.** Persistent Three.js viewport + TopBar + ToolRail (8
+tools) + ContextInspector + StatusStrip, composed by `WorkstationShell`,
+backed by one Zustand store and a typed API boundary (`getHealth`/
+`listParts` only). Viewport persistence proven via `ViewportEngine`
+singleton identity + DOM-node identity + mount-call-count assertions
+across every tool switch (9/9 tests, `npx tsc -b` + `npm run build` +
+`oxlint` all clean). `frontend/app.py` (Streamlit) and every backend file
+untouched -- verified by mtime and diff. No import/upload, no real
+analysis calls, no manual override, no export yet -- shell only, per F0's
+phased migration plan (F1 of F1–F7). Full detail: CHANGELOG.md "Phase F1".
+
+**Phase C18A (2026-08-17) — stale `_resolve_v2_parting_line` duplication
+removed.** `/core-cavity` and `/export/report` now derive their
+real-undercut-aware parting-line result ONCE per request
+(`resolve_authoritative_parting_line`) and feed it into the C14/C16
+orchestration via new `precomputed_pl_result`/`precomputed_undercuts`
+parameters, instead of a second, `undercuts=UndercutInput.empty()` call
+that could silently disagree with the orchestration's own result (C13/C17
+finding). `_resolve_v2_parting_line` had zero remaining callers and was
+removed. `/export/report` also stopped recomputing undercuts a third
+time. 13 new tests (`tests/test_c18a_shared_parting_line.py`), all
+passing; existing C14/C16 orchestration real-fixture tests unchanged and
+green. Full detail: CHANGELOG.md "Phase C18A".
+
+**Phase C14 (2026-08-17) — winning-direction mold orchestration wired
+end-to-end.** New `backend/geometry/mold_orchestration.py`
+(`resolve_winning_direction_mold`) is the one shared chain from
+`optimize_mold_direction` through side-core generation, replacing three
+near-duplicate ad hoc pipelines previously inlined in
+`backend/api/main.py`'s `/core-cavity`, `/export/mold-halves`, and
+`/export/report` endpoints (their `use_optimal_direction=true` path
+only). Gated on `optimal_found=True` (never proceeds on
+`best_unverified_candidate`); fixes the Phase C13-identified
+`_resolve_v2_parting_line` gap (previously always
+`undercuts=UndercutInput.empty()`, now the same real evidence the
+optimizer's own search used); threads validated D-044 delegations into
+side-core feature selection so a fully-delegated feature never also gets
+side-core steel generated for it. `SideActionReferral`/
+`side_action_referrals` (Phase C12) remain reporting-only, structurally
+proven never read by the new module. 13 new tests
+(`tests/test_mold_orchestration.py`), all passing; 348 existing
+`test_direction_optimizer*`/`test_parting_line_v2_*` tests unchanged and
+green. Full detail: CHANGELOG.md "Phase C14".
+
+**Convergence audit (2026-08-16, Phase 7 — demo-readiness table).**
+Pull direction, undercut detection, core/cavity, side-core/core-pin, and
+manual override are all READY for Part1/Part3 (see TODO.md's execution
+plan for the short remaining list — runtime, frontend hierarchy spot-
+check, downstream-pipeline-at-diagonal check). Full status table and
+rationale delivered in-session; not duplicated here.
+
+**D-059 — Handoff reconciliation + convergence audit (2026-08-16,
+Phase 6, read-only).** An older forensic handoff's core diagnosis
+(candidate-pool bloat, perpendicular-dot false positives) does not
+reproduce on current code — both were already resolved earlier by
+D-046's near-zero-g guard + convexity suppression, independent of and
+prior to that handoff. **Live-measured: `optimize_mold_direction(Part1.stp)`
+took 1775.1s** — the real, still-unsolved bottleneck is per-direction
+OCC Boolean-retry cost variance across the 18 directions D-048 always
+refines, not pool truncation. **The evidence-driven winner is a 45°
+diagonal, not +Z** (+Z has 4 Boolean-FAILED faces; the diagonal is
+genuinely clean/0% confirmed). Forcing +Z would override honest
+evidence for an unverified assumption. Full 16-point convergence audit
++ ITEM/STATUS/IMPACT/BLOCKS-DEMO table delivered in-session. Full
+detail: D-059.
+
+**D-057/D-058 — Bosch Part1 image is not Part1.stp; `confirmed_undercut_pct`
+metric audited, EXTEND recommended (2026-08-16, Phase 5D-2, read-only).**
+Direct `pyvista` rendering of Part1.stp from 5 angles, compared against
+the actual Bosch reference image (provided for the first time this
+session): Part1 is a 4-fold-symmetric snap-fit cap (logo medallion, 4
+rim slots, 4 cantilever legs, closed top); the Bosch image shows a
+single-slot open-shell box with one cantilever blade. Different
+symmetry, different feature count, different topology — no face-level
+mapping is claimed. Separately, traced `confirmed_undercut_pct` exactly:
+it sums each confirmed face's *entire* area (not the actual overlap
+footprint), divided by whole-part surface area — provably not invariant
+to B-Rep face-splitting choices, live instance in D-056's own UC4
+finding. Currently inert for accept/reject (superseded by D-053/D-054)
+but still feeds the continuous score. Recommendation: EXTEND with a
+complementary tessellation-invariant metric, not implemented yet. Full
+detail: D-057, D-058.
+
+**D-056 — Accessibility-risk candidate generation is now bilateral
+(2026-08-16, Phase 5D-1).** Phase 5 re-audit of the pull-direction/
+undercut subsystem (verdict: EXTEND, not redesign) found
+`_compute_accessibility_risk` tested only core-side faces (`n·d<=
+-threshold`), proven mostly geometrically necessary (a face's own sweep
+along `+d` when `n·d>0` initially moves away from its own adjacent
+material) but leaving a real gap: cavity-side faces CAN register
+genuine interference from distant material. `_compute_accessibility_risk(...,
+side="core"|"cavity")` now tests both signs with the identical
+concave-edge requirement and threshold; `detect_undercuts` unions both
+candidate sets, then feeds the exact same, unchanged Boolean-refinement
+pipeline. Fixture found, not built: `UC3_spool_true_undercut.stp` face
+10 is the pre-existing mirror of face 4's already-proven 6400mm³
+shelf, hand-re-verified to the same value. 83/83 undercut-detector,
+51/51 direction-optimizer (one stale sanity-check assertion updated
+after confirming UC4's confirmed area genuinely jumped to ~45.46% via a
+second real mirror feature — not a bug), 10/10 real-geometry
+evidence-tier tests (Part1/Part3/Dhukkan/UC3). Part1:
+`boolean_confirmed_face_ids` still `[]` at both `+Z`/`-Z` — candidate
+pool grew (26→68 faces) but zero new false confirmations. Flagged, not
+fixed: `confirmed_undercut_pct`'s whole-face-area-counts-as-confirmed
+granularity (pre-existing) is now more visible on UC4. No change to
+Boolean confirmation, proxy-undercut semantics, severity/depth/
+interference calculations, evidence tiers, the comparator,
+`parting_line_v2`, or any threshold. Full detail: D-056.
+
+**D-050 — Ambiguous-face classification forensic audit: no defect found
+(2026-08-16, Phase 4B).** Investigated whether `classify_regions()`'s
+`mean_g`-only ambiguous rule could mislabel a curved/saddle face whose
+sampled normals span meaningfully positive and negative `g` but average
+near zero. Measured every ambiguous face on Part1 (70 faces, 45.57% area)
+and Part3 candidate 110 (95 faces, 32.72% area): max spread across the
+whole population is `4.56e-15`/`1.41e-16` — floating-point noise, 13-14
+orders of magnitude below `silhouette_epsilon=0.02`. Every ambiguous face
+is genuine zero-draft geometry (planar/cylindrical features exactly
+parallel/coaxial to the pull axis), not curvature cancellation;
+`inconsistent_face_ids` is empty on both parts. No classification logic
+changed. The theoretical blind spot (a genuinely saddle-shaped zero-draft
+face) is logged as an unproven observation in
+`.claude/memory/known-gaps.md`, not treated as a current defect. Full
+detail: D-050.
+
+**D-049 — Best-rejected candidate's region data now exposed via new,
+separate diagnostic fields (2026-08-16, Phase 4A).** The all-gray core/
+cavity views the Phase 4 forensic audit investigated turned out to be
+mostly a reporting gap, not a classification defect: when no candidate is
+selected (e.g. Part3 `+Z` without manual authorization — 159/310 fail H3,
+151/310 fail H4), the already-computed `RegionClassification` for the
+best-ranked rejected H3-passing candidate (retained since Phase 3A) was
+discarded before reaching the API/frontend. New
+`best_rejected_candidate_id`/`best_rejected_regions`/
+`best_rejected_failed_gate`/`best_rejected_reason` fields expose it
+without ever overloading `regions` (which still means only "the accepted
+split"). Frontend shows it only behind an opt-in, clearly labeled "BEST
+REJECTED CANDIDATE — PREVIEW ONLY" viewport toggle. Frozen Phase 3A
+candidate-110 values and Part1 unchanged; 85/85 tests pass. Full detail:
+D-049.
+
+**D-048 — Pull-direction optimizer: tiered evidence-based selection
+(2026-08-16, Phase 5B implementation).** The Phase 5B audit found the
+dominant problem was the optimizer's own search architecture, not the
+detector: every one of Part1's 6 principal axes fails the cheap bad_pct
+screen (43-72% vs. a 30% threshold), so they were never Boolean-verified
+by the optimizer's search at all — D-046/D-047's detector fixes were
+structurally unreachable for the directions with the strongest
+manufacturing precedent. Fixed: Stage 1+2 (6 principal + 12 configured
+diagonals) are now always Boolean-refined regardless of the cheap
+screen (which remains for the Stage-3 spherical grid only); every
+candidate carries an explicit `evidence_tier`; final selection compares
+tier-first, score-second, never letting an unverified candidate's score
+outrank a verified one's; a new `optimal_found` flag lets the optimizer
+honestly report "no verified optimum" instead of silently returning an
+unverified guess as if validated. Validated on `UC3_spool_true_undercut.stp`
+(hand-verified ground truth): the true undercut axis (±Z) is now
+correctly rejected with real evidence (13.6% confirmed, over threshold);
+the genuinely clean axes (±X/±Y) are correctly accepted (0% confirmed) —
+both conclusions backed by actual Boolean confirmation. **Part1 reaches
+`optimal_found=True` for the first time in this entire investigation** —
+a genuinely verified, acceptable diagonal direction. Part3/Dhukkan
+winners unchanged, now tier-justified rather than accidentally correct.
+Known cost, not hidden: always-refining 18 candidates measurably
+increases runtime; Part1's cost varied 144s-1122s run-to-run this
+session, consistent with (but not further root-caused as) OCC's known
+Boolean-retry brittleness. 28/28 existing optimizer tests pass; new
+evidence-tier test suite added. No change to the detector,
+`_compute_accessibility_risk`, H0-H7, `parting_line_v2`, core-pin,
+delegation, or frontend. Full detail: D-048.
+
+**D-047 — Boolean candidate selection is now proxy ∪ accessibility-risk
+(2026-08-16, Phase 5A follow-up).** Closed a real false-negative found
+while auditing D-046: the draft-based proxy pass is correctly sign-blind,
+so a face with excellent draft magnitude but the wrong sign (a shelf
+underside, `g=-1`) was never a Boolean candidate under default settings —
+invisible, not just unconfirmed. `_compute_accessibility_risk` (core-side
++ concave edge) already existed, already correctly separated this class
+from an ordinary harmless negative-g face, but was never wired into
+candidate selection. Fixed by taking the union
+(`proxy_undercut_ids ∪ accessibility_risk_face_ids`) as the Boolean
+candidate set — neither candidate-generation pass itself changed.
+Hand-verified on `UC3_spool_true_undercut.stp`: the genuine trapped
+shelf (face 4) is now confirmed via the unmodified default path; a
+same-sign, same-magnitude face with no real risk (face 15) remains
+correctly excluded. **Real finding on Part1**: `+X` now shows 19
+previously-invisible confirmed undercut faces, `-X` shows 12, `+Y` shows
+4 — spot-verified non-degenerate (meaningful g, plausible volumes, no
+D-042 signature). `+Z`/`-Z` remain 0 confirmed, a genuine result.
+Part3/Dhukkan: no new confirmations at any tested direction.
+`direction_optimizer.py` (unmodified) automatically receives this
+corrected evidence through its existing call path — verified directly.
+Newly discovered, not fixed: `_compute_accessibility_risk`'s core-side-
+only design leaves a cavity-side equivalent gap, direction-relative
+(resolved once a face becomes core-side for some tested direction), not
+a universal blind spot. `candidate_sources` field added for provenance;
+`proxy_only_face_ids` renamed to `candidate_unconfirmed_face_ids` (zero
+consumers at rename time). 306 tests passed, 0 failed. No change to
+`direction_optimizer.py`'s own logic, H0-H7, `parting_line_v2`,
+core-pin, delegation, or frontend. Full detail: D-047.
+
+**D-046 — Undercut detector D-042 fixed by exclusion; three-bucket
+evidence contract (2026-08-16, Phase 5A).** Root-caused (not just
+patched): `_swept_face_interference_volume`'s sweep is only well-posed
+for faces with meaningfully non-zero `g`; proven directly on a hand-built
+fixture with known true volume that the danger zone is the floating-point
+noise floor (~1e-16), not a "small g" band — a face at `g=-1e-14` already
+computes correctly. Fix: exclude near-zero-g faces from the sweep
+entirely (`boolean_not_applicable`, threshold `1e-6`, reusing D-043's
+`core_pin_uniform_g_max`) rather than feeding them a test that cannot
+answer the question. `UndercutDetectionResult` now reports three disjoint
+buckets (`proxy_only_face_ids`, `boolean_confirmed_face_ids`,
+`boolean_not_applicable_face_ids`) instead of one flat set. Verified the
+fix still correctly confirms genuine local interference where it exists
+(new fixture `UC3_spool_true_undercut.stp`, hand-computed 6400 mm³,
+matched exactly). On Part1/Part3/Dhukkan, every proxy-flagged face at
+every principal direction is exactly tangent — `boolean_confirmed_face_ids`
+is empty on all three real fixtures today, a real finding (cross-checked
+with `boolean_check_all_faces=True` on Part1, which independently
+confirms zero local undercuts along principal axes), not a tuning
+artifact. Bosch Part1 reference re-examined: pre-fix's single "critical"
+10-face cluster (depth estimate 26.86mm, exceeding the part's own bbox
+diagonal — itself a symptom) is now honestly 14 `"minor"` groups with
+plausible depths (0.97-1.45mm); no face-ID-level correspondence to the
+Bosch image claimed without live 3D comparison tooling. New gap found,
+not fixed: a good-draft-but-wrong-signed shelf face is invisible to the
+proxy pass entirely (distinct from D-042). No change to
+`direction_optimizer.py`, `parting_line_v2`, H0-H7, ranking, core-pin, or
+delegation. 298 tests passed, 0 failed. Full detail: D-046.
+
+**D-045 — Core/cavity accounting contract + truthful visualization
+(2026-08-16).** A read-only audit measured the exact face-accounting model
+on real geometry: Part1 +Z candidate 49 splits 311 faces into 24 cavity /
+217 core / 0 split / 70 ambiguous / 0 no-record; Part3 +Z candidate 110
+splits 414 faces into 314 cavity / 4 core / 1 split (face 35, the D-043
+bore) / 95 ambiguous / 0 no-record — both exhaustive, mutually-exclusive
+partitions, confirmed by running the real pipeline, not estimated. The
+audit found H4's own area accounting (full topological-component
+membership, ambiguous faces counted at full area, split faces counted at
+full area in *both* regions) and `RegionClassification`'s reported area
+(ambiguous carved into its own bucket, split apportioned by real geometric
+share) are two different, both-legitimate conventions that were already
+silently diverging in code (measured gap on candidate 110: H4's cavity
+denominator 4424.787 mm² vs. reported cavity area 3651.175 mm²) — H4's
+convention matches the plan's literal C5/H4 specification, so this is a
+documentation gap, not a bug. Frontend now renders all five states (cavity/
+core/split/ambiguous/no-record) with distinct colors instead of collapsing
+split and ambiguous into an unexplained gray; the misleading
+`ambiguous_area_fraction` caption ("Genuinely split/inconsistent faces") is
+fixed; an unused server-side `pv2_region_rgb` color array (zero consumers
+found repo-wide) was retired. No change to H0-H7, candidate generation,
+ranking, core-pin eligibility, or delegation validation. Full detail: D-045.
 
 **D-044 — Secondary-action delegation implemented (2026-08-15).** H4 tests
 whether the geometry expected to move with the primary mould direction is
@@ -751,7 +1118,7 @@ and `TODO.md` S2.3/S2.4.
 |---|---|---|---|---|
 | STEP Loader | `backend/geometry/step_loader.py` | ~1,236 | ✅ Done | Full topology + edge convexity (1.1) + `load_step_cached()` LRU cache with mutate-safe cloning (S3.8, 2026-07-28) |
 | Draft Analyzer | `backend/geometry/draft_analyzer.py` | ~900 | ✅ Done | Face-level draft + conditional thresholds (1.5) + `FaceDirectionalMetrics` precomputation (M1, 2026-08-13) |
-| Undercut Detector | `backend/geometry/undercut_detector.py` | ~3,530 | ✅ Done | Selective Boolean refinement, feature grouping, convexity suppression (1.2) + independent accessibility risk signal (M2, 2026-08-13) |
+| Undercut Detector | `backend/geometry/undercut_detector.py` | ~3,530 | ✅ Done | Selective Boolean refinement, feature grouping, convexity suppression (1.2) + independent accessibility risk signal (M2, 2026-08-13), now bilateral core+cavity-side (D-056, 2026-08-16) |
 | Direction Optimizer | `backend/geometry/direction_optimizer.py` | ~1,380 | ✅ Done | Hierarchical staged search (M3) + independent scoring: accessibility risk cheap / Boolean-confirmed refined stage (M4) + metric reuse (M1). 2026-08-13. |
 | Parting Line | `backend/geometry/parting_line.py` | 4,720 | ✅ Substantial | Real graph search (1.6/Bug B), ring bridging (1.7/Bug H-2), verified closure (1.8/Bug A), parting surface (1.9/Bug E). Full Hou global optimization still not applied |
 | Core/Cavity | `backend/geometry/core_cavity.py` | ~695 | ✅ Split verified end-to-end (Stage 2b) | Face classification + Boolean solid split (1.10) + AP214 export (1.11). `split_ok` + 2 solids + reloadable STEP export verified on both real parts via `build_planar_split_tool()` (a labeled planar approximation — see Resolved "Stage 2b"), not the (topologically invalid) real 3-D parting surface |

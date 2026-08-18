@@ -1,7 +1,7 @@
 # Known Gaps — What's Not Implemented
 
 > Update this file whenever a gap is closed or a new one is discovered.
-> Last updated: 2026-08-15
+> Last updated: 2026-08-16
 
 ## ❌ Not Implemented (Empty / Missing)
 
@@ -23,6 +23,7 @@
 | Observation | File(s) | Status |
 |---|---|---|
 | `build_face_regions`'s boundary-edge sampling loop (`for edge_id in part.face_to_edges...`) draws each edge_id from a DEDUPED list and samples its ONE stored `occ_edge` orientation. For a seam edge (appears twice in a face's own wire with opposite orientation, e.g. real Part3 `face_to_edges[38]` lists edge 123 exactly once), this may sample only one of the two real, geometrically-different boundary lines (verified directly on the Mechanism B fixture: the two oriented occurrences of the same seam edge give DIFFERENT `_sample_edge_uv` results, u=0 vs u=2*pi) — potentially under-counting regions on some seam-adjacent split faces. Observed as a side effect while building the Mechanism B fixture (2026-08-15); NOT investigated, NOT confirmed to affect any real Part3 face beyond the fixture. | `backend/validation/parting_line_face_partition.py` (`build_face_regions`, `_sample_edge_uv`) | Logged only, per explicit instruction not to investigate during the Mechanism A pass. |
+| `classify_regions()`'s `"ambiguous"` label uses `abs(mean_g) <= silhouette_epsilon` — a SINGLE-scalar, mean-only test. A genuinely doubly-curved/saddle zero-draft-band face could in principle have `min_g` substantially negative and `max_g` substantially positive (real, opposite-sign draft in different parts of the same face) while `mean_g` happens to average out near zero, causing a real cavity/core-determinate face to be mislabeled ambiguous by an averaging artifact ("CASE B"). Directly investigated (Phase 4B, 2026-08-16, D-050): measured `min_g`/`max_g`/`mean_g` for every ambiguous face on Part1 (70 faces) and Part3 candidate 110 (95 faces) — zero CASE-B faces found on either part; max `max_g-min_g` spread across the whole ambiguous population is `4.56e-15`/`1.41e-16`, floating-point noise 13-14 orders of magnitude below `silhouette_epsilon=0.02`. `inconsistent_face_ids` (the pipeline's own straddle detector, applied to all cavity/core faces) is also empty on both parts. NOT demonstrated on either available real fixture, but NOT ruled out for an unseen part — `FaceClassification` already carries the `min_g`/`max_g` data needed to detect it, no schema change required if one is ever observed. | `backend/geometry/parting_line_v2/regions.py` (`classify_regions`, `_sample_face_g`), `types.py` (`FaceClassification`) | Investigated and found absent on both real parts (Part1, Part3 candidate 110); do not treat as a current defect or build a new criterion against it without a demonstrating fixture. See `docs/DECISIONS_AND_ALGORITHMS.md` D-050. |
 
 ## ⚠️ Partially Implemented
 
