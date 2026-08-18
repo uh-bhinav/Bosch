@@ -48,6 +48,10 @@ export class ViewportEngine {
   private partingLines: Line2[] = [];
   private faceBoundaryLines: THREE.LineSegments | null = null;
   private faceBoundariesEnabled = false;
+  private grid: THREE.GridHelper;
+  /** The currently-loaded part's real bounding-box center/diagonal (`frameToBoundingBox`) -- the default origin/length for direction arrows, so they draw AT the part instead of always at the world origin (see `frameToBoundingBox`'s own doc comment for why that distinction matters). */
+  private partCenter: Vec3 = [0, 0, 0];
+  private partDiagonal = 60;
   private readonly raycaster = new THREE.Raycaster();
 
   constructor() {
@@ -58,13 +62,31 @@ export class ViewportEngine {
     this.camera.position.set(...DEFAULT_CAMERA.position);
     this.camera.lookAt(...DEFAULT_CAMERA.target);
 
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(120, 160, 100);
-    const fill = new THREE.AmbientLight(0xffffff, 0.45);
-    this.scene.add(key, fill);
+    // A single directional light leaves every face angled away from it in
+    // Lambert shadow -- on vertex-colored analysis overlays that reads as
+    // "dark, muddy, brownish" rather than the true overlay color (e.g. a
+    // vivid red undercut face looks near-black-maroon on its unlit side).
+    // Surround the part with light from every direction instead, each at
+    // reduced intensity so the sum stays balanced, plus a strong ambient
+    // floor so no face is ever fully unlit.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+    this.scene.add(ambient);
+    const surroundDirections: Vec3[] = [
+      [1, 1, 1],
+      [-1, 1, -1],
+      [1, -1, -1],
+      [-1, -1, 1],
+      [0, 1, 0],
+      [0, -1, 0],
+    ];
+    for (const [x, y, z] of surroundDirections) {
+      const light = new THREE.DirectionalLight(0xffffff, 0.4);
+      light.position.set(x * 150, y * 150, z * 150);
+      this.scene.add(light);
+    }
 
-    const grid = new THREE.GridHelper(240, 24, 0x2c323b, 0x1e2229);
-    this.scene.add(grid);
+    this.grid = new THREE.GridHelper(240, 24, 0x2c323b, 0x1e2229);
+    this.scene.add(this.grid);
   }
 
   /** True once a real WebGL context was successfully created. */
@@ -183,8 +205,12 @@ export class ViewportEngine {
 
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      metalness: 0.15,
-      roughness: 0.65,
+      // Fully dielectric: with no environment map, any metalness treats
+      // part of the vertex-color diffuse albedo as specular-only, which
+      // desaturates/darkens overlay colors (e.g. undercut red reading as
+      // brown) instead of showing them true.
+      metalness: 0,
+      roughness: 0.55,
       side: THREE.DoubleSide,
     });
     this.meshObject = new THREE.Mesh(geometry, material);
@@ -450,7 +476,7 @@ export class ViewportEngine {
    * moving, or removing it never touches controls, listeners, or the
    * render loop. `null` removes it.
    */
-  setDirectionArrow(direction: Vec3 | null, origin: Vec3 = [0, 0, 0], length = 60): void {
+  setDirectionArrow(direction: Vec3 | null, origin: Vec3 = this.partCenter, length: number = this.partDiagonal): void {
     if (this.directionArrow) {
       this.scene.remove(this.directionArrow);
       this.directionArrow.dispose();
@@ -472,7 +498,7 @@ export class ViewportEngine {
    * the accent copper, so "what the analysis actually used" and "what I'm
    * about to try" never look like the same thing.
    */
-  setManualDirectionPreview(direction: Vec3 | null, origin: Vec3 = [0, 0, 0], length = 60): void {
+  setManualDirectionPreview(direction: Vec3 | null, origin: Vec3 = this.partCenter, length: number = this.partDiagonal): void {
     if (this.manualPreviewArrow) {
       this.scene.remove(this.manualPreviewArrow);
       this.manualPreviewArrow.dispose();
@@ -573,6 +599,8 @@ export class ViewportEngine {
    * never on a tool switch.
    */
   frameToBoundingBox(center: Vec3, diagonalMm: number): void {
+    this.partCenter = center;
+    this.partDiagonal = Math.max(diagonalMm * 0.85, 8);
     const radius = Math.max(diagonalMm / 2, 1);
     const direction = new THREE.Vector3(1, 0.75, 1).normalize();
     const distance = radius / Math.sin((this.camera.fov * Math.PI) / 360) || radius * 2.2;
@@ -585,6 +613,23 @@ export class ViewportEngine {
     this.controls?.target.set(...center);
     this.camera.lookAt(...center);
     this.controls?.update();
+
+    // The grid was previously fixed at the world origin, size 240 --
+    // Part1/Part3 both happen to sit within a few mm of the origin in X/Y,
+    // so it always looked correctly aligned by coincidence. A part whose
+    // real STEP coordinates sit far from the origin (e.g. modeled in place
+    // within a larger assembly) camera-frames correctly here, but the grid
+    // stayed behind at (0,0,0) -- visually detached from the part, or not
+    // in view at all. Rebuild it centered on the SAME real bounding-box
+    // center the camera just framed, sized proportionally to the part
+    // instead of a fixed 240 units so a much smaller/larger part still gets
+    // a sensibly-scaled floor.
+    this.scene.remove(this.grid);
+    this.grid.dispose();
+    const gridSize = Math.max(diagonalMm * 6, 40);
+    this.grid = new THREE.GridHelper(gridSize, 24, 0x2c323b, 0x1e2229);
+    this.grid.position.set(...center);
+    this.scene.add(this.grid);
   }
 
   dispose(): void {
@@ -607,6 +652,7 @@ export class ViewportEngine {
     }
     this.renderer?.dispose();
     this.renderer = null;
+    this.grid.dispose();
   }
 }
 

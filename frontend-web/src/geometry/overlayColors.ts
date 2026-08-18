@@ -18,6 +18,24 @@
 
 import * as THREE from 'three';
 
+/**
+ * F12 §10 / F15: the undercut-classification style keys that carry genuine
+ * undercut EVIDENCE (backend/api/main.py's `UNDERCUT_FACE_VISUAL_STYLES`) --
+ * as opposed to "parting"/"accessible"/"zero_draft_not_applicable"/
+ * "ray_verified_clear"/"neutral", which are real backend outcomes but never
+ * undercut evidence itself. `useOverlaySync.ts`'s Undercuts-tab/Core-Cavity
+ * overlays paint every one of these a single unambiguous red and leave
+ * everything else uncolored (F12 §9); `UndercutsPanel.tsx`'s legend swatches
+ * use the SAME set so the legend never implies a viewport color (e.g. the
+ * backend's own pale-beige `proxy_undercut` RGB) that isn't actually what's
+ * on screen in THIS tab -- one shared source of truth for both.
+ */
+export const REAL_UNDERCUT_CATEGORIES = new Set([
+  'critical_boolean_confirmed', 'high_boolean_confirmed', 'medium_boolean_confirmed',
+  'moderate_boolean_confirmed', 'low_boolean_confirmed', 'minor_boolean_confirmed',
+  'proxy_undercut', 'manual_review_undercut',
+]);
+
 export function buildFaceColorMap(
   faceIds: number[] | undefined,
   rgb: unknown,

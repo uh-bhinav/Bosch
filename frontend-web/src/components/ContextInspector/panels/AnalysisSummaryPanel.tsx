@@ -339,6 +339,8 @@ function BeforeAfterComparison() {
   const corePinFaceRefs = useAnalysisStore((s) => s.corePinFaceRefs);
   const delegations = useAnalysisStore((s) => s.delegations);
   const sideCoreStatus = useAnalysisStore((s) => s.sideCoreStatus);
+  const compareMode = useAnalysisStore((s) => s.compareMode);
+  const setCompareMode = useAnalysisStore((s) => s.setCompareMode);
 
   const beforeVerdict = describeAnalysisOutcome(recommendedResult);
   const afterVerdict = describeAnalysisOutcome(analysisResult);
@@ -403,9 +405,14 @@ function BeforeAfterComparison() {
           <span className={sharedStyles.mono}>{sideCoreStatus}</span>
         </div>
       </div>
+      <label className={sharedStyles.inspectToggleRow}>
+        <input type="checkbox" checked={compareMode} onChange={(e) => setCompareMode(e.target.checked)} />
+        Compare side-by-side in viewport (AFTER left, BEFORE right)
+      </label>
       <p className={sharedStyles.hint}>
-        Switch to the Core/Cavity, Undercuts, and Side Cores tools to see the visual comparison for the current
-        (AFTER) result.
+        {compareMode
+          ? 'The viewport is split -- left is the current tool\'s normal view (AFTER), right is the original automatic run (BEFORE), both real backend results.'
+          : 'Switch to the Core/Cavity, Undercuts, and Side Cores tools to see the visual comparison for the current (AFTER) result, or turn on the toggle above to see BEFORE and AFTER side by side.'}
       </p>
     </section>
   );

@@ -23,8 +23,8 @@
 
 import { useEffect } from 'react';
 import * as THREE from 'three';
-import { buildFaceColorMap } from '../geometry/overlayColors';
-import { useAnalysisStore, type CoreCavityLayers } from '../store/analysisStore';
+import { buildFaceColorMap, REAL_UNDERCUT_CATEGORIES } from '../geometry/overlayColors';
+import { useAnalysisStore, type CoreCavityLayers, type CoreCavityOverlayLayer } from '../store/analysisStore';
 import type { Vec3 } from '../domain/types';
 import { getViewportEngine } from './engineSingleton';
 
@@ -58,12 +58,6 @@ function buildFilteredColorMap(faceIds: number[] | undefined, rgb: unknown, colo
   return map.size > 0 ? map : null;
 }
 
-/** F12 §10: undercuts are a single, unambiguous RED in the combined Core/Cavity view (the dedicated Undercuts tab keeps the richer 10-category legend) -- only genuine evidence categories count, not "parting"/"accessible"/"neutral"/"zero-draft, not testable". */
-const REAL_UNDERCUT_CATEGORIES = new Set([
-  'critical_boolean_confirmed', 'high_boolean_confirmed', 'medium_boolean_confirmed',
-  'moderate_boolean_confirmed', 'low_boolean_confirmed', 'minor_boolean_confirmed',
-  'proxy_undercut', 'manual_review_undercut',
-]);
 const UNDERCUT_RED = new THREE.Color('#ff2020');
 
 function buildUndercutRedOverlay(faceIds: number[] | undefined, classifications: unknown): Map<number, THREE.Color> | null {
@@ -145,6 +139,7 @@ export function useOverlaySync(): void {
   const undercutsResult = useAnalysisStore((s) => s.undercutsResult);
   const partingLineResult = useAnalysisStore((s) => s.partingLineResult);
   const coreCavityLayers = useAnalysisStore((s) => s.coreCavityLayers);
+  const coreCavityOverlayOrder = useAnalysisStore((s) => s.coreCavityOverlayOrder);
 
   useEffect(() => {
     const engine = getViewportEngine();
@@ -270,7 +265,17 @@ export function useOverlaySync(): void {
         coreCavityLayers.undercuts && undercutsResult?.display_mesh
           ? buildUndercutRedOverlay(undercutsResult.display_mesh.face_ids, undercutsResult.display_mesh.undercut_classification)
           : null;
-      engine.setOverlayColors(mergeLayers(baseLayer, sideActionLayer, corePinLayer, undercutLayer));
+      // F14: when two of these three overlay layers both claim the SAME
+      // face (e.g. a face is both a core-pin interface and undercut
+      // evidence), whichever layer the engineer toggled ON most recently
+      // wins -- `coreCavityOverlayOrder` (store) tracks that recency, so
+      // this is NOT a hardcoded "undercut always wins" precedence.
+      const layerByName: Record<CoreCavityOverlayLayer, Map<number, THREE.Color> | null> = {
+        sideAction: sideActionLayer,
+        corePin: corePinLayer,
+        undercuts: undercutLayer,
+      };
+      engine.setOverlayColors(mergeLayers(baseLayer, ...coreCavityOverlayOrder.map((name) => layerByName[name])));
     } else if (activeTool === 'side-cores' && analysisResult?.display_mesh) {
       engine.setOverlayColors(
         buildFaceColorMap(analysisResult.display_mesh.face_ids, analysisResult.display_mesh.core_cavity_rgb),
@@ -299,5 +304,6 @@ export function useOverlaySync(): void {
     undercutsResult,
     partingLineResult,
     coreCavityLayers,
+    coreCavityOverlayOrder,
   ]);
 }

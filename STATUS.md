@@ -1,6 +1,6 @@
 # Project Status — DfM Agent
 
-> **Last updated**: 2026-08-18 (hackathon-submission cleanup pass).
+> **Last updated**: 2026-08-19 (undercut mesh-classification bug fix + viewport lighting/comparison pass — see `CHANGELOG.md`).
 > This file is a **current-state snapshot**, not a log. For the detailed,
 > dated history of how each module got here, see `CHANGELOG.md`. This file
 > used to duplicate that history in a long "Headline" section; that section

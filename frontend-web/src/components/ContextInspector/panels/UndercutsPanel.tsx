@@ -12,9 +12,13 @@
  */
 
 import { runUndercutsOnly } from '../../../analysis/runIndividualAnalyses';
+import { REAL_UNDERCUT_CATEGORIES } from '../../../geometry/overlayColors';
 import { useAnalysisStore } from '../../../store/analysisStore';
 import { Legend } from './Legend';
 import styles from './sharedPanel.module.css';
+
+const VIEWPORT_RED = 'rgb(255, 32, 32)';
+const VIEWPORT_UNCOLORED = 'rgb(124, 135, 148)';
 
 export function UndercutsPanel() {
   const mode = useAnalysisStore((s) => s.mode);
@@ -114,14 +118,17 @@ export function UndercutsPanel() {
               <p className={styles.hint}>
                 The viewport shows every face with real undercut evidence in a single RED so nothing is missed at a
                 glance. The category breakdown below is the same backend evidence-source/severity detail, shown as
-                counts rather than repainting the model in ten shades.
+                counts rather than repainting the model in ten shades -- so its swatches match what's actually on
+                screen HERE (red for evidence, grey for everything else), not the backend's own nuanced per-category
+                color (which you'll see instead on the Parting Line tab, where each category IS painted its own
+                shade).
               </p>
               <Legend
                 items={Object.entries(summary.legend)
                   .filter(([key]) => (summary.counts[key] ?? 0) > 0)
                   .sort((a, b) => b[1].priority - a[1].priority)
                   .map(([key, entry]) => ({
-                    color: `rgb(${entry.rgb.map((c) => Math.round(c * 255)).join(',')})`,
+                    color: REAL_UNDERCUT_CATEGORIES.has(key) ? VIEWPORT_RED : VIEWPORT_UNCOLORED,
                     label: entry.label,
                     count: summary.counts[key] ?? 0,
                   }))}

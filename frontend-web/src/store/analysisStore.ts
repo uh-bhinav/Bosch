@@ -84,6 +84,18 @@ export const DEFAULT_CORE_CAVITY_LAYERS: CoreCavityLayers = {
 };
 
 /**
+ * The three Core/Cavity overlay layers that can legitimately claim the SAME
+ * face at once (a face can be core-pin AND side-action AND undercut evidence
+ * simultaneously) -- when more than one is ON, whichever was toggled ON most
+ * recently wins for that face, rather than a fixed hardcoded precedence.
+ * This array is applied in order (last entry = highest precedence / painted
+ * last), and starts in this order so the default (all three ON) matches
+ * the precedence the app already shipped with (undercut red winning).
+ */
+export const CORE_CAVITY_OVERLAY_LAYERS = ['sideAction', 'corePin', 'undercuts'] as const;
+export type CoreCavityOverlayLayer = (typeof CORE_CAVITY_OVERLAY_LAYERS)[number];
+
+/**
  * F6: shared by both the STEP mold-half export and the PDF report export --
  * "ready" (nothing started) -> "preparing" (request being built) ->
  * "generating" (backend request in flight -- these can take tens/hundreds
@@ -185,6 +197,13 @@ export interface AnalysisState {
    * touches anything.
    */
   coreCavityLayers: CoreCavityLayers;
+  /**
+   * Recency order for `CORE_CAVITY_OVERLAY_LAYERS` -- last entry has highest
+   * paint precedence. `setCoreCavityLayer` moves a layer to the end
+   * whenever it's turned ON, so "the layer I just enabled" always wins any
+   * per-face conflict with an already-on layer, instead of a fixed order.
+   */
+  coreCavityOverlayOrder: CoreCavityOverlayLayer[];
 
   // --- Guided "Run full analysis" (F3) ------------------------------------
   // `pipelineStatus` (above) stays the coarse idle/running/complete/blocked
@@ -288,6 +307,18 @@ export interface AnalysisState {
   sideCoreDetail: CoreCavityAnalysisResponse | null;
   sideCoreError: string | null;
 
+  /**
+   * F14: viewport split-screen before/after comparison -- purely a display
+   * toggle, never touches `analysisResult`/`recommendedResult` themselves.
+   * ON splits the persistent viewport into two panes: the LEFT pane is the
+   * SAME already-persistent engine showing whatever the current tool
+   * already shows (unchanged); the RIGHT pane is a second, disposable
+   * engine loading `recommendedResult`'s own `display_mesh` (the first
+   * automatic run, before any authorization) -- both are real, already-
+   * fetched backend responses, nothing is fabricated for this view.
+   */
+  compareMode: boolean;
+
   // --- actions -------------------------------------------------------------
   setBackendConnectivity: (status: BackendConnectivity) => void;
   setAvailableParts: (parts: PartsListResponse) => void;
@@ -340,6 +371,7 @@ export interface AnalysisState {
   setSideCoreStatus: (status: SideCoreStatus) => void;
   setSideCoreDetail: (result: CoreCavityAnalysisResponse | null) => void;
   setSideCoreError: (message: string | null) => void;
+  setCompareMode: (value: boolean) => void;
   clearSelection: () => void;
   /**
    * Clears every analysis-derived field (selection, pull direction,
@@ -384,6 +416,7 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   overlay: null,
   showFaceBoundaries: false,
   coreCavityLayers: DEFAULT_CORE_CAVITY_LAYERS,
+  coreCavityOverlayOrder: [...CORE_CAVITY_OVERLAY_LAYERS],
   inspectorWidth: 420,
 
   analysisResult: null,
@@ -424,6 +457,7 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   sideCoreStatus: 'unknown',
   sideCoreDetail: null,
   sideCoreError: null,
+  compareMode: false,
 
   setBackendConnectivity: (status) => set({ backendConnectivity: status }),
   setAvailableParts: (parts) => set({ availableParts: parts.files }),
@@ -450,7 +484,15 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   setOverlay: (overlay) => set({ overlay }),
   setShowFaceBoundaries: (show) => set({ showFaceBoundaries: show }),
   setCoreCavityLayer: (layer, value) =>
-    set((state) => ({ coreCavityLayers: { ...state.coreCavityLayers, [layer]: value } })),
+    set((state) => {
+      const nextLayers = { ...state.coreCavityLayers, [layer]: value };
+      const isOverlayLayer = (CORE_CAVITY_OVERLAY_LAYERS as readonly string[]).includes(layer);
+      const nextOrder =
+        value && isOverlayLayer
+          ? [...state.coreCavityOverlayOrder.filter((l) => l !== layer), layer as CoreCavityOverlayLayer]
+          : state.coreCavityOverlayOrder;
+      return { coreCavityLayers: nextLayers, coreCavityOverlayOrder: nextOrder };
+    }),
   setInspectorWidth: (width) => set({ inspectorWidth: Math.round(Math.min(720, Math.max(360, width))) }),
   setAnalysisResult: (result) => set({ analysisResult: result }),
   setAnalysisError: (message) => set({ analysisError: message }),
@@ -488,6 +530,7 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   setSideCoreStatus: (status) => set({ sideCoreStatus: status }),
   setSideCoreDetail: (result) => set({ sideCoreDetail: result }),
   setSideCoreError: (message) => set({ sideCoreError: message }),
+  setCompareMode: (value) => set({ compareMode: value }),
   clearSelection: () => set({ selectedFaceIds: [], selectedEdgeIds: [] }),
   resetAnalysisState: () =>
     set({

@@ -1,16 +1,77 @@
+.viewportRoot {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  min-height: 0;
+}
+
 .viewport {
   width: 100%;
   height: 100%;
+  min-width: 0;
   background: var(--viewport-bg);
   position: relative;
   overflow: hidden;
   cursor: default;
 }
 
+.compareDivider {
+  flex: 0 0 2px;
+  background: var(--border-strong);
+}
+
+.compareViewport {
+  flex: 1 1 50%;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--viewport-bg);
+}
+
+.compareViewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.paneLabel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+}
+
 .viewport canvas {
   display: block;
   width: 100% !important;
   height: 100% !important;
+}
+
+.selectionHint {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--surface-1);
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 
 .boundaryToggle {
@@ -38,4 +99,32 @@
   border-color: var(--accent);
   background: var(--accent-dim);
   color: var(--accent-strong);
+}
+
+.clearSelectionButton {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.clearSelectionButton:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.clearSelectionButton:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.6;
 }

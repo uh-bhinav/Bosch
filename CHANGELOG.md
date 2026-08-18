@@ -2,6 +2,100 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-19 — React frontend: fixed undercut faces silently invisible on the model (real backend classification bug), plus viewport lighting/selection/comparison fixes
+
+**The headline bug (backend, `backend/api/main.py::_undercut_mesh_visual_payload`).**
+A user manually testing `Part3.stp` at `+Z` saw the Undercuts panel report 3
+real features (2 critical, 1 moderate, "Needs side action: 3") while the
+viewport itself stayed uniformly grey/beige with nothing red. Root-caused by
+reproducing the exact backend response outside the API (not guessed): each
+reported feature was its own single-face, `evidence_source=proxy-only`
+feature that was ALSO geometrically zero-draft (tangent to the pull
+direction) -- and the per-triangle classification loop checked
+`zero_draft_ids` BEFORE checking feature membership, so the more specific
+"this face is a reported, severity-scored undercut" evidence was silently
+shadowed by the less specific "couldn't Boolean-test this face" bucket. Same
+root cause independently reproduced on `Part1.stp` +Z (8 single-face minor
+features hit the identical shadowing). Fixed by moving a `face_id in
+feature_by_face` check (reusing the existing, honestly-labeled
+`proxy_undercut` style -- never claims Boolean-confirmed) ahead of the
+zero-draft/ray-verified-clear buckets, so being individually reported as a
+feature always outranks "no independent evidence obtained for this face."
+Verified directly against both real parts at multiple directions (before:
+`Counter({'accessible': ..., 'parting': ..., 'zero_draft_not_applicable':
+160})` on Part3 +Z with 0 undercut-evidence faces painted; after:
+`zero_draft_not_applicable` count drops to 0, `proxy_undercut` count rises
+to exactly 160 -- the same faces, now correctly attributed). One existing
+backend test (`test_undercut_detector_ray_verification.py::test_F_frontend_
+payload_has_distinct_ray_verified_clear_bucket`) asserted the OLD (buggy)
+expectation for 8 of these exact Part1 faces; updated to assert the
+corrected `proxy_undercut` classification with an explanation, not reverted.
+Full backend suite re-run after the fix.
+
+**Delegation-face color palette (backend, same file).** The validated-
+delegation (side-action) face-fill palette's first two colors were literally
+yellow `(0.95, 0.75, 0.10)` and cyan `(0.10, 0.75, 0.95)` -- colliding with
+the Core/Cavity "parting zone" classification (also yellow, `(0.86, 0.78,
+0.20)` / `#dcc832`, unchanged and correct) and the refined parting-line
+curve (`#00bfff`, also cyan). Replaced with a fresh 4-color palette (orange/
+indigo/pink/lime) that avoids both.
+
+**Frontend (`frontend-web/`), all additive/display-only, no backend contract changes beyond the above:**
+- `viewport/ViewportEngine.ts` -- lighting was a single `DirectionalLight` +
+  weak ambient, so any face angled away from that one light rendered dark/
+  muddy (a vivid red undercut face read as near-black maroon on its unlit
+  side -- the user's "brown, not red" and "dark/gloomy/shadowy" reports).
+  Replaced with a strong ambient plus 6 directional lights surrounding the
+  part from every direction; `MeshStandardMaterial.metalness` 0.15 → 0 (no
+  environment map exists, so any metalness was desaturating vertex-color
+  overlays for no reason).
+- `viewport/Viewport.tsx` -- face selection now requires Shift+click (a
+  plain click is how OrbitControls users click-drag to orbit; without the
+  gate, releasing a small rotate/pan silently toggled a random face).
+- `components/TopBar/TopBar.tsx` -- the "ⓘ" mode-info popover's click
+  handler always fired correctly, but `.topBar`'s own `overflow-y: hidden`
+  (needed for its horizontal-scroll-at-narrow-widths behavior) was silently
+  clipping the popover, since it renders below the bar's height. Fixed by
+  portaling it into `document.body`, positioned from the trigger button's
+  own screen rect.
+- `analysis/runIndividualAnalyses.ts` -- `runPartingLineOnly` (an
+  authorization-driven parting-line rerun in Expert mode) never touched
+  `pipelineStatus` by design, so the top bar kept showing stale red
+  "Blocked" even after a rerun found a real feasible candidate. Now
+  promotes `pipelineStatus` to `'complete'` when the rerun returns a real
+  `selected` candidate and the status was `'blocked'`.
+- `components/TopBar/TopBar.tsx` -- separately, `pipelineStatus==='blocked'`
+  reflects only the primary `/core-cavity` call's optimal-direction search,
+  not whether a side-core solid was actually generated afterward. Added a
+  display-only `'needs-side-action'` derived state (yellow, distinct label)
+  for exactly that case, without reinterpreting the stored `pipelineStatus`
+  value itself.
+- `store/analysisStore.ts` + `viewport/useOverlaySync.ts` -- the Core/Cavity
+  tab's side-action/core-pin/undercut overlay layers used a fixed paint
+  order (undercut always won), so toggling, e.g., core-pin off then back on
+  never visibly changed anything if undercut also covered that face. Added
+  `coreCavityOverlayOrder`, updated whenever a layer is toggled ON (moved to
+  the end = highest precedence), so whichever layer was most recently
+  enabled wins any per-face conflict.
+- `store/analysisStore.ts` + `viewport/Viewport.tsx` + `AnalysisSummaryPanel.tsx`
+  -- new before/after side-by-side viewport comparison: a `compareMode`
+  toggle in the existing Before/After Authorization panel splits the
+  persistent viewport into two panes. Left is the SAME persistent engine,
+  unchanged, showing whatever the current tool already shows (AFTER). Right
+  is a second, disposable `ViewportEngine` instance created only while
+  comparing, loading `recommendedResult`'s own real `display_mesh`/
+  `core_cavity_rgb` (the first automatic run, BEFORE any authorization) --
+  both real, already-fetched backend responses, nothing fabricated.
+  Disposed when the toggle turns off or the compared result changes.
+
+**Verification:** `npm run build` (0 TS errors), `npm run test -- --run`
+(140/140 passing, no regressions), backend `pytest tests/ -k "undercut or
+visual or mesh"` (125/125 passing after the test update above), full
+backend suite re-run. Live-verified the classification fix's before/after
+counts directly against the running backend for `Part3.stp` at both `+Z`
+and `-X` and `Part1.stp` at `+Z` (all three previously-silent cases now
+correctly attributed).
+
 ### 2026-08-17 — Phase F6: STEP mold-half export + PDF Report Builder (two minimal, additive backend changes; new `ExportPanel`, `src/export/`)
 
 **Backend gap investigation (before any code changed).** Read

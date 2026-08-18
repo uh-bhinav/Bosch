@@ -517,6 +517,27 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
             style_key = _confirmed_undercut_style_key(feature)
         elif face_id in manual_review_ids:
             style_key = "manual_review_undercut"
+        elif face_id in feature_by_face:
+            # Discovered 2026-08-19: a face can belong to a REPORTED feature
+            # (result.features, with a real severity/type/recommended_action
+            # an engineer sees in the Undercuts panel) while never appearing
+            # in `confirmed_ids`/`manual_review_ids` -- e.g. a draft-proxy
+            # feature whose faces happen to ALSO be geometrically tangent to
+            # the pull direction (zero-draft band), so without this check
+            # they'd fall into `zero_draft_ids` below and render identically
+            # to an ordinary untested wall face. Membership in a reported
+            # feature is more specific evidence than "couldn't Boolean-test
+            # this face" or "structurally zero-draft" -- it must win, not be
+            # shadowed by them. Silently letting a face the panel calls
+            # "critical" render as indistinguishable from a neutral face
+            # would contradict the SAME response's own feature list -- the
+            # same "never silently drop a possible issue" principle the
+            # Boolean-failed/skipped/not-applicable handling below already
+            # follows. Honest "not Boolean-confirmed" bucket (this feature's
+            # own `evidence_source` is proxy-only or Boolean-inconclusive by
+            # construction, or it would already have matched `confirmed_ids`/
+            # `manual_review_ids` above).
+            style_key = "proxy_undercut"
         elif face_id in zero_draft_ids:
             style_key = "zero_draft_not_applicable"
         elif face_id in ray_verified_clear_ids:
@@ -1391,7 +1412,7 @@ def part_parting_line_v2(
 
         if result.selected is not None:
             payload["parting_line_path"] = {
-                "label": "Parting Line v2 (selected candidate)",
+                "label": "Parting Line (selected candidate)",
                 "points": [[round(c, 6) for c in p] for p in result.selected.points],
                 "hex": "#22c55e",
                 "width": 6,
@@ -1428,9 +1449,14 @@ def part_parting_line_v2(
             if result.selected is not None and result.selected.feasibility is not None:
                 validated = result.selected.feasibility.validated_delegations
                 if validated:
+                    # Deliberately NOT yellow or cyan -- yellow is reserved
+                    # for the Core/Cavity "parting zone" layer, and cyan is
+                    # the refined parting-line curve's own color; either one
+                    # showing up on a delegation face reads as a different,
+                    # unrelated layer being (mis)painted.
                     palette = [
-                        [0.95, 0.75, 0.10], [0.10, 0.75, 0.95],
-                        [0.75, 0.10, 0.95], [0.10, 0.95, 0.45],
+                        [0.95, 0.42, 0.20], [0.35, 0.40, 0.95],
+                        [0.95, 0.25, 0.60], [0.65, 0.90, 0.15],
                     ]
                     face_to_group: dict[int, int] = {}
                     for group_index, delegation in enumerate(validated):

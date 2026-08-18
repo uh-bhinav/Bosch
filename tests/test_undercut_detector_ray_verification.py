@@ -298,6 +298,24 @@ def test_F_frontend_payload_has_distinct_ray_verified_clear_bucket():
     candidates on Part1 (small fillet/cylinder faces) whose ray coverage
     genuinely converges to "nothing found" -- proving the new style is
     live, not merely defined and unused.
+
+    Faces 252/255/258/262/265/270/272/276 were originally asserted as
+    `zero_draft_not_applicable` here, back when `_undercut_mesh_visual_
+    payload` checked that bucket BEFORE feature membership. Root-caused
+    2026-08-19 (a user manually testing Part3 at +Z saw 3 real critical/
+    moderate features report in the Undercuts panel while the viewport
+    itself stayed uniformly grey -- their faces were each their own
+    single-face, `severity=minor..critical`, `evidence_source=proxy-only`
+    feature that ALSO happened to be geometrically zero-draft, so the
+    zero-draft bucket silently outranked the feature report). These 8 exact
+    Part1 faces turn out to be the identical situation: each is its own
+    single-face `severity=minor`, `evidence_source=proxy-only` feature
+    (verified directly against `result.features`) that is ALSO zero-draft.
+    Reported-feature membership now wins over the passive zero-draft/
+    ray-verified-clear buckets precisely because it is the more specific,
+    already-user-visible verdict; painting these as `zero_draft_not_
+    applicable` again would silently contradict the SAME response's own
+    Undercuts panel, exactly the bug this fixes.
     """
     from backend.geometry.step_loader import load_step as _load_step
     from backend.geometry.undercut_detector import detect_undercuts
@@ -327,5 +345,9 @@ def test_F_frontend_payload_has_distinct_ray_verified_clear_bucket():
         )
     for fid in result.ray_verified_clear_face_ids[:4]:
         assert face_id_to_class.get(fid) == "ray_verified_clear"
+    # Each of these 8 is verified below to be its own single-face,
+    # proxy-only, individually-reported feature -- see the docstring.
+    reported_face_ids = {fid for f in result.features for fid in f.face_ids}
     for fid in (252, 255, 258, 262, 265, 270, 272, 276):
-        assert face_id_to_class.get(fid) == "zero_draft_not_applicable"
+        assert fid in reported_face_ids, f"face {fid} was expected to be an individually-reported feature"
+        assert face_id_to_class.get(fid) == "proxy_undercut"

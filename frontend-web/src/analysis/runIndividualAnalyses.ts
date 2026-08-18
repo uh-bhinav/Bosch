@@ -13,6 +13,16 @@
  * inventing a client-side default). Parting Line genuinely NEEDS a resolved
  * direction to mean anything as an "individual" action -- its panel gates
  * the button on `pullDirection` being set instead of guessing +Z.
+ *
+ * One narrow exception to "never touches pipelineStatus": `runPartingLineOnly`
+ * is how an engineer re-resolves the parting line after editing authorization
+ * (core-pin refs / delegations) in Expert mode -- it does NOT re-run the
+ * primary `/core-cavity` call, so that call's own `orchestration.status`
+ * (what set `pipelineStatus` originally) can go stale relative to the
+ * authoritative v2 engine's own outcome for the SAME resolved direction. If
+ * the primary run had left `pipelineStatus` at 'blocked' and this rerun comes
+ * back with a real `selected` candidate, the top bar was showing a wrong
+ * "Blocked" for a direction that just proved feasible -- promote it.
  */
 
 import { getDraft, getPartingLineV2, getUndercuts } from '../api/endpoints';
@@ -73,6 +83,9 @@ export async function runPartingLineOnly(): Promise<void> {
     });
     useAnalysisStore.getState().setPartingLineResult(partingLine);
     useAnalysisStore.getState().setPartingLineStage('done');
+    if (partingLine.selected && useAnalysisStore.getState().pipelineStatus === 'blocked') {
+      useAnalysisStore.getState().setPipelineStatus('complete');
+    }
   } catch (error) {
     useAnalysisStore.getState().setPartingLineError(describeAnalysisFailure(error));
     useAnalysisStore.getState().setPartingLineStage('error');

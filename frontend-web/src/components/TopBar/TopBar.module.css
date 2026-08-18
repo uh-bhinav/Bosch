@@ -102,10 +102,11 @@
 }
 
 .modeInfoPopover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 20;
+  /* Positioned inline (top/right) by TopBar.tsx via a portal into
+     document.body -- see the comment there for why: the top bar clips
+     vertical overflow for its horizontal-scroll behavior at narrow widths,
+     which was silently hiding this popover when it lived inline. */
+  z-index: 1000;
   width: 320px;
   max-width: 80vw;
   background: var(--surface-2);
@@ -181,6 +182,18 @@
 }
 .pipelineStatus[data-status='blocked'] .statusDot {
   background: var(--bad);
+}
+.pipelineStatus[data-status='needs-side-action'] .statusDot {
+  background: var(--warn);
+}
+.pipelineStatus[data-status='needs-side-action'] {
+  color: var(--warn);
+}
+.pipelineStatus[data-status='split-failed'] .statusDot {
+  background: var(--accent-strong);
+}
+.pipelineStatus[data-status='split-failed'] {
+  color: var(--accent-strong);
 }
 
 .runButton {

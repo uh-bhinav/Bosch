@@ -49,9 +49,9 @@ Manually checking a part design for moldability — draft angles, parting
 line, undercuts, core/cavity split — is a multi-hour manual task done by
 a mold designer in CAD tools like CATIA/NX before tooling can even start.
 This tool automates the geometric analysis (not the manual redesign) so
-that obvious manufacturability problems surface in seconds instead of
+that obvious manufacturability problems surface in minutes instead of
 hours, working directly against the exact CAD geometry rather than an
-approximated mesh.
+approximated mesh (see §17 for real measured full-analysis timing).
 
 ## 3. High-level architecture
 
@@ -338,6 +338,7 @@ this way.
 | Side cores | Generates the volume that must retract and its direction; does not select a tooling mechanism (lifter vs. slide vs. collapsible core). |
 | AI agent (`backend/agent/`) | A real, tool-calling agent over the geometry engine exists and is Gemini-live-verified end-to-end; Anthropic/OpenAI/Grok adapters are structurally verified but not live-tested. It is reachable via the API and the legacy Streamlit UI's "AI Agent" tab — **it is not wired into `frontend-web/`** and is not part of the demo flow in §11. |
 | Volume conservation | The solid split conserves tooling volume to ~4%, not the originally targeted 2% (documented, tolerance adjusted accordingly — not a silent failure). |
+| Full-analysis timing | "Run Full Analysis" chains several sequential backend calls (direction search + solid split, then draft, undercuts, parting-line, and a conditional side-core check) against exact B-Rep geometry, not a mesh approximation — this is not instant. Measured: the primary direction-search + solid-split call alone took ~195s on `Part1.stp` in one real run; the full Guided sequence (that call plus all its follow-ups) has been observed around ~350s on `Part1.stp` and ~250s on `Part3.stp`. This varies by part complexity and by OCC Boolean-retry variance (§19) — it is not a fixed number. |
 
 ## 18. Intentionally not implemented
 
@@ -439,15 +440,4 @@ beyond that, this should behave identically to macOS/Linux since nothing
 in either Dockerfile is OS-conditional, but treat that as expected, not
 demonstrated.
 
-## 22. Five-minute panel demo
 
-1. Start the backend (§8) and the frontend (§9) in two terminals — set `PYTHONPATH` first, per your OS. Open `http://localhost:5173`.
-2. Import `Part1.stp`.
-3. Click **Run Full Analysis**. Wait for the result (see the timing note in §17 — if it's slow, narrate what's happening: pull-direction search, core/cavity split, draft, undercuts, parting-line curve, and a side-core check, all against exact B-Rep geometry).
-4. Switch through the tool rail — Draft, Parting Line, Core/Cavity, and Undercuts each recolor the SAME persistent viewport with that tool's own classification (see the legend in each panel); Parting Line also draws the actual raw/refined curve as a 3D line, and Pull Direction shows the resolved direction as a 3D arrow on every tool.
-5. Open Side Cores — it states plainly whether this pull direction needed one, not just whether one was generated. Then open the diagnostics panel — show one Tier 1 conclusion, then expand it to Tier 2/3 to show the panel isn't hiding anything, it's just not leading with raw numbers.
-6. Switch to manual pull direction, pick a different axis, re-run, and show the recommended-vs-manual comparison.
-7. Export the STEP mold-half file and open it in any CAD viewer to show it's a real, reloadable solid, not a placeholder.
-8. Export the PDF report and open it.
-9. If time remains, load `Part3.stp` and repeat step 3 to show a part with real undercuts and a side-core feature.
-10. Close on `STATUS.md`'s Known Limitations section — this project states its own gaps rather than leaving a judge to find them.
