@@ -1,0 +1,96 @@
+.rail {
+  flex: 0 0 var(--rail-width-collapsed);
+  width: var(--rail-width-collapsed);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  position: relative;
+  z-index: 5;
+  transition: width 120ms ease;
+  overflow: hidden;
+}
+
+.rail[data-expanded='true'] {
+  width: var(--rail-width-expanded);
+  flex-basis: var(--rail-width-expanded);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.28);
+}
+
+.pinButton {
+  align-self: flex-end;
+  margin: 0 6px 6px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.pinButton:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.toolList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toolButton {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 9px 14px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  white-space: nowrap;
+  border-left: 2px solid transparent;
+}
+
+.toolButton:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.toolButton[data-active='true'] {
+  color: var(--accent-strong);
+  background: var(--accent-dim);
+  border-left-color: var(--accent);
+}
+
+.glyph {
+  flex: 0 0 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.toolButton[data-active='true'] .glyph {
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+}
+
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

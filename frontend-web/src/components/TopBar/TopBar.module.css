@@ -1,0 +1,176 @@
+.topBar {
+  height: var(--topbar-height);
+  flex: 0 0 var(--topbar-height);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.productName {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.partSlot {
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.partName {
+  color: var(--text-primary);
+}
+
+.partNamePlaceholder {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.modeToggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.modeButton,
+.modeButtonActive {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.modeButton:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.modeButtonActive {
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+}
+
+.pipelineStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.pipelineStatus[data-status='running'] .statusDot {
+  background: var(--accent-strong);
+}
+.pipelineStatus[data-status='complete'] .statusDot {
+  background: var(--ok);
+}
+.pipelineStatus[data-status='blocked'] .statusDot {
+  background: var(--bad);
+}
+
+.runButton {
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.runButton:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
+.runButton:disabled {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.runProgress {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.exportButton {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border-radius: var(--radius-sm);
+  cursor: not-allowed;
+}
+
+.connectivityDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+.connectivityDot[data-connectivity='online'] {
+  background: var(--ok);
+}
+.connectivityDot[data-connectivity='offline'] {
+  background: var(--bad);
+}
+.connectivityDot[data-connectivity='checking'] {
+  background: var(--warn);
+}

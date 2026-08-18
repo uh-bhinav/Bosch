@@ -1,0 +1,14 @@
+.viewport {
+  width: 100%;
+  height: 100%;
+  background: var(--viewport-bg);
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+}
+
+.viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}

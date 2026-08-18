@@ -1,0 +1,156 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dropZone {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 22px 14px;
+  text-align: center;
+  cursor: pointer;
+  background: var(--surface-1);
+}
+
+.dropZone[data-drag-over='true'] {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.dropZone[data-busy='true'] {
+  cursor: wait;
+  opacity: 0.75;
+}
+
+.dropZoneText {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.dropZoneHint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.hiddenInput {
+  display: none;
+}
+
+.errorText {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bad-dim);
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.summary {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  background: var(--surface-1);
+}
+
+.summaryHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.readyDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: 0 0 auto;
+}
+
+.summaryName {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.summaryGrid dt {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.summaryGrid dd {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.warnings {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--warn);
+}
+
+.recent {
+  margin-top: 4px;
+}
+
+.recentTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.recentList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recentButton {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentButton:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.recentButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

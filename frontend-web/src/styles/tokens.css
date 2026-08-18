@@ -1,0 +1,51 @@
+/**
+ * Design tokens -- restrained CAD/engineering visual language (F0 §10).
+ *
+ * One controlled accent (a copper/steel tone, deliberately not a generic
+ * "tech blue" -- it echoes tooling/mold steel, the actual subject of this
+ * product). Semantic state colors (ok/warn/bad) are separate tokens, never
+ * derived from the accent, so "selected" and "warning" are never
+ * confusable. No per-module color: every tool-rail entry, every panel,
+ * draws from this same small set.
+ */
+
+:root {
+  /* Surfaces -- graphite scale, darkest at the viewport, lightest at raised panels. */
+  --surface-0: #14171c; /* app ground */
+  --surface-1: #1a1e24; /* shell chrome: top bar, tool rail */
+  --surface-2: #20252c; /* raised panels: inspector, status strip */
+  --surface-3: #2a3039; /* hover / active state */
+  --viewport-bg: #101317; /* deliberately darker than chrome, like a real CAD viewport */
+
+  --border: #2c323b;
+  --border-strong: #3c4552;
+
+  --text-primary: #e6e9ee;
+  --text-secondary: #98a2b0;
+  --text-tertiary: #67707c;
+
+  /* The one controlled accent. Used for: active tool, selection, primary actions. */
+  --accent: #d97b3f;
+  --accent-strong: #f0975e;
+  --accent-dim: rgba(217, 123, 63, 0.16);
+
+  /* Semantic state -- never used for decoration, never doubles as the accent. */
+  --ok: #4caf7d;
+  --ok-dim: rgba(76, 175, 125, 0.15);
+  --warn: #d9ab3e;
+  --warn-dim: rgba(217, 171, 62, 0.15);
+  --bad: #e2726b;
+  --bad-dim: rgba(226, 114, 107, 0.15);
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Roboto Mono', 'IBM Plex Mono', Menlo, Consolas, monospace;
+
+  --topbar-height: 44px;
+  --statusstrip-height-collapsed: 28px;
+  --rail-width-collapsed: 52px;
+  --rail-width-expanded: 200px;
+  --inspector-width: 300px;
+}

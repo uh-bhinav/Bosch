@@ -1,0 +1,136 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.actionButton {
+  align-self: flex-start;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent-strong);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.actionButton:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
+.actionButton:disabled {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  cursor: not-allowed;
+}
+
+.stageText {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--accent-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bad-dim);
+  color: var(--bad);
+  font-size: 12px;
+}
+
+.resultCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resultLine {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ok);
+}
+
+.downloadLink {
+  align-self: flex-start;
+  border: 1px solid var(--ok);
+  background: var(--ok-dim);
+  color: var(--ok);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+}
+
+.downloadLink:hover {
+  background: var(--ok);
+  color: var(--surface-0);
+}
+
+.sectionList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 8px 10px;
+}
+
+.sectionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: default;
+}
+
+.sectionRow input[type='checkbox'] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sectionRow input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+.fixedNote {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}

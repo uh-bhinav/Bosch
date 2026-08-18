@@ -1,0 +1,197 @@
+/**
+ * Backend endpoint functions. F1 implemented `getHealth`/`listParts`. F2
+ * adds exactly the two calls the import flow needs: `uploadPart` (`POST
+ * /parts/upload`) and `getSummary` (`GET /parts/{filename}/summary`).
+ *
+ * Every later phase's endpoint (draft, undercuts, direction, core-cavity,
+ * orchestration, side-core, export) still belongs in this file, following
+ * the same `apiGet`/`apiPost`/`apiUpload` pattern -- never inline in a
+ * component.
+ */
+
+import { API_BASE, apiGet, apiPost, apiPostBinary, apiUpload } from './client';
+import type {
+  CoreCavityAnalysisResponse,
+  CorePinFaceRefInput,
+  DelegationInput,
+  HealthResponse,
+  MoldHalfExportResponse,
+  PartsListResponse,
+  PartSummaryResponse,
+  UploadResponse,
+} from './types';
+import type { Vec3 } from '../domain/types';
+
+export function getHealth(): Promise<HealthResponse> {
+  return apiGet<HealthResponse>('/health');
+}
+
+export function listParts(): Promise<PartsListResponse> {
+  return apiGet<PartsListResponse>('/parts');
+}
+
+export function uploadPart(file: File): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return apiUpload<UploadResponse>('/parts/upload', formData);
+}
+
+export interface GetSummaryOptions {
+  includeMesh?: boolean;
+  meshDeflection?: number;
+}
+
+export function getSummary(filename: string, options: GetSummaryOptions = {}): Promise<PartSummaryResponse> {
+  return apiGet<PartSummaryResponse>(`/parts/${encodeURIComponent(filename)}/summary`, {
+    include_mesh: options.includeMesh ?? false,
+    mesh_deflection: options.meshDeflection ?? 0.5,
+  });
+}
+
+/**
+ * F3: the Guided "Run full analysis" call -- the single authoritative
+ * endpoint (`/core-cavity` with `use_optimal_direction=true&solid_split=
+ * true`) that runs direction search -> parting line -> core/cavity solid
+ * split in one request. Side-core generation is deliberately never
+ * requested here (`generate_side_core`/`multi_feature_side_cores` both
+ * omitted, so the backend's own defaults of `false` apply) -- F3's scope
+ * excludes side-action routing, and requesting it would also make
+ * `orchestration.status` able to return `"no_feature"`, a state this
+ * endpoint's automatic path otherwise never produces.
+ */
+export function runFullAnalysis(filename: string, meshDeflection = 0.5): Promise<CoreCavityAnalysisResponse> {
+  return apiGet<CoreCavityAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/core-cavity`, {
+    use_optimal_direction: true,
+    solid_split: true,
+    include_faces: false,
+    include_mesh: true,
+    include_mesh_geometry: true,
+    mesh_deflection: meshDeflection,
+  });
+}
+
+export interface ManualAnalysisAuthorization {
+  corePinFaceRefs?: CorePinFaceRefInput[];
+  delegations?: DelegationInput[];
+}
+
+/**
+ * Shared by every endpoint that accepts `core_pin_face_refs`/`delegations`
+ * -- sent ONLY when non-empty and JSON-stringified exactly as
+ * `_parse_core_pin_face_refs`/`_parse_delegations` (backend/api/main.py)
+ * require, so omitting an empty list preserves each parameter's own
+ * documented "omit for today's default behaviour" contract.
+ */
+function authorizationParams(authorization: ManualAnalysisAuthorization): Record<string, string> {
+  const params: Record<string, string> = {};
+  if (authorization.corePinFaceRefs && authorization.corePinFaceRefs.length > 0) {
+    params.core_pin_face_refs = JSON.stringify(authorization.corePinFaceRefs);
+  }
+  if (authorization.delegations && authorization.delegations.length > 0) {
+    params.delegations = JSON.stringify(authorization.delegations);
+  }
+  return params;
+}
+
+/**
+ * F4: the Manual Pull Direction call -- the SAME `/core-cavity` endpoint
+ * F3 uses, with `use_optimal_direction=false` and the engineer's raw
+ * `dx`/`dy`/`dz` (never normalized here -- backend C16's
+ * `resolve_manual_direction_mold`/`prepare_manual_direction` is the one
+ * normalization/invalid-direction authority, via `normalize3`). Optional
+ * `core_pin_face_refs`/`delegations` are sent ONLY when non-empty and
+ * JSON-stringified exactly as `_parse_core_pin_face_refs`/
+ * `_parse_delegations` (backend/api/main.py) require -- omitting an empty
+ * list preserves each parameter's own documented "omit for today's
+ * default behaviour" contract rather than sending a redundant `"[]"`.
+ */
+export function runManualCoreCavity(
+  filename: string,
+  direction: Vec3,
+  authorization: ManualAnalysisAuthorization = {},
+  meshDeflection = 0.5,
+): Promise<CoreCavityAnalysisResponse> {
+  const params: Record<string, string | number | boolean> = {
+    use_optimal_direction: false,
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    solid_split: true,
+    include_faces: false,
+    include_mesh: true,
+    include_mesh_geometry: true,
+    mesh_deflection: meshDeflection,
+    ...authorizationParams(authorization),
+  };
+  return apiGet<CoreCavityAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/core-cavity`, params);
+}
+
+/**
+ * F6: STEP mold-half export. ALWAYS calls with `use_optimal_direction=
+ * false` and the caller-supplied `direction` (the frontend's own already-
+ * resolved `pullDirection`, whichever of Guided/Manual produced the
+ * current on-screen result) -- this endpoint runs its own complete
+ * pipeline internally (`optimize_mold_direction` when
+ * `use_optimal_direction=true`) and has no way to accept an
+ * already-computed result, so this is the only way to avoid repeating the
+ * expensive optimizer search a second time purely to export what was
+ * already found. Undercut detection/parting-line/solid-split are still
+ * re-run for that one already-known direction -- an unavoidable
+ * consequence of the backend's stateless, no-cached-OCC-solids
+ * architecture (`PartGeometry`/solids never survive between requests),
+ * not something this call can skip.
+ */
+export function exportMoldHalves(
+  filename: string,
+  direction: Vec3,
+  authorization: ManualAnalysisAuthorization = {},
+): Promise<MoldHalfExportResponse> {
+  const params: Record<string, string | number | boolean> = {
+    use_optimal_direction: false,
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    ...authorizationParams(authorization),
+  };
+  return apiPost<MoldHalfExportResponse>(`/parts/${encodeURIComponent(filename)}/export/mold-halves`, params);
+}
+
+export function stepDownloadUrl(downloadFilename: string): string {
+  return `${API_BASE}/export/download/${encodeURIComponent(downloadFilename)}`;
+}
+
+export interface PdfReportSections {
+  executiveSummary: boolean;
+  solidSplit: boolean;
+  sideCores: boolean;
+}
+
+/**
+ * F6: the PDF DfM report. Same direction-reuse rule as `exportMoldHalves`
+ * -- always `use_optimal_direction=false` with the already-resolved
+ * direction, so generating a report never repeats the optimizer search.
+ * A real consequence, disclosed in the UI: because of this, the PDF's own
+ * "Pull Direction Optimization" section (which only ever renders when the
+ * backend itself ran `optimize_mold_direction`) never appears in a report
+ * this frontend generates, regardless of which section checkboxes are
+ * selected -- there is no flag that produces it without re-running the
+ * search.
+ */
+export function exportPdfReport(
+  filename: string,
+  direction: Vec3,
+  authorization: ManualAnalysisAuthorization,
+  sections: PdfReportSections,
+): Promise<Blob> {
+  const params: Record<string, string | number | boolean> = {
+    use_optimal_direction: false,
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    include_executive_summary: sections.executiveSummary,
+    include_solid_split: sections.solidSplit,
+    include_side_core: sections.sideCores,
+    ...authorizationParams(authorization),
+  };
+  return apiPostBinary(`/parts/${encodeURIComponent(filename)}/export/report`, params);
+}

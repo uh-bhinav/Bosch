@@ -1,0 +1,21 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.workArea {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.viewportArea {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
