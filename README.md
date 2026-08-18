@@ -66,12 +66,20 @@ API only and never imports pythonOCC.
 
 ## 5. Prerequisites
 
-- **Python 3.11**, installed via **conda or micromamba** — `pythonocc-core`
-  (the OpenCascade B-Rep engine) ships reliable prebuilt binaries only on
-  conda-forge; pip builds are not used for it.
-- **Node.js 20+** and npm — for `frontend-web/`.
+- **Python 3.11**, installed via **conda** (Miniconda, Miniforge, or
+  Anaconda — any of these work identically for this project) —
+  `pythonocc-core` (the OpenCascade B-Rep engine) ships reliable prebuilt
+  binaries only on conda-forge; pip builds are not used for it. Get the
+  Windows/macOS/Linux installer from whichever distribution you prefer;
+  no platform-specific fork of these instructions is needed once conda
+  itself is installed.
+- **Node.js 20+** and npm — for `frontend-web/`. The official Windows
+  installer from nodejs.org puts both on `PATH` automatically.
 - A real `.stp` file to analyze. `data/parts/Part1.stp` and `Part3.stp`
-  are already in the repo for the demo.
+  are already in the repo for the demo — no extra download needed.
+- **Windows note**: run the commands below in **PowerShell** (the default
+  terminal in Windows Terminal / VS Code). Where a command differs from
+  macOS/Linux, both are given explicitly.
 
 ## 6. Environment setup
 
@@ -83,8 +91,11 @@ source of contradiction (`environment.yml` pinned a known-broken
 `openai==1.25.0`, since fixed) and has been consolidated so there is one
 answer to "what version of X do I need."
 
+These commands are identical on Windows (PowerShell), macOS, and Linux —
+conda itself abstracts the platform difference:
+
 ```bash
-# 1. Create the conda env (conda or micromamba both work; example uses conda)
+# 1. Create the conda env
 conda env create -f environment.yml
 conda activate dfm_agent
 
@@ -95,15 +106,30 @@ pip install -r requirements.txt
 python -c "from OCC.Core.STEPControl import STEPControl_Reader; print('OCC OK')"
 ```
 
-If you don't have conda, install Miniforge/Miniconda first, or use
-micromamba (`curl -Ls https://micro.mamba.pm/api/micromamba/<platform>/latest | tar -xj bin/micromamba`,
-then `micromamba create -f environment.yml -n dfm_agent`, `micromamba activate dfm_agent`).
+If step 3 fails or hangs, see Troubleshooting (§19) before continuing —
+don't skip the verification.
 
-Set `PYTHONPATH` to the repo root before running the backend from a shell
-that didn't `cd` there via a script:
+> `pythonocc-core=7.7.2`, `cadquery=2.4.0`, and `vtk=9.2.*` are all
+> published for Windows (`win-64`) on conda-forge, so this is expected to
+> work the same way it does on macOS. **This was not independently
+> re-verified on a Windows machine during this documentation pass** — if
+> the conda solve fails or a package is unavailable for your platform,
+> that is the first thing to report back, not a setup mistake on your
+> part.
+
+Set `PYTHONPATH` to the repo root before starting the backend (needed so
+`backend.*` imports resolve; the run scripts under `scripts/` already do
+this for macOS/Linux, but those are bash scripts and won't run on Windows
+without WSL or Git Bash — set it directly instead):
 
 ```bash
+# macOS / Linux (bash/zsh)
 export PYTHONPATH="$(pwd)"
+```
+
+```powershell
+# Windows (PowerShell)
+$env:PYTHONPATH = (Get-Location).Path
 ```
 
 **Secrets**: the AI agent layer (§17) reads provider API keys from a local
@@ -129,14 +155,26 @@ run `frontend-web/`, not this, for the demo.
 ## 8. Start the backend
 
 ```bash
+# macOS / Linux (bash/zsh)
 conda activate dfm_agent
 export PYTHONPATH="$(pwd)"
 uvicorn backend.api.main:app --reload --port 8000
 ```
 
-Or, if you already have a local micromamba install at `.micromamba/` in
-this repo (a dev convenience, not portable to a fresh clone by default):
-`bash scripts/run_backend.sh`.
+```powershell
+# Windows (PowerShell)
+conda activate dfm_agent
+$env:PYTHONPATH = (Get-Location).Path
+uvicorn backend.api.main:app --reload --port 8000
+```
+
+Run this from the repository root on any platform. The backend listens
+on port `8000` regardless of OS.
+
+`scripts/run_backend.sh` exists as a macOS/Linux convenience wrapper —
+it is a bash script and assumes a local micromamba install at
+`.micromamba/` inside the repo, which is not part of a fresh clone. It is
+**not** portable to Windows; use the command above instead.
 
 ## 9. Start the React frontend
 
@@ -271,24 +309,44 @@ maintained "claims to avoid" list this project holds itself to.
 | Empty parts list | Add a `.stp` file to `data/parts/`, or use the in-app upload. |
 | A pull-direction/analysis call seems to hang | This is a known, disclosed timing risk (§17) — it can take many minutes on some parts, not a UI bug. |
 | `pip install -r requirements.txt` fails on `pythonocc-core`/`cadquery` | Those two are conda-only by design — don't try to pip-install them; they come from `environment.yml`'s conda dependencies. |
+| Windows: `'uvicorn' is not recognized` / `'conda' is not recognized` | The conda env isn't activated in this terminal, or you're in `cmd.exe` instead of the Anaconda/PowerShell prompt conda configured. Open "Anaconda Prompt" (or re-run `conda init powershell` once, then open a new PowerShell window) and `conda activate dfm_agent` again. |
+| Windows: backend starts but every request 404s or import-errors | `PYTHONPATH` wasn't set in that terminal session — it does not persist across terminal windows. Re-run `$env:PYTHONPATH = (Get-Location).Path` from the repo root in the same window you start `uvicorn` from. |
+| Windows: `conda env create -f environment.yml` fails resolving `pythonocc-core`/`cadquery`/`vtk` | These are published for `win-64` on conda-forge but this was not independently re-verified on Windows this pass (§20) — capture the exact solver error; it likely means a channel/version needs adjusting for your conda version, not that Windows is unsupported. |
 
 ## 20. Cross-platform notes
 
-Only macOS was exercised while assembling this repository. Windows and
-Linux setup below follows the same conda + Node.js flow and is expected
-to work, since nothing in the backend or `frontend-web/` is
-macOS-specific, but **it was not physically run on Windows or Linux
-during this cleanup pass** — treat the platform-specific notes below as
-unverified-but-expected, not tested.
+This repository was developed and physically exercised on **macOS**
+only. The setup path in §6–§9 is designed to need nothing
+macOS-specific — plain conda and plain npm, no shell scripts, no
+hardcoded absolute paths, no `micromamba`-specific commands — but
+**Windows and Linux have not been physically run this pass.** Where a
+command genuinely differs by OS (environment variables, path syntax), an
+explicit Windows and macOS/Linux version is given side by side above;
+where nothing differs (conda commands, npm commands, the demo flow
+itself), one command is given because it is genuinely the same command.
 
-- **macOS**: as documented above. Apple Silicon and Intel both work with
+- **macOS**: fully exercised. Apple Silicon and Intel both work with
   conda-forge's `pythonocc-core` builds.
-- **Linux**: same conda/npm flow. `xvfb` is only needed for the
-  Docker/Streamlit headless rendering path (§21), not for
-  `frontend-web/`, which renders in the browser.
-- **Windows**: use conda (not micromamba's curl-based install script,
-  which is Unix-oriented) and Git Bash or WSL for the shell commands
-  above; `pythonocc-core` is available on conda-forge for Windows too.
+- **Linux**: expected to work via the same conda + npm flow as macOS —
+  nothing in `backend/` or `frontend-web/` is OS-conditional. Not
+  physically tested this pass. (`xvfb` is only relevant to the
+  Docker/Streamlit headless-rendering path in §21, not to the local
+  `frontend-web/` setup, which renders in a normal browser.)
+- **Windows**: expected to work via conda + npm in PowerShell, using the
+  Windows-specific commands given in §6/§8 for `PYTHONPATH`. Not
+  physically tested this pass — specifically unverified: (1) that
+  `conda env create -f environment.yml` resolves cleanly for `win-64`
+  (the packages are published for Windows on conda-forge, but the exact
+  solve was not run here), and (2) that no shell-quoting difference in
+  PowerShell trips up any command above. Do not use `scripts/run_backend.sh`
+  or `scripts/run_frontend_macos.sh` on Windows — both are bash and
+  assume a macOS/Linux-style local micromamba install; they are dev
+  conveniences, not part of the documented setup path.
+
+If Windows setup fails at the conda-solve step specifically, that is the
+one genuine cross-platform risk in this repository worth flagging back —
+everything else in the setup path (Python imports, FastAPI, Vite/npm) is
+plain and platform-agnostic once the conda environment exists.
 
 ## 21. Docker
 
@@ -297,13 +355,14 @@ exist and build a working backend + **Streamlit** stack
 (`docker compose up`, backend on `:8000`, Streamlit on `:8501`). There is
 no Docker service for `frontend-web/` — adding one was out of scope for
 this cleanup pass (no new Docker architecture was introduced). If you
-want to use Docker for the backend only, it works as-is; for the
-intended React demo, use the local setup in §8–§9, which is the simplest
-reliable path with what's in this repository today.
+want to use Docker for the backend only, it works as-is (on Windows,
+Docker Desktop with the WSL2 backend); for the intended React demo, use
+the local setup in §8–§9, which is the simplest reliable path — on every
+platform — with what's in this repository today.
 
 ## 22. Five-minute panel demo
 
-1. `uvicorn backend.api.main:app --port 8000` (backend), `cd frontend-web && npm run dev` (frontend). Open `http://localhost:5173`.
+1. Start the backend (§8) and the frontend (§9) in two terminals — set `PYTHONPATH` first, per your OS. Open `http://localhost:5173`.
 2. Import `Part1.stp`.
 3. Click **Run Full Analysis**. Wait for the result (see the timing note in §17 — if it's slow, narrate what's happening: pull-direction search, undercut detection, parting line, core/cavity split, all against exact B-Rep geometry).
 4. Point out the colored core/cavity split and parting line in the viewport.
