@@ -45,6 +45,7 @@ from backend.geometry.parting_line_v2.gates import evaluate_gates
 from backend.geometry.parting_line_v2.graph import build_graph, extract_loops, reduce_to_two_core
 from backend.geometry.parting_line_v2.regions import (
     RegionClassification,
+    _sample_all_faces_g,
     check_core_pin_eligibility,
     find_bridge_faces,
     mean_abs_g,
@@ -88,6 +89,20 @@ class PartingLineV2Result:
     part_projected_area_mm2: float
     coverage_is_exact: bool
     bbox_diagonal_mm: float
+    #: Phase 4 (2026-08-16, D-049), diagnostic only. The already-computed
+    #: RegionClassification of the best-ranked REJECTED H3-passing candidate
+    #: (same selection as the pre-existing `best_rejected_id` local in
+    #: `analyse_parting_line` -- this only exposes it, it does not change how
+    #: it is chosen). Deliberately a SEPARATE field from `regions`, which
+    #: continues to mean only "the accepted candidate's classification."
+    #: `None` whenever no non-selected H3-passing candidate exists (e.g. a
+    #: feasible result with nothing else worth showing, or zero candidates
+    #: reached H3=2 at all). Never read by any gate, ranking, or selection --
+    #: attaching/exposing it here never changes `selected`.
+    best_rejected_candidate_id: int | None = None
+    best_rejected_regions: RegionClassification | None = None
+    best_rejected_failed_gate: str | None = None
+    best_rejected_reason: str | None = None
     track_a_summary: dict = field(default_factory=dict)
     track_b_summary: dict = field(default_factory=dict)
     stitch_summary: dict = field(default_factory=dict)
@@ -124,6 +139,16 @@ class PartingLineV2Result:
             "rejection_summary": self.rejection_summary,
             "bounds": self.bounds.to_dict(),
             "regions": self.regions.to_dict() if self.regions else None,
+            # Phase 4 (D-049): diagnostic-only preview of the best-ranked
+            # REJECTED H3-passing candidate. Never the accepted split --
+            # consumers must not treat this as "regions" and must not
+            # present it as feasible. See PartingLineV2Result docstring.
+            "best_rejected_candidate_id": self.best_rejected_candidate_id,
+            "best_rejected_regions": (
+                self.best_rejected_regions.to_dict() if self.best_rejected_regions else None
+            ),
+            "best_rejected_failed_gate": self.best_rejected_failed_gate,
+            "best_rejected_reason": self.best_rejected_reason,
             "referrals": [r.to_dict() for r in self.referrals],
             "track_a": self.track_a_summary,
             "track_b": self.track_b_summary,
@@ -364,6 +389,22 @@ def analyse_parting_line(
     # into another's result.
     regions_by_candidate: dict[int, RegionClassification] = {}
 
+    # O6 (2026-08-17): the per-face g-sampling classify_regions() needs is a
+    # pure function of (part, direction, cfg.face_sample_grid) -- completely
+    # independent of which candidate loop is being classified (see
+    # regions._sample_all_faces_g's docstring; O5's forensic measurement
+    # found this recomputed from scratch on every H3-topologically-valid
+    # candidate, 90-96% of this function's total wall time on both Part1 and
+    # Part3). Computed exactly once here, call-local (never cached across
+    # analyse_parting_line invocations, matching the same statelessness
+    # rationale as regions_by_candidate above), and threaded unchanged into
+    # every evaluate_gates() call below -- Round 1, Round 1.5 (core-pin), and
+    # Round 2 (loop unions) alike, so none of the three paths falls back to
+    # recomputing it per candidate.
+    face_g_stats = _sample_all_faces_g(
+        {f.face_id: f for f in part.faces}, direction, cfg.face_sample_grid,
+    )
+
     with timer("filter"):
         for index, (segment_ids, points) in enumerate(raw_loops):
             candidate = PartingLoopCandidate(
@@ -379,6 +420,7 @@ def analyse_parting_line(
                 bbox_diagonal_mm=bbox_diagonal,
                 part_projected_area_mm2=part_projected_area,
                 delegations=delegations,
+                face_g_stats=face_g_stats,
             )
             candidate = replace(candidate, feasibility=outcome.report)
             # Plan Phase 3A: retained for ANY H3-passing candidate, not only
@@ -465,7 +507,7 @@ def analyse_parting_line(
                 outcome = evaluate_gates(
                     closed, part, direction, undercuts=undercuts, cfg=cfg,
                     bbox_diagonal_mm=bbox_diagonal, part_projected_area_mm2=part_projected_area,
-                    delegations=delegations,
+                    delegations=delegations, face_g_stats=face_g_stats,
                 )
                 closed = replace(closed, feasibility=outcome.report)
                 if outcome.regions is not None:
@@ -531,6 +573,7 @@ def analyse_parting_line(
                     bbox_diagonal_mm=bbox_diagonal,
                     part_projected_area_mm2=part_projected_area,
                     delegations=delegations,
+                    face_g_stats=face_g_stats,
                 )
                 union = replace(union, feasibility=outcome.report)
                 if outcome.regions is not None:
@@ -607,10 +650,24 @@ def analyse_parting_line(
         # carry the pre-attachment candidate while candidates[] carries the
         # updated one, silently disagreeing with each other.
         selected = by_id[selected.candidate_id]
+    # Phase 4 (D-049): expose the same best-rejected-candidate data computed
+    # above through explicitly named top-level fields, instead of leaving a
+    # caller to scan the full scorecard for the one non-selected candidate
+    # whose `.regions` happens to be populated. Purely additive -- reads
+    # already-computed local state (`by_id`, `regions_by_candidate`), invents
+    # no new selection criterion, and never touches `selected`/`regions`.
+    best_rejected_regions_out = None
+    best_rejected_failed_gate = None
+    best_rejected_reason = None
     if best_rejected_id is not None:
         by_id[best_rejected_id] = replace(
             by_id[best_rejected_id], regions=regions_by_candidate[best_rejected_id]
         )
+        best_rejected_regions_out = by_id[best_rejected_id].regions
+        best_rejected_report = by_id[best_rejected_id].feasibility
+        if best_rejected_report is not None:
+            best_rejected_failed_gate = best_rejected_report.failed_gate
+            best_rejected_reason = best_rejected_report.reason
 
     return PartingLineV2Result(
         level="0", pull_direction=pull_direction, selected=selected,
@@ -618,6 +675,10 @@ def analyse_parting_line(
         bounds=bounds, regions=regions, referrals=referrals, timings=timings,
         part_projected_area_mm2=part_projected_area, coverage_is_exact=False,
         bbox_diagonal_mm=bbox_diagonal,
+        best_rejected_candidate_id=best_rejected_id,
+        best_rejected_regions=best_rejected_regions_out,
+        best_rejected_failed_gate=best_rejected_failed_gate,
+        best_rejected_reason=best_rejected_reason,
         track_a_summary=track_a.to_dict(), track_b_summary=track_b.to_dict(), stitch_summary=stitched.to_dict(),
         reduction=stats.to_dict(), notes=tuple(notes),
     )

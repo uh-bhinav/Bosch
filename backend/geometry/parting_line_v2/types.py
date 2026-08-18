@@ -598,6 +598,30 @@ class FaceClassification:
     min_g: float
     max_g: float
     sample_count: int
+    #: Phase 4 (2026-08-16, D-055): which side of the primary parting
+    #: topology (H3's cavity_component/core_component, ``separate_surface``)
+    #: this face belongs to -- ANSWERS A DIFFERENT QUESTION FROM ``label``.
+    #: ``label`` is the LOCAL, per-face draft/g-based classification
+    #: ("ambiguous" means this face's own sampled normals are too close to
+    #: zero to confirm a side by themselves). ``topological_side`` is the
+    #: face's actual region membership, already fully determined by H3's
+    #: graph connectivity regardless of that face's own g value -- H3 never
+    #: reads g for an ordinary face's own component assignment, only for
+    #: routing a SPLIT face's two halves to their respective neighbours.
+    #: An "ambiguous"-labelled face therefore still has a definite,
+    #: non-"unknown" topological_side in every case measured so far
+    #: (Part1: 70/70 known; Part3 candidate 110: 95/95 known) -- the two
+    #: fields are orthogonal, and an ambiguous face reporting a known side
+    #: is the expected, common case, not a contradiction. ``"split"`` for
+    #: a face the loop (or a D-043 tooling split) genuinely cuts through
+    #: (mirrors ``label == "split"`` exactly -- never invented
+    #: independently of it). ``"unknown"`` only when a face was classified
+    #: without landing in either H3 component -- structurally unreachable
+    #: via the current ``classify_regions()`` code path (H3's 2-component
+    #: precondition partitions every usable face into exactly one of the
+    #: two components), retained as a safe, explicit default rather than
+    #: silently guessing "cavity" or "core".
+    topological_side: Literal["cavity", "core", "split", "unknown"]
 
     @property
     def straddles_zero(self) -> bool:
@@ -620,4 +644,5 @@ class FaceClassification:
             "sample_count": self.sample_count,
             "straddles_zero": self.straddles_zero,
             "is_inconsistent": self.is_inconsistent,
+            "topological_side": self.topological_side,
         }

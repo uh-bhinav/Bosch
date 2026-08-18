@@ -191,6 +191,39 @@ def _segments_cross_2d(
     return False
 
 
+def _segment_bbox_2d(
+    p0: tuple[float, float], p1: tuple[float, float],
+) -> tuple[float, float, float, float]:
+    """``(xmin, xmax, ymin, ymax)`` of one 2-D segment."""
+    return (
+        p0[0] if p0[0] <= p1[0] else p1[0],
+        p1[0] if p1[0] >= p0[0] else p0[0],
+        p0[1] if p0[1] <= p1[1] else p1[1],
+        p1[1] if p1[1] >= p0[1] else p0[1],
+    )
+
+
+def _bboxes_disjoint_2d(
+    b1: tuple[float, float, float, float], b2: tuple[float, float, float, float],
+) -> bool:
+    """
+    O14/O15: a pure prefilter for ``_segments_cross_2d``, proven exact --
+    not an approximation. Any point where two segments touch or cross must
+    lie on both segments, hence within both segments' bounding boxes; if
+    the boxes share no point, the segments cannot touch or cross under
+    ANY definition, including the strict-crossing predicate
+    ``_segments_cross_2d`` implements, regardless of that predicate's own
+    ``1e-12`` orientation tolerance (which only matters for segments whose
+    boxes DO overlap). Strict inequality (``<``, never ``<=``) is
+    deliberate: boxes that merely touch at a boundary are NOT disjoint
+    here, so that pair always still reaches the exact predicate.
+    """
+    return (
+        b1[1] < b2[0] or b2[1] < b1[0]
+        or b1[3] < b2[2] or b2[3] < b1[2]
+    )
+
+
 def _segment_distance_3d(
     p0: Vec3, p1: Vec3, q0: Vec3, q1: Vec3
 ) -> float:
@@ -248,11 +281,25 @@ def self_intersection_multi(
         for j in range(i + 1, len(loops)):
             flat_i = project_points(loops[i], u_axis, v_axis)
             flat_j = project_points(loops[j], u_axis, v_axis)
+            # O15: precomputed once per loop pair, reused for every (a, b)
+            # comparison below -- see _bboxes_disjoint_2d's docstring for
+            # the exactness proof; identical rationale as self_intersection.
+            bboxes_i = [
+                _segment_bbox_2d(flat_i[a], flat_i[(a + 1) % len(loops[i])])
+                for a in range(len(loops[i]))
+            ]
+            bboxes_j = [
+                _segment_bbox_2d(flat_j[b], flat_j[(b + 1) % len(loops[j])])
+                for b in range(len(loops[j]))
+            ]
             for a in range(len(loops[i])):
                 a_next = (a + 1) % len(loops[i])
+                bbox_a = bboxes_i[a]
                 for b in range(len(loops[j])):
                     b_next = (b + 1) % len(loops[j])
                     total_checked += 1
+                    if _bboxes_disjoint_2d(bbox_a, bboxes_j[b]):
+                        continue
                     if not _segments_cross_2d(
                         flat_i[a], flat_i[a_next], flat_j[b], flat_j[b_next], 1e-12
                     ):
@@ -288,7 +335,17 @@ def self_intersection(
 
     This is O(n²) by design. Plan §12.5 rule 2 forbids optimizing a stage the
     corpus profile has not identified as a bottleneck; a Bentley-Ottmann sweep
-    is the upgrade if it ever does.
+    is the upgrade if it ever does. O15 (2026-08-17): the corpus profile DID
+    identify this as the dominant bottleneck (see docs/DECISIONS_AND_ALGORITHMS.md
+    O13/O14/O15) -- a bounding-box prefilter (``_bboxes_disjoint_2d``) now
+    skips ``_segments_cross_2d`` for pairs proven incapable of crossing,
+    exactly the "Bentley-Ottmann is the upgrade" note anticipated, but via
+    the smaller, provably-exact bbox step rather than a full sweep-line
+    rewrite. The O(n²) pair ENUMERATION is unchanged; only the cost of each
+    pair examination drops for the (typically >99%) of pairs the bbox
+    proves disjoint. ``checked`` still counts every non-adjacent pair the
+    algorithm considers, exactly as before -- the prefilter changes what
+    happens AFTER that count, never whether a pair is counted.
     """
     if len(points) < 4:
         return False, 0, 0
@@ -297,16 +354,20 @@ def self_intersection(
     flat = project_points(points, u_axis, v_axis)
     n = len(points)
     limit = n if closed else n - 1
+    bboxes = [_segment_bbox_2d(flat[k], flat[(k + 1) % n]) for k in range(limit)]
 
     checked = 0
     confirmed = 0
     for i in range(limit):
         i_next = (i + 1) % n
+        bbox_i = bboxes[i]
         for j in range(i + 2, limit):
             j_next = (j + 1) % n
             if i == j_next or j == i_next:
                 continue          # adjacent segments legitimately share a point
             checked += 1
+            if _bboxes_disjoint_2d(bbox_i, bboxes[j]):
+                continue
             if not _segments_cross_2d(flat[i], flat[i_next], flat[j], flat[j_next], 1e-12):
                 continue
             distance = _segment_distance_3d(points[i], points[i_next], points[j], points[j_next])

@@ -20,7 +20,15 @@ dfm:
     prefilter_uncertainty_score_margin: 0.10
     boolean_refine_top_candidates: 5
     boolean_refine_max_faces: 80
+    # O24: max concurrent isolated fresh-child undercut-detection processes
+    # per optimize_mold_direction() call. 1 = O22's original sequential
+    # behavior. See DirectionSearchSettings.direction_parallelism docstring.
+    direction_parallelism: 6
     boolean_refine_score_margin: 0.25
+    # D-042 fix: g=n.d tolerance for "geometrically tangent to the pull
+    # direction" -- below this, the swept-volume Boolean test is not
+    # well-posed (see backend/config.py for the empirical justification).
+    boolean_near_zero_g_threshold: 0.000001
     boolean_interference_weight: 4000.0
     boolean_offset_factor: 0.00001
     boolean_min_offset_mm: 0.0001
@@ -37,6 +45,13 @@ dfm:
     boolean_feature_seed_faces_per_group: 1
     boolean_grouping_proximity_factor: 0.15
     boolean_grouping_min_proximity_mm: 0.25
+    # D-061: adaptive ray-based sweep-distance verification, run BEFORE the
+    # swept-face Boolean. Rollback flag; when false, behavior is
+    # byte-identical to before this mechanism existed (always the
+    # whole-part-diagonal-derived sweep). See docs/DECISIONS_AND_ALGORITHMS.md.
+    ray_verification_enabled: true
+    ray_verification_initial_grid: 3
+    ray_verification_max_grid: 5
     flash_risk_weight: 200.0
     flash_angle_threshold_deg: 5.0
     flash_thin_area_factor: 0.02

@@ -30,6 +30,7 @@ Paper alignment
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -49,13 +50,17 @@ try:
     from OCC.Core.BRepBndLib import brepbndlib
     from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
     from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCC.Core.BRepClass3d import BRepClass3d_SolidClassifier
     from OCC.Core.BRepGProp import brepgprop
+    from OCC.Core.BRepIntCurveSurface import BRepIntCurveSurface_Inter
     from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
+    from OCC.Core.BRepTools import breptools
+    from OCC.Core.GeomLProp import GeomLProp_SLProps
     from OCC.Core.GProp import GProp_GProps
-    from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_VERTEX
+    from OCC.Core.TopAbs import TopAbs_EDGE, TopAbs_IN, TopAbs_VERTEX
     from OCC.Core.TopExp import TopExp_Explorer
-    from OCC.Core.TopoDS import topods
-    from OCC.Core.gp import gp_Trsf, gp_Vec
+    from OCC.Core.TopoDS import TopoDS_Face, TopoDS_Shape, topods
+    from OCC.Core.gp import gp_Dir, gp_Lin, gp_Pnt, gp_Trsf, gp_Vec
 
     _OCC_BOOLEAN_AVAILABLE = True
 except ImportError:
@@ -511,6 +516,11 @@ class UndercutFeature:
     boolean_confirmed_face_ids: list[int] = field(default_factory=list)
     boolean_failed_face_ids: list[int] = field(default_factory=list)
     boolean_skipped_face_ids: list[int] = field(default_factory=list)
+    # D-042 fix (2026-08-16): faces in this feature that are geometrically
+    # tangent to the pull direction -- the sweep test was never attempted
+    # for them, so they contribute no positive OR negative evidence to this
+    # feature's confirmation status.
+    boolean_not_applicable_face_ids: list[int] = field(default_factory=list)
     boolean_intersection_face_ids: list[int] = field(default_factory=list)
     boolean_intersection_shapes: list[object] = field(
         default_factory=list,
@@ -591,6 +601,7 @@ class UndercutFeature:
             "boolean_confirmed_face_ids": self.boolean_confirmed_face_ids,
             "boolean_failed_face_ids": self.boolean_failed_face_ids,
             "boolean_skipped_face_ids": self.boolean_skipped_face_ids,
+            "boolean_not_applicable_face_ids": self.boolean_not_applicable_face_ids,
             "boolean_intersection": {
                 "available": bool(self.boolean_intersection_shapes),
                 "shape_count": len(self.boolean_intersection_shapes),
@@ -637,6 +648,43 @@ class UndercutDetectionResult:
     accessibility_risk_face_ids: list[int] = field(default_factory=list)
     accessibility_risk_area_mm2: float = 0.0
     analysis_time_s: float = 0.0
+    # D-042 fix (2026-08-15/16, Phase 5A + follow-up): three-bucket evidence
+    # semantics. Disjoint by construction and, restricted to the full
+    # Boolean-candidate population (draft-proxy faces UNION
+    # accessibility-risk faces), exhaustive. `undercut_face_ids` (above) is
+    # kept for backward compatibility and remains a conservative union that
+    # includes `boolean_not_applicable_face_ids` (still flagged, still
+    # uncertain) -- it must never be read as "confirmed."
+    #
+    # Phase 5A follow-up (2026-08-16): renamed from `proxy_only_face_ids`
+    # (had zero external consumers at the time of rename, verified by
+    # repo-wide search) because a face can now be a Boolean candidate via
+    # accessibility_risk alone, without ever being a draft-proxy candidate
+    # -- "proxy_only" would misdescribe such a face. `candidate_sources`
+    # records, per processed face, which candidate-generation pass(es)
+    # nominated it ("draft_proxy", "accessibility_risk", or both;
+    # "all_faces" when boolean_check_all_faces=True bypassed both passes).
+    candidate_unconfirmed_face_ids: list[int] = field(default_factory=list)
+    candidate_sources: dict[int, list[str]] = field(default_factory=dict)
+    boolean_not_applicable_face_ids: list[int] = field(default_factory=list)
+    boolean_not_applicable_reasons: dict[int, str] = field(default_factory=dict)
+    # D-061 (2026-08-16): faces verified geometrically clear by adaptive
+    # ray-based coverage BEFORE any swept-face Boolean was attempted --
+    # never Boolean-confirmed, never Boolean-failed (the Boolean was
+    # skipped entirely), and explicitly NOT folded into
+    # candidate_unconfirmed_face_ids (a Boolean-pipeline field with a
+    # different meaning) or the legacy undercut_face_ids union. A
+    # positive, bounded-confidence geometric result -- NOT Boolean proof.
+    # See RayVerificationResult's docstring for the exact convergence
+    # policy (two independent grid densities must both find nothing).
+    ray_verified_clear_face_ids: list[int] = field(default_factory=list)
+    # O22 (2026-08-17): process-isolation failure semantics. A failed child
+    # evaluation (timeout, crash, malformed payload, STEP-load failure) is
+    # represented here explicitly -- it is NEVER folded into "clean" or
+    # "no undercuts". Default False/"" is byte-identical to pre-O22
+    # behavior for every existing in-process call site.
+    evaluation_failed: bool = False
+    evaluation_error: str = ""
 
     @property
     def undercut_area_pct(self) -> float:
@@ -700,6 +748,20 @@ class UndercutDetectionResult:
             "feature_count": len(self.features),
             "major_undercut_features_count": self.major_undercut_features_count,
             "features": [feature.to_dict() for feature in self.features],
+            # D-042 fix + Phase 5A follow-up: the honest evidence summary.
+            # Disjoint by construction -- never merge these when consuming
+            # this payload. candidate_unconfirmed + boolean_not_applicable
+            # are NOT confirmed undercuts; only boolean_confirmed_face_ids
+            # is real physical evidence. candidate_sources answers "why was
+            # this face sent to Boolean verification" per face.
+            "evidence": {
+                "candidate_unconfirmed_face_ids": self.candidate_unconfirmed_face_ids,
+                "candidate_sources": self.candidate_sources,
+                "boolean_confirmed_face_ids": self.boolean_confirmed_face_ids,
+                "boolean_not_applicable_face_ids": self.boolean_not_applicable_face_ids,
+                "boolean_not_applicable_reasons": self.boolean_not_applicable_reasons,
+                "ray_verified_clear_face_ids": self.ray_verified_clear_face_ids,
+            },
             "boolean_refinement": {
                 "enabled": self.boolean_refined,
                 "checked_face_ids": self.boolean_checked_face_ids,
@@ -741,7 +803,368 @@ class UndercutDetectionResult:
                 ),
             },
             "analysis_time_s": round(self.analysis_time_s, 4),
+            "evaluation_failed": self.evaluation_failed,
+            "evaluation_error": self.evaluation_error,
         }
+
+
+def undercut_result_to_plain(result: UndercutDetectionResult) -> dict:
+    """
+    Serialize an ``UndercutDetectionResult`` to a plain, JSON-safe dict for
+    crossing a process boundary (O22 process-isolated undercut detection).
+
+    Explicitly excludes ``UndercutFeature.boolean_intersection_shapes`` --
+    the only live-OCC-handle field anywhere in this dataclass tree (verified
+    by field-by-field audit, O21 Guard 4). Everything else here is already
+    plain scalars/lists/dicts/nested dataclasses with no OCC references.
+    """
+
+    def shape_analysis(a: BooleanShapeAnalysis) -> dict:
+        return {
+            "available": a.available,
+            "vertex_count": a.vertex_count,
+            "edge_count": a.edge_count,
+            "bbox_min": list(a.bbox_min) if a.bbox_min is not None else None,
+            "bbox_max": list(a.bbox_max) if a.bbox_max is not None else None,
+            "bbox_center": list(a.bbox_center) if a.bbox_center is not None else None,
+            "bbox_dimensions": list(a.bbox_dimensions) if a.bbox_dimensions is not None else None,
+            "center_of_mass": list(a.center_of_mass) if a.center_of_mass is not None else None,
+            "volume_mm3": a.volume_mm3,
+            "method": a.method,
+            "failure_reason": a.failure_reason,
+        }
+
+    def region_geometry(g: BooleanRegionGeometry) -> dict:
+        return {
+            "available": g.available,
+            "shape_count": g.shape_count,
+            "source_face_ids": list(g.source_face_ids),
+            "vertex_count": g.vertex_count,
+            "edge_count": g.edge_count,
+            "bbox_min": list(g.bbox_min) if g.bbox_min is not None else None,
+            "bbox_max": list(g.bbox_max) if g.bbox_max is not None else None,
+            "bbox_center": list(g.bbox_center) if g.bbox_center is not None else None,
+            "bbox_dimensions": list(g.bbox_dimensions) if g.bbox_dimensions is not None else None,
+            "center_of_mass": list(g.center_of_mass) if g.center_of_mass is not None else None,
+            "volume_mm3": g.volume_mm3,
+            "analyses": [shape_analysis(a) for a in g.analyses],
+            "failure_reasons": list(g.failure_reasons),
+        }
+
+    def performance(p: BooleanPerformanceSummary | None) -> dict | None:
+        if p is None:
+            return None
+        return {
+            "checked_count": p.checked_count,
+            "successful_count": p.successful_count,
+            "failed_count": p.failed_count,
+            "skipped_count": p.skipped_count,
+            "cache_hits": p.cache_hits,
+            "cache_misses": p.cache_misses,
+            "elapsed_s": p.elapsed_s,
+            "avg_success_elapsed_s": p.avg_success_elapsed_s,
+            "max_success_elapsed_s": p.max_success_elapsed_s,
+            "total_success_attempts": p.total_success_attempts,
+            "total_failed_attempts": p.total_failed_attempts,
+            "slow_faces": list(p.slow_faces),
+        }
+
+    def reliability(r: BooleanReliabilitySummary | None) -> dict | None:
+        if r is None:
+            return None
+        return {
+            "enabled": r.enabled,
+            "reliability_score": r.reliability_score,
+            "reliability_label": r.reliability_label,
+            "reliability_level": r.reliability_level,
+            "checked_count": r.checked_count,
+            "confirmed_count": r.confirmed_count,
+            "failed_count": r.failed_count,
+            "skipped_count": r.skipped_count,
+            "proxy_retained_face_count": r.proxy_retained_face_count,
+            "proxy_retained_failed_count": r.proxy_retained_failed_count,
+            "proxy_retained_skipped_count": r.proxy_retained_skipped_count,
+            "successful_operation_ratio": r.successful_operation_ratio,
+            "confirmed_ratio": r.confirmed_ratio,
+            "failure_ratio": r.failure_ratio,
+            "fallback_ratio": r.fallback_ratio,
+            "failure_class_counts": dict(r.failure_class_counts),
+            "skip_reason_counts": dict(r.skip_reason_counts),
+            "summary": r.summary,
+            "recommended_action": r.recommended_action,
+        }
+
+    def feature(f: UndercutFeature) -> dict:
+        return {
+            "feature_id": f.feature_id,
+            "face_ids": list(f.face_ids),
+            "undercut_type": f.undercut_type,
+            "severity": f.severity,
+            "evidence_source": f.evidence_source,
+            "type_classification_method": f.type_classification_method,
+            "type_classification_score": f.type_classification_score,
+            "type_classification_factors": list(f.type_classification_factors),
+            "release_direction": list(f.release_direction),
+            "location": list(f.location),
+            "depth_proxy_mm": f.depth_proxy_mm,
+            "total_area_mm2": f.total_area_mm2,
+            "min_draft_angle_deg": f.min_draft_angle_deg,
+            "grouping_method": f.grouping_method,
+            "grouping_factors": list(f.grouping_factors),
+            "release_direction_method": f.release_direction_method,
+            "release_direction_factors": list(f.release_direction_factors),
+            "depth_estimation_method": f.depth_estimation_method,
+            "geometric_feature_type": f.geometric_feature_type,
+            "geometric_feature_confidence": f.geometric_feature_confidence,
+            "geometric_feature_confidence_label": f.geometric_feature_confidence_label,
+            "geometric_feature_method": f.geometric_feature_method,
+            "geometric_feature_factors": list(f.geometric_feature_factors),
+            "boolean_depth_proxy_mm": f.boolean_depth_proxy_mm,
+            "boolean_depth_method": f.boolean_depth_method,
+            "boolean_depth_evidence": dict(f.boolean_depth_evidence),
+            "boolean_depth_factors": list(f.boolean_depth_factors),
+            "interference_volume_mm3": f.interference_volume_mm3,
+            "interaction_type": f.interaction_type,
+            "interaction_factors": list(f.interaction_factors),
+            "boolean_confirmed_face_ids": list(f.boolean_confirmed_face_ids),
+            "boolean_failed_face_ids": list(f.boolean_failed_face_ids),
+            "boolean_skipped_face_ids": list(f.boolean_skipped_face_ids),
+            "boolean_not_applicable_face_ids": list(f.boolean_not_applicable_face_ids),
+            "boolean_intersection_face_ids": list(f.boolean_intersection_face_ids),
+            # boolean_intersection_shapes deliberately excluded -- OCC handles.
+            "boolean_region_geometry": region_geometry(f.boolean_region_geometry),
+            "side_action_candidate": f.side_action_candidate,
+            "recommended_mold_action": f.recommended_mold_action,
+            "action_reason": f.action_reason,
+            "pull_alignment": f.pull_alignment,
+            "action_confidence": f.action_confidence,
+            "action_confidence_label": f.action_confidence_label,
+            "action_confidence_factors": list(f.action_confidence_factors),
+            "action_confidence_breakdown": dict(f.action_confidence_breakdown),
+            "action_explanation": f.action_explanation,
+        }
+
+    r = result
+    return {
+        "pull_direction": list(r.pull_direction),
+        "method": r.method,
+        "undercut_face_ids": list(r.undercut_face_ids),
+        "accessible_face_ids": list(r.accessible_face_ids),
+        "parting_face_ids": list(r.parting_face_ids),
+        "skipped_face_ids": list(r.skipped_face_ids),
+        "convexity_suppressed_face_ids": list(r.convexity_suppressed_face_ids),
+        "features": [feature(f) for f in r.features],
+        "undercut_area_mm2": r.undercut_area_mm2,
+        "total_analysed_area_mm2": r.total_analysed_area_mm2,
+        "boolean_refined": r.boolean_refined,
+        "boolean_checked_face_ids": list(r.boolean_checked_face_ids),
+        "boolean_confirmed_face_ids": list(r.boolean_confirmed_face_ids),
+        "boolean_failed_face_ids": list(r.boolean_failed_face_ids),
+        "boolean_failure_reasons": {str(k): v for k, v in r.boolean_failure_reasons.items()},
+        "boolean_failure_details": {str(k): v for k, v in r.boolean_failure_details.items()},
+        "boolean_skipped_face_ids": list(r.boolean_skipped_face_ids),
+        "boolean_skip_reasons": {str(k): v for k, v in r.boolean_skip_reasons.items()},
+        "interference_volume_mm3": r.interference_volume_mm3,
+        "boolean_depth_proxy_mm": r.boolean_depth_proxy_mm,
+        "boolean_depth_method": r.boolean_depth_method,
+        "boolean_cache_hits": r.boolean_cache_hits,
+        "boolean_cache_misses": r.boolean_cache_misses,
+        "boolean_time_s": r.boolean_time_s,
+        "boolean_performance": performance(r.boolean_performance),
+        "boolean_reliability": reliability(r.boolean_reliability),
+        "accessibility_risk_face_ids": list(r.accessibility_risk_face_ids),
+        "accessibility_risk_area_mm2": r.accessibility_risk_area_mm2,
+        "analysis_time_s": r.analysis_time_s,
+        "candidate_unconfirmed_face_ids": list(r.candidate_unconfirmed_face_ids),
+        "candidate_sources": {str(k): list(v) for k, v in r.candidate_sources.items()},
+        "boolean_not_applicable_face_ids": list(r.boolean_not_applicable_face_ids),
+        "boolean_not_applicable_reasons": {str(k): v for k, v in r.boolean_not_applicable_reasons.items()},
+        "ray_verified_clear_face_ids": list(r.ray_verified_clear_face_ids),
+        "evaluation_failed": r.evaluation_failed,
+        "evaluation_error": r.evaluation_error,
+    }
+
+
+def undercut_result_from_plain(data: dict) -> UndercutDetectionResult:
+    """
+    Reconstruct an ``UndercutDetectionResult`` from the plain dict produced
+    by ``undercut_result_to_plain`` (round-tripped through JSON -- so all
+    dict keys arrive as strings and must be converted back to int keys).
+
+    Inverse of ``undercut_result_to_plain``. ``boolean_intersection_shapes``
+    is never present in the input and is left at its dataclass default
+    (``[]``) on every reconstructed ``UndercutFeature``.
+    """
+
+    def vec(v) -> tuple | None:
+        return tuple(v) if v is not None else None
+
+    def shape_analysis(d: dict) -> BooleanShapeAnalysis:
+        return BooleanShapeAnalysis(
+            available=d.get("available", False),
+            vertex_count=d.get("vertex_count", 0),
+            edge_count=d.get("edge_count", 0),
+            bbox_min=vec(d.get("bbox_min")),
+            bbox_max=vec(d.get("bbox_max")),
+            bbox_center=vec(d.get("bbox_center")),
+            bbox_dimensions=vec(d.get("bbox_dimensions")),
+            center_of_mass=vec(d.get("center_of_mass")),
+            volume_mm3=d.get("volume_mm3", 0.0),
+            method=d.get("method", "not-available"),
+            failure_reason=d.get("failure_reason", ""),
+        )
+
+    def region_geometry(d: dict) -> BooleanRegionGeometry:
+        return BooleanRegionGeometry(
+            available=d.get("available", False),
+            shape_count=d.get("shape_count", 0),
+            source_face_ids=list(d.get("source_face_ids", [])),
+            vertex_count=d.get("vertex_count", 0),
+            edge_count=d.get("edge_count", 0),
+            bbox_min=vec(d.get("bbox_min")),
+            bbox_max=vec(d.get("bbox_max")),
+            bbox_center=vec(d.get("bbox_center")),
+            bbox_dimensions=vec(d.get("bbox_dimensions")),
+            center_of_mass=vec(d.get("center_of_mass")),
+            volume_mm3=d.get("volume_mm3", 0.0),
+            analyses=[shape_analysis(a) for a in d.get("analyses", [])],
+            failure_reasons=list(d.get("failure_reasons", [])),
+        )
+
+    def performance(d: dict | None) -> BooleanPerformanceSummary | None:
+        if d is None:
+            return None
+        return BooleanPerformanceSummary(
+            checked_count=d.get("checked_count", 0),
+            successful_count=d.get("successful_count", 0),
+            failed_count=d.get("failed_count", 0),
+            skipped_count=d.get("skipped_count", 0),
+            cache_hits=d.get("cache_hits", 0),
+            cache_misses=d.get("cache_misses", 0),
+            elapsed_s=d.get("elapsed_s", 0.0),
+            avg_success_elapsed_s=d.get("avg_success_elapsed_s", 0.0),
+            max_success_elapsed_s=d.get("max_success_elapsed_s", 0.0),
+            total_success_attempts=d.get("total_success_attempts", 0),
+            total_failed_attempts=d.get("total_failed_attempts", 0),
+            slow_faces=list(d.get("slow_faces", [])),
+        )
+
+    def reliability(d: dict | None) -> BooleanReliabilitySummary | None:
+        if d is None:
+            return None
+        return BooleanReliabilitySummary(
+            enabled=d.get("enabled", False),
+            reliability_score=d.get("reliability_score", 0.0),
+            reliability_label=d.get("reliability_label", ""),
+            reliability_level=d.get("reliability_level", ""),
+            checked_count=d.get("checked_count", 0),
+            confirmed_count=d.get("confirmed_count", 0),
+            failed_count=d.get("failed_count", 0),
+            skipped_count=d.get("skipped_count", 0),
+            proxy_retained_face_count=d.get("proxy_retained_face_count", 0),
+            proxy_retained_failed_count=d.get("proxy_retained_failed_count", 0),
+            proxy_retained_skipped_count=d.get("proxy_retained_skipped_count", 0),
+            successful_operation_ratio=d.get("successful_operation_ratio", 0.0),
+            confirmed_ratio=d.get("confirmed_ratio", 0.0),
+            failure_ratio=d.get("failure_ratio", 0.0),
+            fallback_ratio=d.get("fallback_ratio", 0.0),
+            failure_class_counts=dict(d.get("failure_class_counts", {})),
+            skip_reason_counts=dict(d.get("skip_reason_counts", {})),
+            summary=d.get("summary", ""),
+            recommended_action=d.get("recommended_action", ""),
+        )
+
+    def feature(d: dict) -> UndercutFeature:
+        return UndercutFeature(
+            feature_id=d["feature_id"],
+            face_ids=list(d["face_ids"]),
+            undercut_type=d["undercut_type"],
+            severity=d["severity"],
+            evidence_source=d["evidence_source"],
+            type_classification_method=d["type_classification_method"],
+            type_classification_score=d["type_classification_score"],
+            type_classification_factors=list(d["type_classification_factors"]),
+            release_direction=vec(d["release_direction"]),
+            location=vec(d["location"]),
+            depth_proxy_mm=d["depth_proxy_mm"],
+            total_area_mm2=d["total_area_mm2"],
+            min_draft_angle_deg=d["min_draft_angle_deg"],
+            grouping_method=d.get("grouping_method", "face-adjacency"),
+            grouping_factors=list(d.get("grouping_factors", [])),
+            release_direction_method=d.get("release_direction_method", "normal-transverse"),
+            release_direction_factors=list(d.get("release_direction_factors", [])),
+            depth_estimation_method=d.get("depth_estimation_method", "projection-or-boolean-depth"),
+            geometric_feature_type=d.get("geometric_feature_type", "unclassified"),
+            geometric_feature_confidence=d.get("geometric_feature_confidence", 0.0),
+            geometric_feature_confidence_label=d.get("geometric_feature_confidence_label", "unknown"),
+            geometric_feature_method=d.get("geometric_feature_method", "not-run"),
+            geometric_feature_factors=list(d.get("geometric_feature_factors", [])),
+            boolean_depth_proxy_mm=d.get("boolean_depth_proxy_mm", 0.0),
+            boolean_depth_method=d.get("boolean_depth_method", "none"),
+            boolean_depth_evidence=dict(d.get("boolean_depth_evidence", {})),
+            boolean_depth_factors=list(d.get("boolean_depth_factors", [])),
+            interference_volume_mm3=d.get("interference_volume_mm3", 0.0),
+            interaction_type=d.get("interaction_type", "none"),
+            interaction_factors=list(d.get("interaction_factors", [])),
+            boolean_confirmed_face_ids=list(d.get("boolean_confirmed_face_ids", [])),
+            boolean_failed_face_ids=list(d.get("boolean_failed_face_ids", [])),
+            boolean_skipped_face_ids=list(d.get("boolean_skipped_face_ids", [])),
+            boolean_not_applicable_face_ids=list(d.get("boolean_not_applicable_face_ids", [])),
+            boolean_intersection_face_ids=list(d.get("boolean_intersection_face_ids", [])),
+            boolean_intersection_shapes=[],
+            boolean_region_geometry=region_geometry(d.get("boolean_region_geometry", {})),
+            side_action_candidate=d.get("side_action_candidate", True),
+            recommended_mold_action=d.get("recommended_mold_action", "side-action-review"),
+            action_reason=d.get("action_reason", ""),
+            pull_alignment=d.get("pull_alignment", 0.0),
+            action_confidence=d.get("action_confidence", 0.0),
+            action_confidence_label=d.get("action_confidence_label", "unknown"),
+            action_confidence_factors=list(d.get("action_confidence_factors", [])),
+            action_confidence_breakdown=dict(d.get("action_confidence_breakdown", {})),
+            action_explanation=d.get("action_explanation", ""),
+        )
+
+    d = data
+    return UndercutDetectionResult(
+        pull_direction=vec(d["pull_direction"]),
+        method=d["method"],
+        undercut_face_ids=list(d["undercut_face_ids"]),
+        accessible_face_ids=list(d["accessible_face_ids"]),
+        parting_face_ids=list(d["parting_face_ids"]),
+        skipped_face_ids=list(d["skipped_face_ids"]),
+        convexity_suppressed_face_ids=list(d.get("convexity_suppressed_face_ids", [])),
+        features=[feature(f) for f in d.get("features", [])],
+        undercut_area_mm2=d.get("undercut_area_mm2", 0.0),
+        total_analysed_area_mm2=d.get("total_analysed_area_mm2", 0.0),
+        boolean_refined=d.get("boolean_refined", False),
+        boolean_checked_face_ids=list(d.get("boolean_checked_face_ids", [])),
+        boolean_confirmed_face_ids=list(d.get("boolean_confirmed_face_ids", [])),
+        boolean_failed_face_ids=list(d.get("boolean_failed_face_ids", [])),
+        boolean_failure_reasons={int(k): v for k, v in d.get("boolean_failure_reasons", {}).items()},
+        boolean_failure_details={int(k): v for k, v in d.get("boolean_failure_details", {}).items()},
+        boolean_skipped_face_ids=list(d.get("boolean_skipped_face_ids", [])),
+        boolean_skip_reasons={int(k): v for k, v in d.get("boolean_skip_reasons", {}).items()},
+        interference_volume_mm3=d.get("interference_volume_mm3", 0.0),
+        boolean_depth_proxy_mm=d.get("boolean_depth_proxy_mm", 0.0),
+        boolean_depth_method=d.get("boolean_depth_method", "none"),
+        boolean_cache_hits=d.get("boolean_cache_hits", 0),
+        boolean_cache_misses=d.get("boolean_cache_misses", 0),
+        boolean_time_s=d.get("boolean_time_s", 0.0),
+        boolean_performance=performance(d.get("boolean_performance")),
+        boolean_reliability=reliability(d.get("boolean_reliability")),
+        accessibility_risk_face_ids=list(d.get("accessibility_risk_face_ids", [])),
+        accessibility_risk_area_mm2=d.get("accessibility_risk_area_mm2", 0.0),
+        analysis_time_s=d.get("analysis_time_s", 0.0),
+        candidate_unconfirmed_face_ids=list(d.get("candidate_unconfirmed_face_ids", [])),
+        candidate_sources={int(k): list(v) for k, v in d.get("candidate_sources", {}).items()},
+        boolean_not_applicable_face_ids=list(d.get("boolean_not_applicable_face_ids", [])),
+        boolean_not_applicable_reasons={
+            int(k): v for k, v in d.get("boolean_not_applicable_reasons", {}).items()
+        },
+        ray_verified_clear_face_ids=list(d.get("ray_verified_clear_face_ids", [])),
+        evaluation_failed=d.get("evaluation_failed", False),
+        evaluation_error=d.get("evaluation_error", ""),
+    )
 
 
 def _project(point: Vec3, direction: Vec3) -> float:
@@ -2195,6 +2618,335 @@ def _face_access_direction(face: FaceData, pull_direction: Vec3) -> Vec3:
     return pull_direction
 
 
+# ---------------------------------------------------------------------------
+# D-061 (2026-08-16): adaptive ray-based sweep-distance verification.
+#
+# Root cause established by direct experiment (see docs/DECISIONS_AND_
+# ALGORITHMS.md D-061): the swept-face Boolean's whole-part-bbox-diagonal-
+# derived sweep distance is what causes OCC's BRepAlgoAPI_Common to fail on
+# certain faces (empirically, Part1's leg-transition BSpline faces) -- not
+# NURBS complexity, not target-shape size (a local-clipped target fails
+# identically). A short sweep succeeds; the failure is non-monotonic with
+# distance, consistent with the swept prism's far end grazing unrelated,
+# distant part geometry. This section MEASURES a safe sweep distance
+# directly via ray-casting instead of guessing one, before ever
+# constructing the (expensive, sometimes-failing) swept prism.
+#
+# Two OCC failure modes were proven and must NOT be reintroduced:
+#   1. IntCurveSurface's own Transition() (IN/OUT/Tangent) is NOT reliable
+#      for entry/exit pairing -- tested directly on UC3's known [14,22]mm
+#      interval and BOTH boundaries reported "IN". Do not use it for
+#      interval logic.
+#   2. A ray cast from a face's exact UV centroid can silently MISS a real
+#      intersection when the ray runs exactly along an axis of rotational
+#      symmetry (proven on UC3 face 4: centroid ray found only the far
+#      exit at 22mm, missing the real entry at 14mm; a 5mm-offset ray
+#      found both). This is why coverage uses a structured multi-point
+#      grid, never a single centroid sample.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RayVerificationResult:
+    """
+    Outcome of adaptive ray-based clearance verification for one candidate
+    face, evaluated BEFORE any swept-face Boolean is attempted.
+
+    ``status``:
+      ``"clear"``           -- two independent grid densities (initial and
+                                escalated) both found zero material anywhere
+                                sampled. A bounded-confidence geometric
+                                result, NOT a Boolean proof -- see D-061.
+      ``"material_found"``  -- at least one sample ray found a genuine
+                                material interval. Trusted immediately (a
+                                positive finding is exact local evidence,
+                                not a coverage question) -- never re-checked
+                                at a denser grid merely to "confirm" it.
+      ``"inconclusive"``    -- samples disagree on existence (some find
+                                material, some don't) even at the maximum
+                                configured grid density. Must fall back to
+                                the existing whole-part-diagonal Boolean,
+                                never silently resolved either way.
+    """
+    status: str
+    sweep_distance_mm: float | None = None
+    max_interval_end_mm: float | None = None
+    grid_sizes_tried: tuple[int, ...] = ()
+    sample_count: int = 0
+    samples_with_material: int = 0
+    elapsed_s: float = 0.0
+    reason: str = ""
+
+
+def _face_uv_grid_points(occ_face: object, grid: int) -> list[Vec3]:
+    """
+    Structured ``grid x grid`` UV-sample points on a face's own surface.
+
+    Reuses the exact UVBounds-grid pattern already used and tested by
+    ``parting_line_v2.regions._sample_face_g`` (same rationale: "a single
+    UV-centroid sample cannot see [local variation] by construction") --
+    evaluated here for the 3-D point (``GeomLProp_SLProps.Value()``)
+    instead of the surface normal, since ray origins are needed, not
+    orientation data. Kept local to this module rather than sharing a
+    cross-module helper for a five-line OCC call.
+    """
+    try:
+        u_min, u_max, v_min, v_max = breptools.UVBounds(occ_face)
+    except Exception:
+        return []
+    if not all(math.isfinite(x) for x in (u_min, u_max, v_min, v_max)):
+        return []
+    try:
+        surface = BRep_Tool.Surface(occ_face)
+    except Exception:
+        return []
+
+    points: list[Vec3] = []
+    for i in range(grid):
+        for j in range(grid):
+            u = u_min + (u_max - u_min) * (i + 0.5) / grid
+            v = v_min + (v_max - v_min) * (j + 0.5) / grid
+            try:
+                props = GeomLProp_SLProps(surface, u, v, 1, 1e-9)
+                if not props.IsNormalDefined():
+                    continue
+                p = props.Value()
+                points.append((p.X(), p.Y(), p.Z()))
+            except Exception:
+                continue
+    return points
+
+
+def _material_intervals_along_ray(
+    shape: object,
+    origin: Vec3,
+    direction: Vec3,
+    origin_face: object,
+    max_w: float,
+    tol: float = 1e-6,
+    self_tol: float | None = None,
+    classifier: object | None = None,
+) -> list[tuple[float, float]]:
+    """
+    Exact material intervals along an infinite ray, via direct solid
+    point-classification -- NOT via IntCurveSurface's own Transition()
+    (proven unreliable for this, see module docstring above).
+
+    ``classifier`` (O9, 2026-08-17): an already-constructed
+    ``BRepClass3d_SolidClassifier(shape)``, when the caller has one.
+    ``BRepClass3d_SolidClassifier``'s constructor depends only on
+    ``shape`` -- never on the ray's origin/direction or the candidate
+    face -- so a single instance built once for ``part.occ_shape`` is
+    safe to reuse across every ray this function is called for within
+    one ``detect_undercuts()`` call (O8's forensic measurement found this
+    reconstructed ~1,200 times per direction, 19-44% of total runtime).
+    Reuse changes nothing about ``.Perform()``/``.State()``'s per-point
+    result -- OCC's own API contract for this class is exactly
+    "construct once against a solid, ``.Perform()`` many times".
+    Defaults to ``None``, in which case this function constructs its own
+    (byte-identical to pre-O9 behaviour) -- every existing direct caller
+    (tests, the validation scripts) is unaffected.
+
+    1. Collect every intersection of the ray with ``shape``
+       (``BRepIntCurveSurface_Inter`` -- ``W()``/``Pnt()``/``Face()``).
+    2. Filter self-hits: any hit at or below ``self_tol``, and any hit
+       whose face IS (``TopoDS_Shape.IsSame``) ``origin_face`` -- proven
+       necessary: a curved candidate face re-intersects itself under a
+       laterally offset ray (a curvature artifact, not real geometry).
+    3. Classify the MIDPOINT of every segment between consecutive
+       remaining boundaries (``self_tol``, hit_1, ..., hit_n, max_w) with
+       ``BRepClass3d_SolidClassifier`` -- a segment is material iff its
+       midpoint classifies ``TopAbs_IN``. Adjacent material segments are
+       merged into one interval. Supports any number of disjoint
+       intervals; does not assume a single entry/exit pair.
+
+    The FIRST boundary is ``self_tol``, never exactly 0 -- avoids
+    classifying a point exactly ON the origin face's own surface (a
+    degenerate case for point-in-solid classification), the same "don't
+    count the original face contact as interference" concern
+    ``_swept_face_interference_volume``'s own offset-epsilon step already
+    exists to avoid. ``self_tol`` defaults to that same epsilon scale
+    (``boolean_offset_factor``/``boolean_min_offset_mm``), not an
+    arbitrary constant. NOTE: this is a small, defensive margin only --
+    real, GENUINE material starting very close to the origin (verified
+    directly on Part1 face 207: OUT at w=0.01, ON at w=0.1, IN from
+    w=0.5 onward) is NOT filtered by this and must not be; only the
+    literal on-surface degenerate point is excluded.
+
+    Exact-match-verified against UC3's hand-computed ground truth
+    (interval [14.0, 22.0]mm, the known 8mm-thick/14mm-gap geometry).
+    """
+    if self_tol is None:
+        cfg = settings.dfm.direction_search
+        self_tol = max(max_w * cfg.boolean_offset_factor, cfg.boolean_min_offset_mm)
+
+    line = gp_Lin(gp_Pnt(*origin), gp_Dir(*direction))
+    inter = BRepIntCurveSurface_Inter()
+    inter.Init(shape, line, tol)
+    boundaries: list[float] = [self_tol]
+    while inter.More():
+        w = inter.W()
+        if w > self_tol and w <= max_w and not inter.Face().IsSame(origin_face):
+            boundaries.append(w)
+        inter.Next()
+    boundaries.append(max_w)
+    boundaries = sorted(set(b for b in boundaries if b >= self_tol))
+
+    classifier = classifier if classifier is not None else BRepClass3d_SolidClassifier(shape)
+    intervals: list[tuple[float, float]] = []
+    for i in range(len(boundaries) - 1):
+        a, b = boundaries[i], boundaries[i + 1]
+        mid = (a + b) / 2.0
+        p = gp_Pnt(
+            origin[0] + direction[0] * mid,
+            origin[1] + direction[1] * mid,
+            origin[2] + direction[2] * mid,
+        )
+        classifier.Perform(p, tol)
+        if classifier.State() == TopAbs_IN:
+            if intervals and intervals[-1][1] == a:
+                intervals[-1] = (intervals[-1][0], b)
+            else:
+                intervals.append((a, b))
+    return intervals
+
+
+def _ray_verify_face_clearance(
+    part: PartGeometry,
+    face: FaceData,
+    pull_direction: Vec3,
+    cfg: object,
+    classifier: object | None = None,
+) -> RayVerificationResult:
+    """
+    Adaptive ray-based clearance check for one candidate face (D-061).
+
+    ``classifier`` (O9, 2026-08-17): passed straight through to every
+    ``_material_intervals_along_ray`` call below -- see that function's
+    docstring. ``None`` (the default) preserves the exact pre-O9 behaviour
+    of constructing a fresh classifier per ray.
+
+    Escalation policy, chosen to satisfy "never silently convert
+    insufficient coverage into clean":
+      - ANY sample, at ANY grid density, finding a genuine material
+        interval is trusted immediately -- a positive finding is exact
+        local evidence (verified against UC3's ground truth), not a
+        coverage question, so it is never re-checked at a denser grid
+        merely to "confirm" it. The reported sweep distance is the
+        SAFE MAXIMUM interval end across every sample that found one
+        (never the first hit -- see D-061 Gap 1).
+      - Only a unanimous "nothing found" across ALL samples at the
+        CURRENT grid density is treated as provisional. If the escalated
+        (denser) grid also finds nothing, both independent densities
+        agree and the face converges to "clear". If the maximum
+        configured grid is reached and samples still disagree (mixed
+        found/not-found), the result is "inconclusive" -- never resolved
+        either way, per explicit instruction.
+
+    Mock-safety (established project pattern, e.g. ``parting_line.py``'s
+    ``isinstance(edge.occ_edge, TopoDS_Edge)`` guard): calling real SWIG-
+    wrapped OCC C++ functions on a non-OCC object (a ``MagicMock`` in
+    mock-based unit tests) does not raise a catchable Python exception --
+    it can hang at the native layer, uncatchable by any try/except. A
+    fast, pure-Python ``isinstance`` check before any OCC call is the only
+    safe guard. Existing mock-based Boolean tests patch
+    ``_swept_face_interference_volume`` itself (never reaching real OCC),
+    which does NOT protect this new, earlier call site -- this guard is
+    required, not optional.
+    """
+    if not isinstance(face.occ_face, TopoDS_Face):
+        return RayVerificationResult(
+            status="inconclusive",
+            reason="occ_face is not a real TopoDS_Face; ray verification skipped.",
+        )
+    t0 = time.perf_counter()
+    max_w = max(part.bounding_box.diagonal, 1.0)
+    margin = max(
+        max_w * settings.dfm.direction_search.boolean_offset_factor,
+        settings.dfm.direction_search.boolean_min_offset_mm,
+    )
+    access = _face_access_direction(face, pull_direction)
+
+    grid_sizes = sorted({
+        max(1, int(getattr(cfg, "ray_verification_initial_grid", 3))),
+        max(1, int(getattr(cfg, "ray_verification_max_grid", 5))),
+    })
+
+    tried: list[int] = []
+    total_samples = 0
+    for grid in grid_sizes:
+        tried.append(grid)
+        points = _face_uv_grid_points(face.occ_face, grid)
+        if not points:
+            continue
+        total_samples = len(points)
+        max_end = None
+        samples_with_material = 0
+        for origin in points:
+            intervals = _material_intervals_along_ray(
+                part.occ_shape, origin, access, face.occ_face, max_w,
+                classifier=classifier,
+            )
+            if intervals:
+                samples_with_material += 1
+                interval_max_end = max(end for _, end in intervals)
+                max_end = interval_max_end if max_end is None else max(max_end, interval_max_end)
+
+        if samples_with_material == 0:
+            # Unanimous "clear" at this density -- escalate to the next
+            # configured grid (if any) before trusting it.
+            if grid == grid_sizes[-1]:
+                return RayVerificationResult(
+                    status="clear",
+                    grid_sizes_tried=tuple(tried),
+                    sample_count=total_samples,
+                    samples_with_material=0,
+                    elapsed_s=time.perf_counter() - t0,
+                    reason=(
+                        f"{len(tried)} independent grid densities "
+                        f"({tried}) unanimously found zero material."
+                    ),
+                )
+            continue  # escalate
+
+        if samples_with_material == total_samples:
+            # Unanimous "material found" -- trust immediately, no escalation.
+            return RayVerificationResult(
+                status="material_found",
+                sweep_distance_mm=max_end + margin,
+                max_interval_end_mm=max_end,
+                grid_sizes_tried=tuple(tried),
+                sample_count=total_samples,
+                samples_with_material=samples_with_material,
+                elapsed_s=time.perf_counter() - t0,
+                reason=f"all {total_samples} samples at grid={grid} found material.",
+            )
+
+        # Mixed within this grid: a positive finding is still trusted
+        # immediately (never discard real evidence), using the safe max.
+        return RayVerificationResult(
+            status="material_found",
+            sweep_distance_mm=max_end + margin,
+            max_interval_end_mm=max_end,
+            grid_sizes_tried=tuple(tried),
+            sample_count=total_samples,
+            samples_with_material=samples_with_material,
+            elapsed_s=time.perf_counter() - t0,
+            reason=(
+                f"{samples_with_material}/{total_samples} samples at "
+                f"grid={grid} found material; using the safe maximum extent."
+            ),
+        )
+
+    return RayVerificationResult(
+        status="inconclusive",
+        grid_sizes_tried=tuple(tried),
+        sample_count=total_samples,
+        elapsed_s=time.perf_counter() - t0,
+        reason="No usable UV sample points across any configured grid density.",
+    )
+
+
 def _boolean_cache_key(face_id: int, pull_direction: Vec3) -> tuple[int, int, int, int]:
     return (
         face_id,
@@ -2735,6 +3487,7 @@ def _swept_face_interference_volume(
     part: PartGeometry,
     face: FaceData,
     pull_direction: Vec3,
+    sweep_distance_override: float | None = None,
 ) -> BooleanInterferenceMetrics:
     """
     Approximate Bassi-style accessibility by sweeping a face away from the part.
@@ -2743,7 +3496,12 @@ def _swept_face_interference_volume(
       1. Pick access direction from signed normal side.
       2. Offset the face slightly outward to avoid counting the original face
          contact as interference.
-      3. Sweep the offset face beyond the bounding box diagonal.
+      3. Sweep the offset face beyond the bounding box diagonal (or, when
+         ``sweep_distance_override`` is supplied by D-061's ray-verification
+         step, beyond the ray-measured material exit -- a shorter, MEASURED
+         distance, never a guess; see the module docstring above
+         ``RayVerificationResult``. The Boolean algorithm itself, and the
+         retry/tolerance ladder below, are completely unchanged).
       4. Intersect the swept volume with the part.
       5. Return the intersection volume proxy.
 
@@ -2756,9 +3514,10 @@ def _swept_face_interference_volume(
     access = _face_access_direction(face, pull_direction)
     cfg = settings.dfm.direction_search
     diagonal = max(part.bounding_box.diagonal, 1.0)
-    sweep_distance = max(
-        diagonal * cfg.boolean_sweep_distance_factor,
-        cfg.boolean_min_sweep_distance_mm,
+    sweep_distance = (
+        max(sweep_distance_override, cfg.boolean_min_sweep_distance_mm)
+        if sweep_distance_override is not None
+        else max(diagonal * cfg.boolean_sweep_distance_factor, cfg.boolean_min_sweep_distance_mm)
     )
     max_offset = (
         cfg.boolean_max_offset_mm
@@ -2900,14 +3659,44 @@ def _boolean_refine_undercuts(
     int,
     int,
     float,
+    list[int],
+    dict[int, str],
+    list[int],
 ]:
     """
     Run swept-face Boolean checks for candidate faces.
 
+    D-042 fix (2026-08-16): a face whose signed g = n.d is within
+    ``cfg.boolean_near_zero_g_threshold`` of exactly zero is geometrically
+    tangent to the pull direction -- ``BRepPrimAPI_MakePrism``'s sweep is not
+    well-posed for a sweep vector lying in the face's own plane (empirically:
+    the true danger zone is at or below floating-point noise, ~1e-15; the
+    threshold has 9+ orders of magnitude of margin). Such faces are never
+    passed to ``_swept_face_interference_volume`` at all -- they are
+    reported as ``not_applicable``, never fabricated as confirmed OR clean.
+    This also structurally resolves the D-042 sign-flip concern in
+    ``_face_access_direction`` (its one call site, inside
+    ``_swept_face_interference_volume``, is now never reached with a
+    near-zero, noise-dominated sign).
+
+    D-061 (2026-08-16): before attempting the swept-face Boolean, every
+    remaining candidate is first checked by ``_ray_verify_face_clearance``
+    (when ``cfg.ray_verification_enabled``). A "clear" ray result records
+    the face into ``ray_verified_clear`` and SKIPS the Boolean entirely --
+    the failure mode this closes (OCC's Common op failing on a whole-part-
+    diagonal-length sweep for certain faces, proven unrelated to target
+    complexity) never has a chance to trigger. A "material_found" ray
+    result measures a safe, exact sweep distance and passes it into
+    ``_swept_face_interference_volume`` -- the Boolean itself, its retry
+    ladder, and its confirmed/failed semantics are completely unchanged.
+    An "inconclusive" ray result falls through to today's existing
+    whole-part-diagonal Boolean, unmodified, exactly as before this phase.
+
     Returns:
         confirmed_ids, volume_by_face, checked_ids, failed_ids,
         failure_reasons, failure_details, skipped_ids, skip_reasons,
-        cache_hits, cache_misses, boolean_time_s
+        cache_hits, cache_misses, boolean_time_s, not_applicable_ids,
+        not_applicable_reasons, ray_verified_clear_ids
     """
     cache = volume_cache if volume_cache is not None else {}
     confirmed: set[int] = set()
@@ -2918,6 +3707,9 @@ def _boolean_refine_undercuts(
     failure_details: dict[int, BooleanFailureInfo] = {}
     skipped: list[int] = []
     skip_reasons: dict[int, str] = {}
+    not_applicable: list[int] = []
+    not_applicable_reasons: dict[int, str] = {}
+    ray_verified_clear: list[int] = []
     cache_hits = 0
     cache_misses = 0
     boolean_time_s = 0.0
@@ -2927,6 +3719,26 @@ def _boolean_refine_undercuts(
         cfg.boolean_min_volume_tolerance_mm3,
     )
     face_area_tolerance = _face_area_tolerance(part)
+    near_zero_g_threshold = cfg.boolean_near_zero_g_threshold
+
+    # O9 (2026-08-17): BRepClass3d_SolidClassifier(part.occ_shape)'s
+    # constructor depends only on part.occ_shape -- never on the
+    # candidate face, ray, or pull direction -- so ONE instance built
+    # here is reused for every ray this call's ray verification casts
+    # (O8 measured ~1,200 redundant reconstructions per direction, 19-44%
+    # of total detect_undercuts() runtime). Mock-safety guarded the same
+    # way _ray_verify_face_clearance already guards face.occ_face:
+    # constructing a real OCC classifier against a non-OCC object (a
+    # MagicMock in mock-based tests) does not raise a catchable Python
+    # exception, it can hang at the native layer. None here falls
+    # through to _material_intervals_along_ray's own per-ray fallback
+    # construction, byte-identical to pre-O9 behaviour.
+    ray_classifier: object | None = None
+    if (
+        cfg.ray_verification_enabled and _OCC_BOOLEAN_AVAILABLE
+        and isinstance(part.occ_shape, TopoDS_Shape)
+    ):
+        ray_classifier = BRepClass3d_SolidClassifier(part.occ_shape)
 
     for face_id in candidate_face_ids[:max_faces]:
         face = part.get_face(face_id)
@@ -2939,6 +3751,34 @@ def _boolean_refine_undercuts(
                 f"threshold {face_area_tolerance:.6g} mm^2."
             )
             continue
+        signed_g = face.signed_dot(pull_direction)
+        if abs(signed_g) < near_zero_g_threshold:
+            not_applicable.append(face_id)
+            not_applicable_reasons[face_id] = (
+                f"|g|={abs(signed_g):.3g} is below the near-zero-draft "
+                f"tangency threshold {near_zero_g_threshold:.3g}; the "
+                "directional sweep test is not geometrically well-posed for "
+                "a face tangent to the pull direction (D-042) -- not "
+                "verified, not confirmed clean."
+            )
+            continue
+
+        sweep_distance_override: float | None = None
+        if cfg.ray_verification_enabled and _OCC_BOOLEAN_AVAILABLE:
+            ray_result = _ray_verify_face_clearance(
+                part, face, pull_direction, cfg, classifier=ray_classifier,
+            )
+            if ray_result.status == "clear":
+                # The Boolean itself was never attempted for this face --
+                # excluded from boolean_checked_face_ids, matching the
+                # existing not_applicable precedent immediately above
+                # (that branch also never appends to `checked`).
+                ray_verified_clear.append(face_id)
+                continue
+            if ray_result.status == "material_found":
+                sweep_distance_override = ray_result.sweep_distance_mm
+            # "inconclusive" falls through to the existing whole-part Boolean below.
+
         checked.append(face_id)
         key = _boolean_cache_key(face_id, pull_direction)
         if key in cache:
@@ -2960,7 +3800,10 @@ def _boolean_refine_undercuts(
         else:
             cache_misses += 1
             try:
-                raw_metrics = _swept_face_interference_volume(part, face, pull_direction)
+                raw_metrics = _swept_face_interference_volume(
+                    part, face, pull_direction,
+                    sweep_distance_override=sweep_distance_override,
+                )
                 metrics = _coerce_boolean_metrics(raw_metrics)
             except Exception as exc:  # noqa: BLE001
                 cache[key] = None
@@ -2987,6 +3830,9 @@ def _boolean_refine_undercuts(
         cache_hits,
         cache_misses,
         boolean_time_s,
+        not_applicable,
+        not_applicable_reasons,
+        ray_verified_clear,
     )
 
 
@@ -3109,27 +3955,53 @@ def _compute_accessibility_risk(
     part: PartGeometry,
     pull_dir: Vec3,
     precomputed_metrics: Optional[dict[int, FaceDirectionalMetrics]],
+    *,
+    side: str = "core",
 ) -> tuple[list[int], float]:
     """
     Identify faces that are heuristic accessibility risks for a pull direction.
 
     A face is flagged when BOTH conditions hold simultaneously:
 
-    1. **Core-side**: ``signed_dot (n·d) < -threshold``
-       The face normal broadly opposes the pull direction — the face is
-       physically on the "away" side of the mold opening.
+    1. **On the requested side**: ``side="core"`` (default) flags
+       ``signed_dot (n·d) < -threshold`` — the face normal broadly opposes
+       the pull direction, physically on the "away" side of the mold
+       opening. ``side="cavity"`` flags the mirror condition,
+       ``signed_dot (n·d) > +threshold`` — normal broadly ALIGNED with the
+       pull direction.
+
+       Phase 5D-1 (2026-08-16, D-056): both sides use the exact same
+       threshold and the exact same concave-edge requirement below — this
+       is a single symmetric rule, parameterized by sign, not two
+       different heuristics. The reason core-side was historically the
+       only side tested is a real, provable geometric fact, NOT an
+       arbitrary implementation shortcut: for a face F with n·d > 0,
+       sweeping F along the pull direction moves away from F's OWN
+       adjacent solid for an initial segment (a basic outward-normal
+       property of a manifold boundary), so F's own sweep cannot find
+       LOCAL self-interference. What it CAN still find is interference
+       with DISTANT material further along the sweep -- e.g. a cavity-side
+       shelf swept upward into an overhang positioned above it. Testing
+       both sides makes the resulting "not confirmed" conclusion mean "we
+       checked this geometric signature on both sides and found nothing,"
+       not "we only ever looked in one direction." See
+       ``docs/DECISIONS_AND_ALGORITHMS.md`` D-056 for the full derivation
+       and the UC3 face-10/face-4 mirror-pair proof (both independently
+       confirm the identical 6400 mm^3, hand-verified).
 
     2. **At least one confirmed concave bounding edge**: geometric evidence
        of a pocket, hook, or slot that could obstruct mold withdrawal.
        Faces whose ALL bounding edges are convex or tangent are NOT flagged —
        no concave edge means no pocket regardless of centroid orientation.
+       UNCHANGED by D-056 -- reused identically for both sides.
 
     CRITICAL NOTES:
 
-    - This is a **HEURISTIC risk signal only**, NOT proof of undercut.
+    - This is a **HEURISTIC risk signal only**, NOT proof of undercut (either
+      direction).
     - It is **independent of draft angle**: a face with 5° draft (good) can
-      still be flagged if core-side with a concave edge; a face with 0.1°
-      draft (bad) on a convex boss is NOT flagged (no concave edge).
+      still be flagged if on the requested side with a concave edge; a face
+      with 0.1° draft (bad) on a convex boss is NOT flagged (no concave edge).
     - Only Boolean swept-volume validation (``_boolean_refine_undercuts``)
       can confirm actual physical obstruction.
     - The returned face IDs are for scoring purposes; they must NOT be
@@ -3144,6 +4016,8 @@ def _compute_accessibility_risk(
     part               : Loaded PartGeometry.
     pull_dir           : Normalised pull direction (unit vector).
     precomputed_metrics : Optional precomputed per-face directional metrics.
+    side               : "core" (default, pre-D-056 behaviour, byte-identical
+                          when this is the only call made) or "cavity".
 
     Returns
     -------
@@ -3163,8 +4037,12 @@ def _compute_accessibility_risk(
         else:
             signed = face.signed_dot(pull_dir)
 
-        # Condition 1: core-side face (normal broadly opposes pull).
-        if signed >= -threshold:
+        # Condition 1: face is on the requested side. "core" keeps
+        # signed < -threshold (original, unchanged rule); "cavity" keeps
+        # the sign-mirrored signed > +threshold -- same threshold, same
+        # magnitude requirement, opposite side.
+        directional = signed if side == "cavity" else -signed
+        if directional <= threshold:
             continue
 
         # Condition 2: at least one confirmed concave bounding edge.
@@ -3305,17 +4183,37 @@ def detect_undercuts(
                     face.undercut_depth_mm = None
                     face.undercut_type = None
 
-    # ── Accessibility risk (Milestone 2) — independent of draft proxy ────────
-    # Core-side faces with at least one concave bounding edge are flagged as
-    # heuristic accessibility risks.  This signal is INDEPENDENT of the
+    # ── Accessibility risk (Milestone 2, bilateral since Phase 5D-1/D-056) ───
+    # Core-side AND cavity-side faces with at least one concave bounding edge
+    # are flagged as heuristic accessibility risks -- the same rule, sign-
+    # mirrored (see _compute_accessibility_risk's docstring for the
+    # geometric argument for why this is a completeness fix, not merely
+    # "symmetry for its own sake": core-side is the ONLY side whose own
+    # sweep can find LOCAL self-interference, but a cavity-side face can
+    # still register real interference with DISTANT material further along
+    # the sweep -- e.g. a shelf swept upward into an overhang above it
+    # (hand-verified on UC3's face 10, mirroring face 4's already-proven
+    # 6400 mm^3 ground truth exactly). This signal is INDEPENDENT of the
     # proxy_undercut_ids list above: a face with good draft can be flagged
-    # here; a face with bad draft but all-convex edges is NOT.  This is NOT
+    # here; a face with bad draft but all-convex edges is NOT. This is NOT
     # proof of undercut — Boolean validation remains authoritative.
-    risk_face_ids, risk_area_mm2 = _compute_accessibility_risk(
+    core_side_risk_ids, core_side_risk_area = _compute_accessibility_risk(
         part=part,
         pull_dir=pull_dir,
         precomputed_metrics=precomputed_metrics,
+        side="core",
     )
+    cavity_side_risk_ids, cavity_side_risk_area = _compute_accessibility_risk(
+        part=part,
+        pull_dir=pull_dir,
+        precomputed_metrics=precomputed_metrics,
+        side="cavity",
+    )
+    # Union by construction: a face cannot satisfy both signed_dot < -t AND
+    # signed_dot > +t simultaneously (t > 0), so the two id sets are
+    # disjoint and areas simply add -- no double-counting is possible.
+    risk_face_ids = sorted(set(core_side_risk_ids) | set(cavity_side_risk_ids))
+    risk_area_mm2 = core_side_risk_area + cavity_side_risk_area
 
     boolean_checked: list[int] = []
     boolean_confirmed: set[int] = set()
@@ -3329,16 +4227,39 @@ def detect_undercuts(
     boolean_cache_misses = 0
     boolean_time_s = 0.0
     boolean_was_run = bool(boolean_refine and _OCC_BOOLEAN_AVAILABLE)
+    candidate_sources: dict[int, list[str]] = {}
     if boolean_was_run:
-        check_ids = [
-            face.face_id for face in part.valid_faces
-        ] if boolean_check_all_faces else list(proxy_undercut_ids)
+        if boolean_check_all_faces:
+            check_ids = [face.face_id for face in part.valid_faces]
+        else:
+            # Phase 5A follow-up (2026-08-16): Boolean candidacy is the union
+            # of draft-based proxy candidates and accessibility-risk
+            # candidates. A face with excellent draft magnitude (|g|~1) but
+            # the wrong sign relative to its local topology -- a genuine
+            # shelf/trap, e.g. UC3's face 4 -- has draft_angle_deg=90 and is
+            # NEVER in proxy_undercut_ids, so it would never reach
+            # verification otherwise. Neither candidate-generation pass
+            # (draft proxy, accessibility risk) is modified here -- only
+            # which of their outputs feed the unchanged Boolean step.
+            check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))
         check_ids = _rank_boolean_candidate_faces(
             part=part,
             pull_direction=pull_dir,
             candidate_face_ids=check_ids,
             draft_face_results=draft.face_results,
         )
+        # Provenance for exactly the faces that will actually be processed
+        # by _boolean_refine_undercuts (it truncates to max_boolean_faces
+        # internally too -- mirrored here so provenance matches reality).
+        proxy_set = set(proxy_undercut_ids)
+        risk_set = set(risk_face_ids)
+        for fid in check_ids[:max_boolean_faces]:
+            sources: list[str] = []
+            if fid in proxy_set:
+                sources.append("draft_proxy")
+            if fid in risk_set:
+                sources.append("accessibility_risk")
+            candidate_sources[fid] = sources or ["all_faces"]
         (
             boolean_confirmed,
             interference_by_face,
@@ -3351,6 +4272,9 @@ def detect_undercuts(
             boolean_cache_hits,
             boolean_cache_misses,
             boolean_time_s,
+            boolean_not_applicable,
+            boolean_not_applicable_reasons,
+            ray_verified_clear,
         ) = (
             _boolean_refine_undercuts(
                 part=part,
@@ -3360,18 +4284,59 @@ def detect_undercuts(
                 volume_cache=boolean_volume_cache,
             )
         )
+    else:
+        boolean_not_applicable = []
+        boolean_not_applicable_reasons = {}
+        ray_verified_clear = []
+
+    # The full nominated Boolean-candidate population (union of both
+    # candidate-generation sources), independent of ranking/truncation --
+    # used below for the legacy union and the honest evidence buckets.
+    all_candidate_ids = set(proxy_undercut_ids) | set(risk_face_ids)
 
     if boolean_was_run and boolean_checked:
-        # Keep Boolean-confirmed faces.  If OCC failed on a proxy face, keep the
-        # proxy classification instead of silently dropping a possible issue.
-        # Sliver faces skipped before Boolean are also retained when the proxy
-        # marked them suspicious; they are too small for reliable swept Booleans.
+        # Keep Boolean-confirmed faces.  If OCC failed on a candidate face,
+        # keep it flagged instead of silently dropping a possible issue.
+        # Sliver faces skipped before Boolean are also retained when EITHER
+        # candidate source marked them suspicious; they are too small for
+        # reliable swept Booleans.
+        # D-042 fix: not_applicable faces (near-zero-g, sweep never
+        # attempted) stay in this conservative legacy union too -- they
+        # remain flagged, uncertain, never silently cleared -- but never
+        # enter boolean_confirmed_face_ids, which stays real physical
+        # evidence only.
         undercut_id_set = set(boolean_confirmed)
-        undercut_id_set.update(fid for fid in proxy_undercut_ids if fid in boolean_failed)
-        undercut_id_set.update(fid for fid in proxy_undercut_ids if fid in boolean_skipped)
+        undercut_id_set.update(fid for fid in all_candidate_ids if fid in boolean_failed)
+        undercut_id_set.update(fid for fid in all_candidate_ids if fid in boolean_skipped)
+        undercut_id_set.update(boolean_not_applicable)
         undercut_ids = sorted(undercut_id_set)
     else:
         undercut_ids = sorted(proxy_undercut_ids)
+
+    # Phase 5A follow-up: honest evidence-outcome buckets, disjoint by
+    # construction, now scoped to the FULL candidate population (draft
+    # proxy union accessibility risk), not just the draft-based proxy set.
+    # candidate_unconfirmed = nominated by either candidate source, with no
+    # positive Boolean-confirmed evidence AND not excluded as
+    # not-applicable (covers: never Boolean-checked at all -- e.g. ranking
+    # truncation, genuinely cleared by the sweep, or failed/skipped as a
+    # sliver). Replaces Phase 5A's `proxy_only_face_ids`, which becomes
+    # semantically misleading once a face can be a Boolean candidate
+    # without ever being a draft-proxy candidate (e.g. UC3 face 4).
+    boolean_not_applicable_set = set(boolean_not_applicable)
+    ray_verified_clear_set = set(ray_verified_clear)
+    # D-061: ray-verified-clear faces are their own, explicit evidence
+    # bucket (see UndercutDetectionResult.ray_verified_clear_face_ids) --
+    # deliberately excluded here too, rather than left to fall into
+    # candidate_unconfirmed_face_ids by default. That field's existing
+    # meaning is "reached the Boolean pipeline, not confirmed, not
+    # not-applicable" (Boolean-cleared, or never Boolean-tested at all due
+    # to ranking truncation); ray-clearance is a DIFFERENT evidence source
+    # (measured geometrically, no Boolean ever attempted) and must not be
+    # silently folded into a field whose meaning it doesn't share.
+    candidate_unconfirmed_face_ids = sorted(
+        all_candidate_ids - set(boolean_confirmed) - boolean_not_applicable_set - ray_verified_clear_set
+    )
 
     valid_ids = {face.face_id for face in part.valid_faces}
     accessible_ids = sorted(valid_ids - set(undercut_ids))
@@ -3575,6 +4540,7 @@ def detect_undercuts(
             boolean_confirmed_face_ids=sorted(set(group) & boolean_confirmed),
             boolean_failed_face_ids=sorted(set(group) & boolean_failed_set),
             boolean_skipped_face_ids=sorted(set(group) & boolean_skipped_set),
+            boolean_not_applicable_face_ids=sorted(set(group) & boolean_not_applicable_set),
             boolean_intersection_face_ids=group_intersection_face_ids,
             boolean_intersection_shapes=group_intersection_shapes,
             boolean_region_geometry=boolean_region_geometry,
@@ -3658,4 +4624,9 @@ def detect_undercuts(
         accessibility_risk_face_ids=sorted(risk_face_ids),
         accessibility_risk_area_mm2=risk_area_mm2,
         analysis_time_s=time.perf_counter() - t_start,
+        candidate_unconfirmed_face_ids=candidate_unconfirmed_face_ids,
+        candidate_sources=candidate_sources,
+        boolean_not_applicable_face_ids=sorted(boolean_not_applicable_set),
+        boolean_not_applicable_reasons=boolean_not_applicable_reasons,
+        ray_verified_clear_face_ids=sorted(ray_verified_clear_set),
     )

@@ -997,6 +997,38 @@ def _sample_face_g(face: object, pull_direction: Vec3, grid: int) -> tuple[float
     return sum(values) / len(values), min(values), max(values), len(values)
 
 
+def _sample_all_faces_g(
+    faces_by_id: dict[int, object],
+    pull_direction: Vec3,
+    grid: int,
+) -> dict[int, tuple[float, float, float, int]]:
+    """
+    O5/O6 (2026-08-17): ``_sample_face_g`` for every ``normal_valid`` face,
+    computed once.
+
+    Exact same per-face call, exact same arguments, as the loop this
+    replaces inside ``classify_regions`` -- no change to the sampling
+    algorithm, grid, or tolerances. Pure function of ``(faces_by_id,
+    pull_direction, grid)``, independent of any candidate loop, H3
+    separation, or authorization -- so it produces the identical result
+    regardless of which candidate (if any) triggers the call.
+
+    O5's forensic measurement found ``classify_regions`` recomputing this
+    exact loop from scratch on every H3-topologically-valid candidate
+    (113/36/151/99 times in the four measured Part1/Part3 cases), 90-96%
+    of ``analyse_parting_line``'s total wall time, entirely redundant
+    since the result never changes within one call. Callers now compute
+    this ONCE per ``analyse_parting_line`` invocation (see
+    ``engine.analyse_parting_line``) and pass it into every
+    ``classify_regions`` call via the ``face_g_stats`` parameter.
+    """
+    stats: dict[int, tuple[float, float, float, int]] = {}
+    for face_id, face in faces_by_id.items():
+        if face.normal_valid:
+            stats[face_id] = _sample_face_g(face, pull_direction, grid)
+    return stats
+
+
 def classify_regions(
     part: PartGeometry,
     separation: SeparationResult,
@@ -1005,6 +1037,7 @@ def classify_regions(
     loop_face_ids: frozenset[int],
     cfg: object,
     tooling_split_face_ids: dict[int, float] | None = None,
+    face_g_stats: dict[int, tuple[float, float, float, int]] | None = None,
 ) -> RegionClassification:
     """
     Assign H3's two regions to cavity and core, and classify every face.
@@ -1033,6 +1066,16 @@ def classify_regions(
         construction and so carries no side information for them); it never
         changes which faces land in which region, and never runs for a
         genuine Track-B split face.
+
+    ``face_g_stats`` (O6, 2026-08-17): the precomputed return value of
+    ``_sample_all_faces_g(faces_by_id, pull_direction, grid)``, when the
+    caller already has one -- e.g. ``analyse_parting_line`` computes it
+    once per call and passes it to every ``classify_regions`` invocation,
+    since the result is candidate-independent (see that helper's
+    docstring). Optional and defaults to ``None``, in which case this
+    function computes it itself via the exact same helper, byte-identical
+    to the pre-O6 inline loop -- every existing direct caller (tests, the
+    validation script) is unaffected.
     """
     faces_by_id = {f.face_id: f for f in part.faces}
     epsilon = cfg.silhouette_epsilon
@@ -1045,10 +1088,10 @@ def classify_regions(
             warnings=("H3 did not produce exactly two regions; no classification.",),
         )
 
-    stats: dict[int, tuple[float, float, float, int]] = {}
-    for face_id, face in faces_by_id.items():
-        if face.normal_valid:
-            stats[face_id] = _sample_face_g(face, pull_direction, grid)
+    stats = (
+        face_g_stats if face_g_stats is not None
+        else _sample_all_faces_g(faces_by_id, pull_direction, grid)
+    )
 
     def region_mean(component: frozenset[int]) -> float:
         area = sum(faces_by_id[f].area for f in component if f in stats)
@@ -1100,6 +1143,10 @@ def classify_regions(
                 cavity_area_mm2=face.area * share,
                 core_area_mm2=face.area * (1.0 - share),
                 mean_g=mean_g, min_g=min_g, max_g=max_g, sample_count=count,
+                # Phase 4 (D-055): a split face genuinely belongs to BOTH
+                # sides -- topological_side mirrors label exactly here,
+                # never computed independently of it.
+                topological_side="split",
             )
             classifications.append(classification)
             cavity_area += classification.cavity_area_mm2
@@ -1116,10 +1163,30 @@ def classify_regions(
             label, cavity_mm2, core_mm2 = "core", 0.0, face.area
             core_area += face.area
 
+        # Phase 4 (D-055): topological_side is read DIRECTLY from H3's own
+        # cavity_component/core_component membership (in_cavity/in_core,
+        # already computed above) -- never inferred from neighbours, never
+        # a new propagation step, and completely independent of `label`
+        # (an "ambiguous" face still gets its real topological side here).
+        # Not reachable here as "both" -- that case already `continue`d
+        # into the split branch above. Structurally unreachable as
+        # "unknown" too, since H3's 2-component precondition (checked
+        # earlier in this function) guarantees every usable face lands in
+        # at least one of cavity_component/core_component -- kept as an
+        # explicit, safe fallback rather than assuming that invariant can
+        # never be violated.
+        if in_cavity:
+            topological_side = "cavity"
+        elif in_core:
+            topological_side = "core"
+        else:
+            topological_side = "unknown"
+
         classification = FaceClassification(
             face_id=face_id, label=label,  # type: ignore[arg-type]
             cavity_area_mm2=cavity_mm2, core_area_mm2=core_mm2,
             mean_g=mean_g, min_g=min_g, max_g=max_g, sample_count=count,
+            topological_side=topological_side,  # type: ignore[arg-type]
         )
         classifications.append(classification)
         if classification.is_inconsistent:

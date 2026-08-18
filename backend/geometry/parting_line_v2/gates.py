@@ -274,9 +274,15 @@ def evaluate_gates(
     bbox_diagonal_mm: float,
     part_projected_area_mm2: float,
     delegations: tuple[DelegatedSecondaryAction, ...] = (),
+    face_g_stats: dict[int, tuple[float, float, float, int]] | None = None,
 ) -> GateOutcome:
     """
     Run H0-H7 in order, cheapest-first except H0. Returns on first failure.
+
+    ``face_g_stats`` (O6, 2026-08-17): passed straight through to
+    ``classify_regions`` unchanged -- see that function's and
+    ``regions._sample_all_faces_g``'s docstrings. ``None`` (the default)
+    preserves the exact pre-O6 behaviour of computing it fresh per call.
 
     ``delegations`` (D-044, default empty -- inert unless explicitly
     supplied, matching every existing caller): candidate
@@ -393,6 +399,7 @@ def evaluate_gates(
     regions = classify_regions(
         part, separation, pull_direction, loop_face_ids=loop_face_ids, cfg=cfg,
         tooling_split_face_ids=dict(candidate.tooling_split_face_ids),
+        face_g_stats=face_g_stats,
     )
 
     # --- H4 orientation consistency -----------------------------------------

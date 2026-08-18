@@ -59,6 +59,21 @@ class DirectionSearchSettings:
     boolean_refine_top_candidates: int = 5
     boolean_refine_max_faces: int = 80
     boolean_refine_score_margin: float = 0.25
+    # D-042 fix (2026-08-16): a face whose signed g = n.d is within this
+    # tolerance of exactly zero is geometrically tangent to the pull
+    # direction -- BRepPrimAPI_MakePrism's sweep is not well-posed for a
+    # sweep vector lying in the face's own plane, and empirically produces a
+    # degenerate whole-part-volume result there (verified: g=-1e-16 still
+    # broken, g=-1e-14 already correct -- the true danger zone is at or
+    # below floating-point noise, roughly 1e-15). Reuses
+    # parting_line_v2.silhouette_epsilon's sibling concept from D-043's
+    # core_pin_uniform_g_max (also 1e-6, also defined as "uniformly,
+    # genuinely tangent to the pull direction") rather than inventing a new
+    # number -- this value has 9+ orders of magnitude of margin above the
+    # measured noise floor, deliberately conservative (a face just outside
+    # this tolerance but still small, e.g. g=1e-5, verified computes
+    # correctly and is not excluded).
+    boolean_near_zero_g_threshold: float = 1e-6
     boolean_interference_weight: float = 4000.0
     boolean_offset_factor: float = 1e-5
     boolean_min_offset_mm: float = 1e-4
@@ -75,6 +90,9 @@ class DirectionSearchSettings:
     boolean_feature_seed_faces_per_group: int = 1
     boolean_grouping_proximity_factor: float = 0.15
     boolean_grouping_min_proximity_mm: float = 0.25
+    ray_verification_enabled: bool = True
+    ray_verification_initial_grid: int = 3
+    ray_verification_max_grid: int = 5
     flash_risk_weight: float = 200.0
     flash_angle_threshold_deg: float = 5.0
     flash_thin_area_factor: float = 0.02
@@ -124,6 +142,16 @@ class DirectionSearchSettings:
     scoring_axis_preference: float = 0.25
     # Boolean-refined stage (replaces proxy with confirmed data):
     scoring_confirmed_undercut: float = 1500.0  # Boolean-confirmed area
+    # O24 (2026-08-17): max number of isolated fresh-child undercut-
+    # detection processes allowed to run concurrently for one
+    # optimize_mold_direction() call. 1 preserves O22's original strictly-
+    # sequential behavior byte-for-byte. O23 measured 6 as a safe starting
+    # point on an 8-core/16GB machine (peak RSS ~3.08GB, 2.89x wall-time
+    # speedup on a 6-direction subset, zero result divergence) -- see
+    # docs/DECISIONS_AND_ALGORITHMS.md O23/O24 for the measurements this
+    # default is based on. Execution strategy only: never changes which
+    # candidates are generated, scored, bounded, or selected.
+    direction_parallelism: int = 6
 
 
 @dataclass(frozen=True)
@@ -860,6 +888,24 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
                 base.dfm.direction_search.boolean_grouping_min_proximity_mm,
             )
         ),
+        ray_verification_enabled=bool(
+            direction_raw.get(
+                "ray_verification_enabled",
+                base.dfm.direction_search.ray_verification_enabled,
+            )
+        ),
+        ray_verification_initial_grid=int(
+            direction_raw.get(
+                "ray_verification_initial_grid",
+                base.dfm.direction_search.ray_verification_initial_grid,
+            )
+        ),
+        ray_verification_max_grid=int(
+            direction_raw.get(
+                "ray_verification_max_grid",
+                base.dfm.direction_search.ray_verification_max_grid,
+            )
+        ),
         flash_risk_weight=float(
             direction_raw.get(
                 "flash_risk_weight", base.dfm.direction_search.flash_risk_weight
@@ -981,6 +1027,12 @@ def load_settings(config_path: str | os.PathLike[str] | None = None) -> Settings
             direction_raw.get(
                 "scoring_confirmed_undercut",
                 base.dfm.direction_search.scoring_confirmed_undercut,
+            )
+        ),
+        direction_parallelism=int(
+            direction_raw.get(
+                "direction_parallelism",
+                base.dfm.direction_search.direction_parallelism,
             )
         ),
     )
