@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import { ApiError } from '../api/client';
+import { getDraft, getPartingLine, getSideCoreDetail, getUndercuts, type ManualAnalysisAuthorization } from '../api/endpoints';
 import type { CoreCavityAnalysisResponse } from '../api/types';
 import type { PullDirectionSource, Vec3 } from '../domain/types';
 import { adaptDisplayMesh } from '../geometry/meshAdapter';
@@ -66,9 +67,87 @@ export function applyCoreCavityOverlay(response: CoreCavityAnalysisResponse): vo
 /** Module-level guard: any second run (guided OR manual) while one is already in flight returns the SAME promise, never fires a second request. */
 let inFlight: Promise<void> | null = null;
 
+/**
+ * F7: the follow-up sweep run AFTER the primary `/core-cavity` call resolves
+ * a pull direction -- draft, undercuts, and the parting-line curve, all
+ * fetched at that SAME direction (never re-running the optimizer), plus a
+ * conditional side-core check. This is what makes "Run Full Analysis"
+ * actually cover the complete workflow (F0 §4.1) instead of only the
+ * core/cavity split: none of these three pieces of information exist
+ * anywhere in `/core-cavity`'s own response, so a dedicated call per piece
+ * is the only way to surface them, not a redundant one. Every step is
+ * independently try/caught -- one follow-up failing (e.g. a slow Boolean
+ * pass) never blocks or hides the others, and never touches
+ * `analysisError`/`pipelineStatus`, which already reflect the primary
+ * (already-succeeded) result.
+ */
+async function runFollowUpAnalyses(
+  filename: string,
+  direction: Vec3,
+  result: CoreCavityAnalysisResponse,
+  authorization: ManualAnalysisAuthorization,
+): Promise<void> {
+  const store = useAnalysisStore;
+
+  store.getState().setDraftStage('running');
+  try {
+    const draft = await getDraft(filename, direction);
+    store.getState().setDraftResult(draft);
+    store.getState().setDraftStage('done');
+  } catch (error) {
+    store.getState().setDraftError(describeAnalysisFailure(error));
+    store.getState().setDraftStage('error');
+  }
+
+  store.getState().setUndercutsStage('running');
+  try {
+    const undercuts = await getUndercuts(filename, direction);
+    store.getState().setUndercutsResult(undercuts);
+    store.getState().setUndercutsStage('done');
+  } catch (error) {
+    store.getState().setUndercutsError(describeAnalysisFailure(error));
+    store.getState().setUndercutsStage('error');
+  }
+
+  store.getState().setPartingLineStage('running');
+  try {
+    const partingLine = await getPartingLine(filename, direction);
+    store.getState().setPartingLineResult(partingLine);
+    store.getState().setPartingLineStage('done');
+  } catch (error) {
+    store.getState().setPartingLineError(describeAnalysisFailure(error));
+    store.getState().setPartingLineStage('error');
+  }
+
+  // F7 §2: side cores are conditional -- the ONE signal that a direction
+  // needs a side action is `parting_line_v2_outcome==='referred_to_side_
+  // action'` (the same field `describeAnalysisOutcome.ts` already treats as
+  // authoritative). A feasible split with no referral is a real, positive
+  // "not required" result; anything else means the primary analysis itself
+  // never resolved a feasible parting line, so requirement can't be
+  // determined either way.
+  const outcome = result.orchestration?.parting_line_v2_outcome;
+  const primaryStatus = result.orchestration?.status;
+  if (outcome === 'referred_to_side_action') {
+    store.getState().setSideCoreStatus('checking');
+    try {
+      const detail = await getSideCoreDetail(filename, direction, authorization);
+      store.getState().setSideCoreDetail(detail);
+      store.getState().setSideCoreStatus(detail.side_core?.status === 'generated' ? 'available' : 'unavailable');
+    } catch (error) {
+      store.getState().setSideCoreError(describeAnalysisFailure(error));
+      store.getState().setSideCoreStatus('unavailable');
+    }
+  } else if (primaryStatus === 'generated') {
+    store.getState().setSideCoreStatus('not-required');
+  } else {
+    store.getState().setSideCoreStatus('blocked');
+  }
+}
+
 export function executeAnalysisRun(
   fetchResult: () => Promise<CoreCavityAnalysisResponse>,
-  options: { isRecommended: boolean },
+  options: { isRecommended: boolean; filename: string; authorization?: ManualAnalysisAuthorization },
 ): Promise<void> {
   if (inFlight) return inFlight;
 
@@ -76,6 +155,18 @@ export function executeAnalysisRun(
   store.setAnalysisResult(null);
   store.setAnalysisError(null);
   store.setPipelineStatus('running');
+  store.setDraftResult(null);
+  store.setDraftStage('idle');
+  store.setDraftError(null);
+  store.setUndercutsResult(null);
+  store.setUndercutsStage('idle');
+  store.setUndercutsError(null);
+  store.setPartingLineResult(null);
+  store.setPartingLineStage('idle');
+  store.setPartingLineError(null);
+  store.setSideCoreStatus('unknown');
+  store.setSideCoreDetail(null);
+  store.setSideCoreError(null);
 
   const startedAt = Date.now();
   const run = (async () => {
@@ -102,6 +193,10 @@ export function executeAnalysisRun(
 
       const succeeded = result.orchestration?.status === 'generated';
       state.setPipelineStatus(succeeded ? 'complete' : 'blocked');
+
+      if (pullDirection) {
+        await runFollowUpAnalyses(options.filename, pullDirection as Vec3, result, options.authorization ?? {});
+      }
     } catch (error) {
       const state = useAnalysisStore.getState();
       state.setAnalysisError(describeAnalysisFailure(error));

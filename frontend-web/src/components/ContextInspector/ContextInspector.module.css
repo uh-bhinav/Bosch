@@ -1,11 +1,13 @@
 .inspector {
   flex: 0 0 var(--inspector-width);
   width: var(--inspector-width);
+  max-width: var(--inspector-width);
   background: var(--surface-2);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .header {
@@ -43,6 +45,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .placeholder {

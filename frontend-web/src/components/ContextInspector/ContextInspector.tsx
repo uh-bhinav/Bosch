@@ -6,43 +6,25 @@
  * does not.
  *
  * F1 shipped a clean placeholder per tool. F2 replaced the `import`
- * placeholder with a real panel (`ImportPanel`). F3 replaced `parting-line`/
- * `core-cavity` (and, at the time, `pull-direction`) with a shared
- * `AnalysisSummaryPanel` (read-only display of the Guided analysis result).
- * F4 gives `pull-direction` its OWN real panel (`PullDirectionPanel`) --
- * recommended vs. manual direction, axis presets, face-normal pick,
- * authorization editor, and the "Run Manual Analysis" action -- while
- * `parting-line`/`core-cavity` keep the F3 read-only summary (F4 spec:
- * "Expert tool panels may display available results... unless required by
- * the existing backend contract" -- Pull Direction specifically needs a
- * real workflow, the other two still don't yet). F5 gives `diagnostics`
- * its own real panel (`DiagnosticsPanel`) -- the three-tier explanation
- * workspace. F6 gives `report` its own real panel (`ExportPanel`) -- STEP
- * mold-half export and the PDF Report Builder. `undercuts`, `side-cores`
- * still show their F1 placeholder -- later phases.
+ * placeholder with a real panel (`ImportPanel`). F3-F6 gave `pull-direction`/
+ * `diagnostics`/`report` their own real panels; `parting-line`/`core-cavity`
+ * share `AnalysisSummaryPanel` (a common verdict block plus, since F7,
+ * tool-specific sections it renders itself based on `activeTool`). F7 gives
+ * `draft`/`undercuts`/`side-cores` their own real panels too -- every tool
+ * now has real content, no placeholders remain.
  */
 
 import { TOOLS } from '../../domain/types';
-import type { ToolId } from '../../domain/types';
 import { useAnalysisStore } from '../../store/analysisStore';
 import { AnalysisSummaryPanel } from './panels/AnalysisSummaryPanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
+import { DraftPanel } from './panels/DraftPanel';
 import { ExportPanel } from './panels/ExportPanel';
 import { ImportPanel } from './panels/ImportPanel';
 import { PullDirectionPanel } from './panels/PullDirectionPanel';
+import { SideCoresPanel } from './panels/SideCoresPanel';
+import { UndercutsPanel } from './panels/UndercutsPanel';
 import styles from './ContextInspector.module.css';
-
-const ANALYSIS_SUMMARY_TOOLS: ReadonlySet<ToolId> = new Set(['parting-line', 'core-cavity']);
-
-const TOOL_PLACEHOLDERS: Record<Exclude<ToolId, 'import'>, string> = {
-  'pull-direction': 'Analysis not run.',
-  'parting-line': 'Analysis not run.',
-  'core-cavity': 'Analysis not run.',
-  undercuts: 'Analysis not run.',
-  'side-cores': 'Analysis not run.',
-  diagnostics: 'No diagnostics available yet.',
-  report: 'Nothing to export yet.',
-};
 
 export function ContextInspector() {
   const activeTool = useAnalysisStore((s) => s.activeTool);
@@ -64,14 +46,18 @@ export function ContextInspector() {
           <ImportPanel />
         ) : activeTool === 'pull-direction' ? (
           <PullDirectionPanel />
+        ) : activeTool === 'draft' ? (
+          <DraftPanel />
+        ) : activeTool === 'undercuts' ? (
+          <UndercutsPanel />
+        ) : activeTool === 'side-cores' ? (
+          <SideCoresPanel />
         ) : activeTool === 'diagnostics' ? (
           <DiagnosticsPanel />
         ) : activeTool === 'report' ? (
           <ExportPanel />
-        ) : ANALYSIS_SUMMARY_TOOLS.has(activeTool) ? (
-          <AnalysisSummaryPanel />
         ) : (
-          <p className={styles.placeholder}>{TOOL_PLACEHOLDERS[activeTool]}</p>
+          <AnalysisSummaryPanel />
         )}
 
         <dl className={styles.factList}>

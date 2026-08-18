@@ -36,6 +36,6 @@ export function runManualAnalysis(
 
   return executeAnalysisRun(
     () => runManualCoreCavity(filename, direction, { corePinFaceRefs, delegations }),
-    { isRecommended: false },
+    { isRecommended: false, filename, authorization: { corePinFaceRefs, delegations } },
   );
 }

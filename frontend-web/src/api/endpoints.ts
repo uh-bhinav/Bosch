@@ -14,10 +14,13 @@ import type {
   CoreCavityAnalysisResponse,
   CorePinFaceRefInput,
   DelegationInput,
+  DraftAnalysisResponse,
   HealthResponse,
   MoldHalfExportResponse,
+  PartingLineAnalysisResponse,
   PartsListResponse,
   PartSummaryResponse,
+  UndercutsAnalysisResponse,
   UploadResponse,
 } from './types';
 import type { Vec3 } from '../domain/types';
@@ -68,6 +71,91 @@ export function runFullAnalysis(filename: string, meshDeflection = 0.5): Promise
     include_mesh_geometry: true,
     mesh_deflection: meshDeflection,
   });
+}
+
+/**
+ * F7: Draft analysis for a specific pull direction (`GET /parts/{filename}/
+ * draft`) -- called AFTER a direction has already been resolved (by Full
+ * Analysis or Manual Analysis), never re-running the optimizer itself. Only
+ * `include_mesh_geometry=false` (no `points`/`faces`) is requested by
+ * default: the resulting `display_mesh.face_ids`/`draft_rgb` are zipped into
+ * a face-id color map (`geometry/overlayColors.ts`) and applied to whichever
+ * mesh geometry is already loaded, rather than reloading geometry a second
+ * time for the same part.
+ */
+export function getDraft(filename: string, direction: Vec3, meshDeflection = 0.5): Promise<DraftAnalysisResponse> {
+  return apiGet<DraftAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/draft`, {
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    include_mesh: true,
+    include_mesh_geometry: false,
+    mesh_deflection: meshDeflection,
+  });
+}
+
+/** F7: Undercut detection for a specific, already-resolved pull direction (`GET /parts/{filename}/undercuts`). See `getDraft` for why `include_mesh_geometry` stays `false` here. */
+export function getUndercuts(
+  filename: string,
+  direction: Vec3,
+  meshDeflection = 0.5,
+): Promise<UndercutsAnalysisResponse> {
+  return apiGet<UndercutsAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/undercuts`, {
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    include_mesh: true,
+    include_mesh_geometry: false,
+    mesh_deflection: meshDeflection,
+  });
+}
+
+/**
+ * F7: the parting-line curve for a specific, already-resolved pull direction
+ * (`GET /parts/{filename}/parting-line`, `use_optimal_direction=false` so
+ * the optimizer search is never repeated). Neither `/core-cavity` nor
+ * `/direction` returns the actual curve geometry (`parting_line_paths`) --
+ * this is the only endpoint that does, so a dedicated call is unavoidable to
+ * visualize it. `include_mesh=false`: this call exists purely for the curve
+ * points, never to re-color or reload the base mesh.
+ */
+export function getPartingLine(filename: string, direction: Vec3): Promise<PartingLineAnalysisResponse> {
+  return apiGet<PartingLineAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/parting-line`, {
+    use_optimal_direction: false,
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    include_mesh: false,
+    include_undercut_conflicts: false,
+  });
+}
+
+/**
+ * F7: real side-core generation for an already-resolved direction --
+ * `/core-cavity` with `generate_side_core=true&solid_split=true`, the ONLY
+ * way to learn whether a specific highest-confidence critical feature at
+ * this direction actually produces a side core (volume, containing half,
+ * status) rather than just the orchestration's coarse
+ * `parting_line_v2_outcome==='referred_to_side_action'` signal. Called only
+ * when that signal is present (`analysisShared.ts`) -- never unconditionally,
+ * since it is real additional Boolean computation.
+ */
+export function getSideCoreDetail(
+  filename: string,
+  direction: Vec3,
+  authorization: ManualAnalysisAuthorization = {},
+): Promise<CoreCavityAnalysisResponse> {
+  const params: Record<string, string | number | boolean> = {
+    use_optimal_direction: false,
+    dx: direction[0],
+    dy: direction[1],
+    dz: direction[2],
+    solid_split: true,
+    generate_side_core: true,
+    include_mesh: false,
+    ...authorizationParams(authorization),
+  };
+  return apiGet<CoreCavityAnalysisResponse>(`/parts/${encodeURIComponent(filename)}/core-cavity`, params);
 }
 
 export interface ManualAnalysisAuthorization {

@@ -91,6 +91,17 @@ export interface CoreCavityAnalysisResponse {
   orchestration?: OrchestrationResult;
   solid_split?: Record<string, unknown> | null;
   display_mesh?: DisplayMeshPayload;
+  /**
+   * F7: only present when the request set `generate_side_core=true`
+   * (`getSideCoreDetail`, api/endpoints.ts) -- `SideCoreResult.to_dict()`
+   * (backend/geometry/side_core.py). Absent, not `null`, when side-core
+   * generation was never requested on this particular call -- callers must
+   * not read "no side_core key" as "no side core needed," only as "this
+   * call didn't ask."
+   */
+  side_core?: Record<string, unknown>;
+  side_cores?: Record<string, unknown>;
+  side_core_combined?: Record<string, unknown>;
 }
 
 /**
@@ -117,6 +128,144 @@ export interface DelegationInput {
   movement_type: string;
   source: string;
   note: string;
+}
+
+/**
+ * F7: `GET /parts/{filename}/draft`'s response body (backend/api/main.py:
+ * part_draft). `draft` is `DraftAnalysisResult.to_dict()`
+ * (backend/geometry/draft_analyzer.py) -- left loosely typed beyond the
+ * fields this phase actually reads (`face_counts`, `severity`,
+ * `percentages`, `pull_direction`) since the rest (per-face results,
+ * suggestions) are read straight out of the raw object where displayed,
+ * matching this file's existing convention for less-traveled response
+ * shapes (see `CoreCavityAnalysisResponse.core_cavity`/`solid_split`).
+ */
+export interface DraftAnalysisResponse {
+  part: Record<string, unknown>;
+  draft: {
+    pull_direction: [number, number, number];
+    pull_direction_label: string;
+    analysis_pass: string;
+    thresholds: { good_deg: number; marginal_deg: number };
+    face_counts: { good: number; marginal: number; bad: number; skipped: number; total_analysed: number };
+    face_ids: { good: number[]; marginal: number[]; bad: number[]; skipped: number[] };
+    percentages: { good_pct: number; marginal_pct: number; bad_pct: number };
+    severity: 'none' | 'minor' | 'moderate' | 'critical' | string;
+    is_manufacturable: boolean;
+    suggestions: Array<{
+      face_ids: number[];
+      classification: string;
+      action_text: string;
+      total_area_mm2: number;
+      avg_angle_deg: number;
+      suggested_delta_deg: number;
+    }>;
+    [key: string]: unknown;
+  };
+  display_mesh?: DisplayMeshPayload;
+}
+
+/**
+ * F7: one entry of `UNDERCUT_FACE_VISUAL_STYLES` (backend/api/main.py) --
+ * the SAME legend `display_mesh.undercut_visual_summary.legend` carries, so
+ * the frontend renders the backend's own category set/labels/priority
+ * rather than a hardcoded subset (the Streamlit reference UI hardcodes only
+ * 6 of these 10 categories; this type exists specifically so nothing is
+ * silently dropped).
+ */
+export interface UndercutVisualStyleEntry {
+  label: string;
+  rgb: [number, number, number];
+  priority: number;
+}
+
+/**
+ * F7: `GET /parts/{filename}/undercuts`'s response body (backend/api/
+ * main.py:part_undercuts). `undercuts` is `UndercutResult.to_dict()`
+ * (backend/geometry/undercut_detector.py) -- loosely typed for the same
+ * reason as `DraftAnalysisResponse.draft` above.
+ */
+export interface UndercutsAnalysisResponse {
+  part: Record<string, unknown>;
+  undercuts: {
+    has_undercuts: boolean;
+    has_critical_undercut: boolean;
+    face_counts: Record<string, number>;
+    feature_count: number;
+    major_undercut_features_count: number;
+    percentages: { undercut_area_pct: number };
+    features: Array<{
+      feature_id: number;
+      face_ids: number[];
+      is_major_feature: boolean;
+      severity: string;
+      undercut_type: string;
+      evidence_source: string;
+      recommended_mold_action: string;
+      side_action_candidate: boolean;
+      action_confidence: number;
+      action_confidence_label: string;
+      action_explanation: string;
+      release_direction: [number, number, number];
+      depth_proxy_mm: number;
+      interference_volume_mm3?: number;
+    }>;
+    boolean_refinement?: { enabled: boolean; reliability?: Record<string, unknown> };
+    [key: string]: unknown;
+  };
+  display_mesh?: DisplayMeshPayload & {
+    undercut_visual_summary?: {
+      counts: Record<string, number>;
+      legend: Record<string, UndercutVisualStyleEntry>;
+      confirmed_face_count: number;
+    };
+  };
+}
+
+/**
+ * F7: one styled curve within `parting_line_paths` (backend/api/main.py's
+ * `_parting_line_paths_payload`) -- `points` is a flat list of `[x,y,z]` mm
+ * coordinates in part space, ready for a `THREE.Line`, not a mesh.
+ */
+export interface PartingLinePathStyle {
+  label: string;
+  points: [number, number, number][];
+  point_count: number;
+  rgb: [number, number, number];
+  hex: string;
+  width: number;
+  opacity?: number;
+  visible_by_default: boolean;
+  smoothing_iterations?: number;
+  quality?: string;
+  fallback_to_raw?: boolean;
+}
+
+export interface PartingLinePathsPayload {
+  raw: PartingLinePathStyle;
+  refined: PartingLinePathStyle;
+  legend: { raw: PartingLinePathStyle; refined: PartingLinePathStyle };
+}
+
+/**
+ * F7: `GET /parts/{filename}/parting-line`'s response body (backend/api/
+ * main.py:part_parting_line). `parting_line` is `ParTingLineResult.to_dict()`
+ * (backend/geometry/parting_line.py) -- loosely typed; `analysis_quality`
+ * mirrors `parting_line.diagnostic_gate`, promoted to the top level by the
+ * backend itself.
+ */
+export interface PartingLineAnalysisResponse {
+  part: Record<string, unknown>;
+  parting_line: {
+    pull_direction_source: string;
+    diagnostic_gate?: Record<string, unknown>;
+    diagnostics?: Record<string, unknown>;
+    readiness?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
+  parting_line_paths: PartingLinePathsPayload;
+  analysis_quality: Record<string, unknown>;
+  display_mesh?: DisplayMeshPayload;
 }
 
 /** `POST /parts/upload`'s response body (backend/api/main.py:part_upload). */

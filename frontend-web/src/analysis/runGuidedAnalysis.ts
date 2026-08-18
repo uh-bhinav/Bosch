@@ -27,7 +27,7 @@ export function runGuidedAnalysis(): Promise<void> {
   const filename = useAnalysisStore.getState().currentPart;
   if (!filename) return Promise.resolve();
 
-  return executeAnalysisRun(() => runFullAnalysis(filename), { isRecommended: true });
+  return executeAnalysisRun(() => runFullAnalysis(filename), { isRecommended: true, filename });
 }
 
 /** Test-only: clears the shared in-flight guard so each test starts from a clean slate. */

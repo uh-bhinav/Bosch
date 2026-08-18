@@ -21,8 +21,11 @@ import type {
   CoreCavityAnalysisResponse,
   CorePinFaceRefInput,
   DelegationInput,
+  DraftAnalysisResponse,
+  PartingLineAnalysisResponse,
   PartSummaryResponse,
   PartsListResponse,
+  UndercutsAnalysisResponse,
 } from '../api/types';
 import type {
   PipelineStatus,
@@ -80,6 +83,25 @@ export const DEFAULT_PDF_SECTIONS: PdfSectionSelection = {
 };
 
 export type BackendConnectivity = 'unknown' | 'checking' | 'online' | 'offline';
+
+/** F7: shared idle/running/done/error lifecycle for the draft/undercuts/parting-line follow-up fetches. */
+export type FollowUpStage = 'idle' | 'running' | 'done' | 'error';
+
+/**
+ * F7: the Side Cores tool's headline state.
+ * - 'unknown': no analysis has run yet for the current part/direction.
+ * - 'checking': the primary analysis is still resolving a direction.
+ * - 'not-required': the orchestration reached a feasible split with NO
+ *   `parting_line_v2_outcome==='referred_to_side_action'` -- a real,
+ *   positive "no side cores needed" result, not an absence of data.
+ * - 'available': a side-core WAS required, and `getSideCoreDetail` fetched
+ *   the real generated solid's data.
+ * - 'unavailable': side action was required but the follow-up fetch itself
+ *   failed (network/backend error) -- distinct from 'not-required'.
+ * - 'blocked': the primary analysis never reached a feasible parting line at
+ *   all, so side-core requirement could not be determined either way.
+ */
+export type SideCoreStatus = 'unknown' | 'checking' | 'not-required' | 'available' | 'unavailable' | 'blocked';
 
 /**
  * F2's import state machine (F0 §7): idle -> uploading -> loading-geometry
@@ -177,6 +199,35 @@ export interface AnalysisState {
   pdfExportStartedAt: number | null;
   pdfSections: PdfSectionSelection;
 
+  // --- Draft / Undercuts / Parting Line follow-up calls (F7) --------------
+  // `executeAnalysisRun` (analysisShared.ts) fetches these AFTER the primary
+  // core-cavity call resolves a pull direction, using that SAME direction --
+  // none of these ever re-runs the optimizer. Each gets its own
+  // idle/running/done/error lifecycle, independent of `pipelineStatus` and
+  // of each other, so one follow-up failing (e.g. a slow Boolean pass
+  // timing out) never hides the other two or the primary core/cavity result
+  // that already succeeded.
+  draftResult: DraftAnalysisResponse | null;
+  draftStage: FollowUpStage;
+  draftError: string | null;
+  undercutsResult: UndercutsAnalysisResponse | null;
+  undercutsStage: FollowUpStage;
+  undercutsError: string | null;
+  partingLineResult: PartingLineAnalysisResponse | null;
+  partingLineStage: FollowUpStage;
+  partingLineError: string | null;
+
+  // --- Side cores (F7) ------------------------------------------------------
+  // `sideCoreStatus` distinguishes "this pull direction genuinely needs no
+  // side action" (a real, positive backend result) from "we don't know yet"
+  // -- see `analysisShared.ts`'s docstring for exactly which orchestration
+  // field ('parting_line_v2_outcome') drives this. `sideCoreDetail` is only
+  // populated when status reaches 'available' (a real `generate_side_core`
+  // call was made and returned a solid).
+  sideCoreStatus: SideCoreStatus;
+  sideCoreDetail: CoreCavityAnalysisResponse | null;
+  sideCoreError: string | null;
+
   // --- actions -------------------------------------------------------------
   setBackendConnectivity: (status: BackendConnectivity) => void;
   setAvailableParts: (parts: PartsListResponse) => void;
@@ -210,6 +261,18 @@ export interface AnalysisState {
   setPdfExportError: (message: string | null) => void;
   setPdfExportStartedAt: (ms: number | null) => void;
   setPdfSections: (sections: PdfSectionSelection) => void;
+  setDraftResult: (result: DraftAnalysisResponse | null) => void;
+  setDraftStage: (stage: FollowUpStage) => void;
+  setDraftError: (message: string | null) => void;
+  setUndercutsResult: (result: UndercutsAnalysisResponse | null) => void;
+  setUndercutsStage: (stage: FollowUpStage) => void;
+  setUndercutsError: (message: string | null) => void;
+  setPartingLineResult: (result: PartingLineAnalysisResponse | null) => void;
+  setPartingLineStage: (stage: FollowUpStage) => void;
+  setPartingLineError: (message: string | null) => void;
+  setSideCoreStatus: (status: SideCoreStatus) => void;
+  setSideCoreDetail: (result: CoreCavityAnalysisResponse | null) => void;
+  setSideCoreError: (message: string | null) => void;
   clearSelection: () => void;
   /**
    * Clears every analysis-derived field (selection, pull direction,
@@ -273,6 +336,20 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   pdfExportStartedAt: null,
   pdfSections: DEFAULT_PDF_SECTIONS,
 
+  draftResult: null,
+  draftStage: 'idle',
+  draftError: null,
+  undercutsResult: null,
+  undercutsStage: 'idle',
+  undercutsError: null,
+  partingLineResult: null,
+  partingLineStage: 'idle',
+  partingLineError: null,
+
+  sideCoreStatus: 'unknown',
+  sideCoreDetail: null,
+  sideCoreError: null,
+
   setBackendConnectivity: (status) => set({ backendConnectivity: status }),
   setAvailableParts: (parts) => set({ availableParts: parts.files }),
   setCurrentPart: (part, summary = null) => set({ currentPart: part, currentPartSummary: summary }),
@@ -316,6 +393,18 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
   setPdfExportError: (message) => set({ pdfExportError: message }),
   setPdfExportStartedAt: (ms) => set({ pdfExportStartedAt: ms }),
   setPdfSections: (sections) => set({ pdfSections: sections }),
+  setDraftResult: (result) => set({ draftResult: result }),
+  setDraftStage: (stage) => set({ draftStage: stage }),
+  setDraftError: (message) => set({ draftError: message }),
+  setUndercutsResult: (result) => set({ undercutsResult: result }),
+  setUndercutsStage: (stage) => set({ undercutsStage: stage }),
+  setUndercutsError: (message) => set({ undercutsError: message }),
+  setPartingLineResult: (result) => set({ partingLineResult: result }),
+  setPartingLineStage: (stage) => set({ partingLineStage: stage }),
+  setPartingLineError: (message) => set({ partingLineError: message }),
+  setSideCoreStatus: (status) => set({ sideCoreStatus: status }),
+  setSideCoreDetail: (result) => set({ sideCoreDetail: result }),
+  setSideCoreError: (message) => set({ sideCoreError: message }),
   clearSelection: () => set({ selectedFaceIds: [], selectedEdgeIds: [] }),
   resetAnalysisState: () =>
     set({
@@ -340,5 +429,17 @@ export const useAnalysisStore = create<AnalysisState>((set) => ({
       pdfExportError: null,
       pdfExportStartedAt: null,
       pdfSections: DEFAULT_PDF_SECTIONS,
+      draftResult: null,
+      draftStage: 'idle',
+      draftError: null,
+      undercutsResult: null,
+      undercutsStage: 'idle',
+      undercutsError: null,
+      partingLineResult: null,
+      partingLineStage: 'idle',
+      partingLineError: null,
+      sideCoreStatus: 'unknown',
+      sideCoreDetail: null,
+      sideCoreError: null,
     }),
 }));

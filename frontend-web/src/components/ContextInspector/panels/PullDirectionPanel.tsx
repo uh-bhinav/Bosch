@@ -21,13 +21,14 @@
  * separate, untouched snapshot so the two stay comparable.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { describeAnalysisOutcome } from '../../../analysis/describeAnalysisOutcome';
 import { runManualAnalysis } from '../../../analysis/runManualAnalysis';
 import type { Vec3 } from '../../../domain/types';
 import { useAnalysisStore } from '../../../store/analysisStore';
 import { getViewportEngine } from '../../../viewport/engineSingleton';
 import { AuthorizationEditor } from './AuthorizationEditor';
+import { Legend } from './Legend';
 import styles from './PullDirectionPanel.module.css';
 
 const AXIS_PRESETS: { label: string; value: Vec3 }[] = [
@@ -70,15 +71,10 @@ export function PullDirectionPanel() {
   const recommendedVerdict = describeAnalysisOutcome(recommendedResult);
   const currentVerdict = describeAnalysisOutcome(analysisResult);
 
-  // The direction arrow (ViewportEngine.setDirectionArrow) is a pure,
-  // non-interactive visualization -- update it whenever the DRAFT vector
-  // changes, and clear it when this tool is no longer the one showing it
-  // (component unmount == tool switched away, since ContextInspector swaps
-  // panels rather than hiding/showing this one).
-  useEffect(() => {
-    getViewportEngine().setDirectionArrow(manualPullDirection);
-    return () => getViewportEngine().setDirectionArrow(null);
-  }, [manualPullDirection]);
+  // F7: both direction arrows (the already-resolved direction, and this
+  // tool's own live manual-edit preview) are now driven centrally by
+  // `viewport/useOverlaySync.ts` -- it reads this same `manualPullDirection`
+  // store field, so no per-panel effect is needed here.
 
   const commitVector = (next: [string, string, string]) => {
     setVectorText(next);
@@ -132,6 +128,12 @@ export function PullDirectionPanel() {
 
       <section className={styles.section}>
         <h4 className={styles.sectionTitle}>Manual</h4>
+        <Legend
+          items={[
+            { color: 'var(--accent)', label: 'Resolved direction (current result, every tool)' },
+            { color: 'var(--vis-pull-direction-manual-preview)', label: "This tool's live edit preview" },
+          ]}
+        />
 
         <div className={styles.vectorRow}>
           {(['X', 'Y', 'Z'] as const).map((axis, i) => (

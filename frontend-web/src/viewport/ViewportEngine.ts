@@ -40,6 +40,8 @@ export class ViewportEngine {
   private frameHandle: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private directionArrow: THREE.ArrowHelper | null = null;
+  private manualPreviewArrow: THREE.ArrowHelper | null = null;
+  private partingLines: THREE.Line[] = [];
 
   constructor() {
     this.scene = new THREE.Scene();
@@ -286,6 +288,76 @@ export class ViewportEngine {
     this.scene.add(this.directionArrow);
   }
 
+  /**
+   * F7: the "manual draft" preview arrow -- a second, visually distinct
+   * indicator shown ONLY while the engineer is actively editing the Manual
+   * Pull Direction vector (`PullDirectionPanel`), alongside (not instead of)
+   * `setDirectionArrow`'s already-resolved direction. Steel-blue rather than
+   * the accent copper, so "what the analysis actually used" and "what I'm
+   * about to try" never look like the same thing.
+   */
+  setManualDirectionPreview(direction: Vec3 | null, origin: Vec3 = [0, 0, 0], length = 60): void {
+    if (this.manualPreviewArrow) {
+      this.scene.remove(this.manualPreviewArrow);
+      this.manualPreviewArrow.dispose();
+      this.manualPreviewArrow = null;
+    }
+    if (!direction) return;
+    const dir = new THREE.Vector3(...direction);
+    if (dir.lengthSq() < 1e-12) return;
+    dir.normalize();
+    this.manualPreviewArrow = new THREE.ArrowHelper(
+      dir,
+      new THREE.Vector3(...origin),
+      length,
+      0x5fb8e0,
+      length * 0.25,
+      length * 0.15,
+    );
+    this.scene.add(this.manualPreviewArrow);
+  }
+
+  /** F7: theme-driven viewport ground -- see `theme/useTheme.ts`. Accepts any CSS color string three.js can parse (hex, rgb()). */
+  setBackgroundColor(cssColor: string): void {
+    this.scene.background = new THREE.Color(cssColor);
+  }
+
+  /**
+   * F7: the parting-line curve overlay -- `parting_line_paths.raw`/`.refined`
+   * from `GET /parts/{filename}/parting-line` (backend/api/main.py's
+   * `_parting_line_paths_payload`). Draws one or more independent polylines
+   * (raw silhouette wire, Chaikin-refined curve, or both at once) directly
+   * from the backend's own point list -- never a client-side approximation.
+   * `null`/empty clears every currently drawn line. A plain `THREE.Line` (not
+   * `Line2`) -- WebGL1's line width is effectively fixed at 1px on most
+   * platforms regardless of `linewidth`, an accepted limitation for a
+   * hackathon-scope visual, not a fidelity gap in the underlying data.
+   */
+  setPartingLines(paths: { points: Vec3[]; colorHex: string; opacity?: number }[] | null): void {
+    for (const line of this.partingLines) {
+      this.scene.remove(line);
+      line.geometry.dispose();
+      (line.material as THREE.Material).dispose();
+    }
+    this.partingLines = [];
+    if (!paths) return;
+    for (const path of paths) {
+      if (path.points.length < 2) continue;
+      const geometry = new THREE.BufferGeometry().setFromPoints(
+        path.points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+      );
+      const material = new THREE.LineBasicMaterial({
+        color: new THREE.Color(path.colorHex),
+        transparent: path.opacity !== undefined && path.opacity < 1,
+        opacity: path.opacity ?? 1,
+      });
+      const line = new THREE.Line(geometry, material);
+      line.renderOrder = 10;
+      this.partingLines.push(line);
+      this.scene.add(line);
+    }
+  }
+
   applyCameraState(state: CameraState): void {
     this.camera.position.set(...state.position);
     this.camera.zoom = state.zoom;
@@ -340,6 +412,9 @@ export class ViewportEngine {
     }
     this.directionArrow?.dispose();
     this.directionArrow = null;
+    this.manualPreviewArrow?.dispose();
+    this.manualPreviewArrow = null;
+    this.setPartingLines(null);
     this.renderer?.dispose();
     this.renderer = null;
   }

@@ -18,6 +18,7 @@ export type Vec3 = readonly [number, number, number];
 export const TOOL_IDS = [
   'import',
   'pull-direction',
+  'draft',
   'parting-line',
   'core-cavity',
   'undercuts',
@@ -38,6 +39,7 @@ export interface ToolDescriptor {
 export const TOOLS: readonly ToolDescriptor[] = [
   { id: 'import', label: 'Import', glyph: 'IM' },
   { id: 'pull-direction', label: 'Pull Direction', glyph: 'PD' },
+  { id: 'draft', label: 'Draft', glyph: 'DR' },
   { id: 'parting-line', label: 'Parting Line', glyph: 'PL' },
   { id: 'core-cavity', label: 'Core / Cavity', glyph: 'CC' },
   { id: 'undercuts', label: 'Undercuts', glyph: 'UC' },

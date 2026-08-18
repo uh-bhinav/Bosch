@@ -4,7 +4,7 @@
 # Judge opens:  http://localhost:5173  (React frontend-web UI — the demo)
 #               http://localhost:8000/docs  (FastAPI backend, interactive API docs)
 #
-# This launches frontend-web/ (React + Three.js, F1-F6), NOT the legacy
+# This launches frontend-web/ (React + Three.js, F1-F7), NOT the legacy
 # Streamlit UI. Dockerfile.frontend (Streamlit) and its "frontend" service
 # definition were replaced by Dockerfile.frontend-web below; Streamlit can
 # still be run manually (see README) but is no longer part of the Docker
@@ -59,7 +59,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── Frontend service — frontend-web (React + Three.js, F1-F6) ───────────
+  # ── Frontend service — frontend-web (React + Three.js, F1-F7) ───────────
   frontend:
     platform: linux/amd64
     build:

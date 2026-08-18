@@ -157,6 +157,24 @@
   cursor: not-allowed;
 }
 
+.themeToggle {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.themeToggle:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
 .connectivityDot {
   width: 8px;
   height: 8px;

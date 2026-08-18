@@ -47,5 +47,76 @@
   --statusstrip-height-collapsed: 28px;
   --rail-width-collapsed: 52px;
   --rail-width-expanded: 200px;
-  --inspector-width: 300px;
+  /* Widened (F7) -- 300px forced most analysis content into horizontal
+     scroll; the viewport compresses to make room instead. */
+  --inspector-width: 420px;
+
+  /*
+   * Visualization palette (F7) -- one fixed swatch per backend-produced
+   * classification, byte-identical to the RGB triplets `backend/api/main.py`
+   * actually paints onto the mesh (class_to_color / UNDERCUT_FACE_VISUAL_
+   * STYLES / core-cavity's class_to_color). These are look-up colors for
+   * legends and non-mesh UI chrome (buttons, badges) -- the mesh itself is
+   * always colored directly from the backend's own per-face RGB arrays, this
+   * is only for the legend key to visually match it.
+   */
+  --vis-draft-good: #00d94d;
+  --vis-draft-marginal: #ffd900;
+  --vis-draft-bad: #f2261a;
+  --vis-draft-skipped: #8c8c8c;
+
+  --vis-cavity: #32c864;
+  --vis-core: #3264c8;
+  --vis-parting: #dcc832;
+  --vis-cc-skipped: #a0a0a0;
+
+  --vis-undercut-critical: #ff3232;
+  --vis-undercut-medium: #ff7832;
+  --vis-undercut-low: #ffa532;
+  --vis-undercut-manual-review: #ffb43c;
+  --vis-undercut-proxy: #ffe696;
+  --vis-undercut-zero-draft: #c8d2e1;
+  --vis-undercut-ray-clear: #96d7b4;
+  --vis-undercut-accessible: #b4b4b4;
+  --vis-undercut-neutral: #d2d2d2;
+
+  --vis-side-action: #c86edb;
+  --vis-pull-direction-manual-preview: #5fb8e0;
+  --vis-parting-line-raw: #ffa500;
+  --vis-parting-line-refined: #00bfff;
+}
+
+/*
+ * Light theme (F7). `:root` above stays the dark default (byte-identical to
+ * the pre-F7 workstation) so an un-stamped document -- the default "system"
+ * viewer state with no explicit OS preference read -- renders unchanged.
+ * `[data-theme='light']` is the only way into this palette: an explicit,
+ * persisted user choice (see `theme/useTheme.ts`), never inferred from
+ * `prefers-color-scheme` -- a CAD workstation's chrome should not silently
+ * flip with the OS, only when the engineer asks it to.
+ */
+:root[data-theme='light'] {
+  --surface-0: #eef0f3;
+  --surface-1: #f7f8fa;
+  --surface-2: #ffffff;
+  --surface-3: #e4e7ec;
+  --viewport-bg: #dde1e6;
+
+  --border: #d4d9e0;
+  --border-strong: #b7bfc9;
+
+  --text-primary: #1b2027;
+  --text-secondary: #4c5561;
+  --text-tertiary: #7c8794;
+
+  --accent: #b85f2a;
+  --accent-strong: #9a4c1f;
+  --accent-dim: rgba(184, 95, 42, 0.14);
+
+  --ok: #2e8f5f;
+  --ok-dim: rgba(46, 143, 95, 0.14);
+  --warn: #a67c1f;
+  --warn-dim: rgba(166, 124, 31, 0.14);
+  --bad: #c8453d;
+  --bad-dim: rgba(200, 69, 61, 0.14);
 }

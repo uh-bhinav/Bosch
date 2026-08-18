@@ -58,6 +58,8 @@
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-primary);
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 
 .verdict {

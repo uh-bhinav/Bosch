@@ -12,7 +12,7 @@ docker compose up --build
 ```
 
 Open **http://localhost:5173** — this launches `frontend-web/` (the React
-UI, F1–F6), talking to the FastAPI backend on `:8000` inside Docker's own
+UI, F1–F7), talking to the FastAPI backend on `:8000` inside Docker's own
 network. `http://localhost:8000/docs` gives the backend's interactive API
 docs directly. Full detail in §21.
 
@@ -426,9 +426,9 @@ demonstrated.
 
 1. Start the backend (§8) and the frontend (§9) in two terminals — set `PYTHONPATH` first, per your OS. Open `http://localhost:5173`.
 2. Import `Part1.stp`.
-3. Click **Run Full Analysis**. Wait for the result (see the timing note in §17 — if it's slow, narrate what's happening: pull-direction search, undercut detection, parting line, core/cavity split, all against exact B-Rep geometry).
-4. Point out the colored core/cavity split and parting line in the viewport.
-5. Open the diagnostics panel — show one Tier 1 conclusion, then expand it to Tier 2/3 to show the panel isn't hiding anything, it's just not leading with raw numbers.
+3. Click **Run Full Analysis**. Wait for the result (see the timing note in §17 — if it's slow, narrate what's happening: pull-direction search, core/cavity split, draft, undercuts, parting-line curve, and a side-core check, all against exact B-Rep geometry).
+4. Switch through the tool rail — Draft, Parting Line, Core/Cavity, and Undercuts each recolor the SAME persistent viewport with that tool's own classification (see the legend in each panel); Parting Line also draws the actual raw/refined curve as a 3D line, and Pull Direction shows the resolved direction as a 3D arrow on every tool.
+5. Open Side Cores — it states plainly whether this pull direction needed one, not just whether one was generated. Then open the diagnostics panel — show one Tier 1 conclusion, then expand it to Tier 2/3 to show the panel isn't hiding anything, it's just not leading with raw numbers.
 6. Switch to manual pull direction, pick a different axis, re-run, and show the recommended-vs-manual comparison.
 7. Export the STEP mold-half file and open it in any CAD viewer to show it's a real, reloadable solid, not a placeholder.
 8. Export the PDF report and open it.

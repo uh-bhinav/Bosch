@@ -20,6 +20,7 @@ import { ToolRail } from '../components/ToolRail/ToolRail';
 import { ContextInspector } from '../components/ContextInspector/ContextInspector';
 import { StatusStrip } from '../components/StatusStrip/StatusStrip';
 import { Viewport } from '../viewport/Viewport';
+import { useOverlaySync } from '../viewport/useOverlaySync';
 import { useAnalysisStore } from '../store/analysisStore';
 import { getHealth, listParts } from '../api/endpoints';
 import styles from './WorkstationShell.module.css';
@@ -27,6 +28,11 @@ import styles from './WorkstationShell.module.css';
 export function WorkstationShell() {
   const setBackendConnectivity = useAnalysisStore((s) => s.setBackendConnectivity);
   const setAvailableParts = useAnalysisStore((s) => s.setAvailableParts);
+
+  // F7: tool-driven viewport overlay/curve/arrow sync -- a side effect only,
+  // never a conditional around `<Viewport />` below (F1's persistence
+  // requirement).
+  useOverlaySync();
 
   useEffect(() => {
     let cancelled = false;

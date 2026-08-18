@@ -15,6 +15,9 @@
 import { runGuidedAnalysis } from '../../analysis/runGuidedAnalysis';
 import { stageLabelForElapsed, useElapsedSeconds } from '../../analysis/useElapsedSeconds';
 import { useAnalysisStore } from '../../store/analysisStore';
+import { readViewportBackground, useTheme } from '../../theme/useTheme';
+import { getViewportEngine } from '../../viewport/engineSingleton';
+import { useEffect } from 'react';
 import styles from './TopBar.module.css';
 
 const PIPELINE_LABEL: Record<string, string> = {
@@ -32,6 +35,16 @@ export function TopBar() {
   const backendConnectivity = useAnalysisStore((s) => s.backendConnectivity);
   const isRunning = pipelineStatus === 'running';
   const elapsedSeconds = useElapsedSeconds(isRunning);
+  const { theme, toggleTheme } = useTheme();
+
+  // The three.js scene background is a real THREE.Color, not CSS -- it must
+  // be re-read and re-applied explicitly whenever the theme flips (mount
+  // included, so a page load that restores 'light' from localStorage still
+  // paints the correct viewport ground, not the dark default baked into
+  // ViewportEngine's constructor).
+  useEffect(() => {
+    getViewportEngine().setBackgroundColor(readViewportBackground());
+  }, [theme]);
 
   return (
     <header className={styles.topBar}>
@@ -76,7 +89,11 @@ export function TopBar() {
           type="button"
           className={styles.runButton}
           disabled={!currentPart}
-          title={currentPart ? 'Run direction search, parting line, and core/cavity split' : 'Load a part first'}
+          title={
+            currentPart
+              ? 'Run direction search, core/cavity split, draft, undercuts, parting-line curve, and a side-core check'
+              : 'Load a part first'
+          }
           onClick={() => void runGuidedAnalysis()}
         >
           Run Full Analysis
@@ -90,6 +107,16 @@ export function TopBar() {
 
       <button type="button" className={styles.exportButton} disabled title="Nothing to export yet">
         Export
+      </button>
+
+      <button
+        type="button"
+        className={styles.themeToggle}
+        onClick={toggleTheme}
+        title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        aria-label="Toggle theme"
+      >
+        {theme === 'dark' ? '☾' : '☀'}
       </button>
 
       <span
