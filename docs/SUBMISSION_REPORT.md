@@ -1,3 +1,16 @@
+> **Correction note (added during hackathon-submission cleanup, 2026-08-18).**
+> This report's Level 1 Evaluation Matrix marks "Main Parting Line Creation"
+> and "Core and Cavity face distinction" as "Complete." As documented in
+> `.claude/rules/honesty-and-scope.md` and `docs/IMPLEMENTATION_STATUS.md`,
+> that overstates both: the parting line is a candidate/foundation result
+> (full Hou global optimization is not applied), and the core/cavity split
+> is a real Boolean split verified on both real parts, but through a
+> labeled planar approximation of the parting surface, not the exact 3-D
+> surface. It also predates `frontend-web/`, which is now the primary UI —
+> references to the Streamlit UI below describe the UI at the time this
+> report was written. See `README.md` and `docs/IMPLEMENTATION_STATUS.md`
+> for current, accurate status.
+
 # DfM Agent — Level 1 Submission Report
 
 ## Executive Summary

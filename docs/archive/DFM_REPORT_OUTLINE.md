@@ -1,3 +1,9 @@
+> **Archived, superseded.** PDF export IS now implemented
+> (`backend/report/pdf_export.py`, `GET /export/report`) — the "current
+> code does not export PDF yet" line below predates that work. See
+> `README.md` and `docs/IMPLEMENTATION_STATUS.md` for current capability.
+> Kept for the original report-structure thinking, not as a live template.
+
 # DFM Report Outline
 
 This outline is the structure for the future Bosch-style PDF DFM report. The

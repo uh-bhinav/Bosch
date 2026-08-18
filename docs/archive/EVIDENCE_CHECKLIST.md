@@ -1,3 +1,6 @@
+> **Archived.** Internal prep checklist from an earlier submission cycle.
+> Kept for reference; not required reading for reviewing the current build.
+
 # Evidence Checklist
 
 Use this checklist before the final demo or report submission. Every number and

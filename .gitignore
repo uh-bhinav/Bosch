@@ -39,3 +39,7 @@ output/mold_halves/
 # User-uploaded STEP files (Phase F2) — never data/parts/, which stays the
 # curated, read-only fixture set.
 data/uploads/
+
+# pytest-cov output — regenerate locally with `pytest --cov`, don't track
+.coverage
+reports/coverage_html/

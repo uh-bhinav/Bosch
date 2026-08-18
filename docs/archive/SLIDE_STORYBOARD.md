@@ -1,3 +1,7 @@
+> **Archived.** Original team pitch-deck plan. Kept for reference; the
+> README's "5-minute panel demo" section is the current judge-facing walk-
+> through, not this deck.
+
 # Slide Storyboard
 
 This storyboard is a concise deck plan for the Bosch RB-CoC Plastics hackathon
