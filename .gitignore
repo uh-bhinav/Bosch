@@ -36,3 +36,6 @@ conda-meta/
 *.log
 # Generated mold-half STEP exports (Milestone 1.11)
 output/mold_halves/
+# User-uploaded STEP files (Phase F2) — never data/parts/, which stays the
+# curated, read-only fixture set.
+data/uploads/
