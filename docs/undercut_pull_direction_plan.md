@@ -572,3 +572,746 @@ Phase 6: Documentation (CHANGELOG, STATUS, TODO)
 ```
 
 Each phase is independently testable. Phase 5 is the decisive validation gate — correctness is not declared until the face-level diagnostic confirms that confirmed undercuts are genuine re-entrant features and no vertical walls appear as confirmed undercuts.
+# Forensic Implementation Plan: Pull-Direction Timeout + Undercut False Positives (v2)
+
+## Context
+
+Two blockers remain before the final demo:
+
+**A. Pull-direction optimization times out** (>240s, frontend HTTP timeout) on real Part1.stp geometry. The pre-R1-R5 baseline was ~13s. The R1-R5 semantic correction (2026-08-14) introduced expanded Boolean validation and a strict `boolean_validation_complete` gate that, combined, cause the hierarchical search to never early-exit and then perform expensive redundant work at the end.
+
+**B. Undercut detection produces visual false positives** — an "extra green face" and potentially wrong confirmed-undercut faces. The root cause is twofold: (1) near-perpendicular-dot faces (`|n·d| ≤ 0.01`) are Boolean-tested using an access direction that is perpendicular to the face normal, causing the swept prism to produce false-positive interference (see §4.2), and (2) `no_interference` faces are rendered with a distinct pale green color that confuses the viewer.
+
+Draft analysis is working correctly and must not be touched.
+
+### Design Constraints (from review)
+
+1. **`boolean_validation_complete` retains its original meaning.** True ONLY when every candidate has been checked or explicitly resolved. Partial coverage (80/200) is NOT complete. Performance improvements must come from reducing the candidate pool, not from redefining completeness.
+
+2. **`suitability_max_bad_draft_pct` stays at 30.0.** No threshold changes until correctness is established and benchmarked. Stage 2/3 fallthrough is acceptable.
+
+3. **Real-OCC face-level diagnostic is mandatory.** Every confirmed/suspected/no-interference face on Part1 +Z must be reported with full geometric detail to validate against the Bosch reference.
+
+4. **Perpendicular-dot face exclusion must be justified as an implementation-specific policy**, not as a general property of Bassi accessibility analysis. The specific failure mode of `_face_access_direction() → ±pull_dir` when `|n·d| ≈ 0` must be established and verified on both parts. The code variable `parting_ids` is a dot-product classification, NOT topological parting-line membership.
+
+---
+
+## 1. ROOT-CAUSE HYPOTHESES (ranked by confidence)
+
+### Timeout — PROVEN
+
+| # | Hypothesis | Confidence | Evidence |
+|---|---|---|---|
+| T1 | `boolean_validation_complete` is correctly False, but the candidate pool is bloated with faces the current formulation cannot reliably analyze | **HIGH** | For Part1 at +Z: ALL proxy undercuts (draft < 0.5°, ~220 faces / 71.7%) have `|n·d| < sin(0.5°) = 0.00873`, making them also perpendicular-dot faces (`|n·d| ≤ 0.01`). The candidate pool = `proxy_undercut_ids ∪ risk_face_ids` = ~230 faces. With `max_boolean_faces=80`, only 80 are checked → `boolean_validation_complete=False` (correctly: 80/230). Suitability gate rejects → no early exit → full Stage 3 search. The fix is NOT to redefine completeness, but to exclude faces where the access-direction formulation produces unreliable results (see §4.2), reducing the pool to ~10-20 meaningful faces. |
+| T2 | Expanded validation (`boolean_check_all_core_side=True`, 150 faces) runs redundantly | **HIGH** | Three call sites: Stage 1 exit (`direction_optimizer.py:1157-1165`), Stage 2 exit (`1230-1238`), Stage 3 end (`1368-1376`). Direction-level cache key includes `max_boolean_faces` and `boolean_check_all_core_side` (`direction_optimizer.py:55-62`), so the 80-face result from candidate scoring NEVER satisfies the 150-face expanded request → guaranteed direction-cache miss → full `detect_undercuts()` re-run with ~70-120 NEW core-side faces at 0.1-2s each → 10-60s per expanded call. |
+| T3 | Stage 1 cheap suitability gate rejects +Z for Part1 | **PROVEN** | Part1 at +Z: `bad_pct = 71.7% > 30.0%`. No principal direction passes. This is PRE-EXISTING (not R1-R5), but R1-R5 made it worse because Stage 2/3 now also fail (T1). With the pool reduction (Fix D), Stage 2 or 3 will find the right direction with `boolean_validation_complete=True`, just not at Stage 1. Threshold stays at 30.0 per review directive. |
+| T4 | Total Boolean ops are proportional to bloated candidate pool × retry multipliers | **MEDIUM** | Each face gets up to 3 retry attempts (multipliers [1.0, 5.0, 25.0]). With 80+ face budget × 3 retries × 0.1-2s each = 24-480s per direction. Pool reduction to ~20 faces → 60s max per direction. |
+
+### False Positives — PROVEN
+
+| # | Hypothesis | Confidence | Evidence |
+|---|---|---|---|
+| U1 | Near-perpendicular-dot faces produce false-positive Boolean confirmations due to implementation-specific access-direction failure | **HIGH** | Analysis in Section 4 below. Summary: `_face_access_direction()` (line 2217) selects `±pull_dir` based on the sign of `n·d`. When `|n·d| ≈ 0`, this produces a sweep direction perpendicular to the face normal. The offset+sweep+intersect sequence in `_swept_face_interference_volume()` then runs the prism alongside/through the part body rather than testing mold-withdrawal clearance, producing non-zero intersection that does not represent actual obstruction. This is a failure of THIS implementation's access-direction formulation, not a general limitation of surface-accessibility analysis. |
+| U2 | `no_interference` faces rendered with distinct green color | **PROVEN** | `main.py:114-118`: `"no_interference"` style = RGB(180,230,180). `_undercut_mesh_visual_payload` at line 416-417 assigns this style. These are NOT undercuts but are visually prominent. |
+| U3 | Expanded validation adds many `no_interference` faces that weren't in prior runs | **HIGH** | `boolean_check_all_core_side=True` adds ALL core-side faces to the candidate pool. Well-drafted core-side faces with all-convex edges return volume=0. Before R1-R5, these were never tested and had no visual distinction. |
+
+---
+
+## 2. CURRENT-CODE TRACE
+
+### Direction Optimization Call Chain
+
+```
+API: /parts/{filename}/direction  (main.py:771)
+  → optimize_mold_direction()     (direction_optimizer.py:1022)
+    → Stage 1: 6 principals, cheap-score each via _score_direction_candidate()
+      → precompute_directional_metrics()  (draft_analyzer.py:620)
+      → analyze_draft(mutate=False)       (draft_analyzer.py)
+      → detect_undercuts(boolean_refine=False)  (undercut_detector.py:3229)
+      → _is_direction_suitable_cheap()    (direction_optimizer.py:931)
+      → IF cheap-suitable: _boolean_refine_candidates()
+        → _cached_detect_boolean_undercuts(max_faces=80)
+          → detect_undercuts(boolean_refine=True, max_faces=80)
+            → _boolean_refine_undercuts(candidate_ids[:80])
+              → PER FACE: _swept_face_interference_volume()
+                → _face_access_direction()  ← PROBLEMATIC for perpendicular-dot faces (|n·d| ≈ 0)
+                → BRepBuilderAPI_Transform (offset)
+                → BRepPrimAPI_MakePrism (sweep)
+                → BRepAlgoAPI_Common (intersect with part)
+                → GProp volume measurement
+        → _is_direction_suitable_boolean()  (direction_optimizer.py:958)
+          → requires boolean_validation_complete == True  ← correct, but pool is bloated
+      → IF acceptable: EARLY EXIT with expanded validation  ← REDUNDANT
+    → Stage 2: 12 diagonals, same pattern
+    → Stage 3: 54 spherical + fine search
+      → top ~5 Boolean-refined
+      → select best validated
+      → expanded final validation  ← EXPENSIVE
+```
+
+### Key Line Numbers
+
+| Function | File | Line | Role |
+|---|---|---|---|
+| `optimize_mold_direction` | `direction_optimizer.py` | 1022 | Entry point |
+| `_is_direction_suitable_cheap` | `direction_optimizer.py` | 931 | Cheap screen (bad_pct + risk_pct) |
+| `_is_direction_suitable_boolean` | `direction_optimizer.py` | 958 | Boolean gate (requires validation_complete) |
+| `_cached_detect_boolean_undercuts` | `direction_optimizer.py` | 400 | Direction-level caching |
+| `_lookup_direction_cache` | `direction_optimizer.py` | 337 | Cache reuse logic (rejects key mismatch) |
+| `DirectionUndercutCacheKey` | `direction_optimizer.py` | 47 | Cache key (includes max_faces, all_core_side) |
+| `detect_undercuts` | `undercut_detector.py` | 3229 | Main undercut detection |
+| `check_ids` construction | `undercut_detector.py` | 3378-3397 | Boolean candidate pool |
+| `_boolean_refine_undercuts` | `undercut_detector.py` | 2917 | Face-level Boolean loop |
+| `[:max_faces]` truncation | `undercut_detector.py` | 2969 | Budget enforcement |
+| `boolean_validation_complete` | `undercut_detector.py` | 3446-3448 | Completeness check — PRESERVED |
+| `_face_access_direction` | `undercut_detector.py` | 2217 | Access direction — PROBLEMATIC for perpendicular-dot faces |
+| `_swept_face_interference_volume` | `undercut_detector.py` | 2766 | OCC Boolean geometry |
+| Composite rule | `undercut_detector.py` | 3432-3448 | Confirmed/suspected/no-interference split |
+| `_undercut_mesh_visual_payload` | `main.py` | 366 | Face-to-color mapping |
+| `no_interference` style | `main.py` | 114-118 | Pale green RGB(180,230,180) |
+
+---
+
+## 3. EXPERIMENTAL / FORENSIC PHASE
+
+### Phase 0: Instrumentation + face-level diagnostic
+
+Add `logging.info()` calls at strategic points, AND produce a mandatory face-level diagnostic report for Part1.
+
+**File: `direction_optimizer.py`**
+
+1. After each stage's cheap screening, log:
+   - `stage={N}, cheap_suitable_count={len(suitable)}, directions_scored={len(scored)}`
+
+2. In `_boolean_refine_candidates` (line 1089), log per-candidate:
+   - `direction={label}, boolean_candidate_total={result.boolean_candidate_count}, checked={len(checked)}, validation_complete={result.boolean_validation_complete}, suitability={pass/fail}`
+
+3. At function exit (lines 1174, 1247, 1393), log:
+   - `stage_reached={N}, elapsed_s={total}, best={label}, fallback={validation_fallback}`
+
+**File: `undercut_detector.py`**
+
+4. At line 3398 (after `boolean_candidate_total`), log:
+   - `candidate_pool={N}, proxy_count={len(proxy)}, risk_count={len(risk)}, parting_excluded={N}, max_faces={max}, budget_limited={pool > max}`
+
+5. At line 3446 (validation_complete assignment), log:
+   - `checked={len(checked)}, skipped={len(skipped)}, candidate_total={N}, validation_complete={result}`
+
+**Mandatory face-level diagnostic (new function):**
+
+Add a `_dump_face_diagnostic()` helper in `undercut_detector.py` that produces a per-face table for every face in the confirmed/suspected/no-interference sets. The function receives `part`, `precomputed_metrics`, `UndercutDetectionResult`, and the local `interference_by_face` dict (for per-face volume access).
+
+To make proxy and perpendicular-dot status available without `set([])` placeholders:
+- **Proxy status**: computed from `precomputed_metrics` — `fid` is proxy if `metrics[fid].draft_angle_deg < marginal_threshold_deg` (0.5°)
+- **Perpendicular-dot status**: available from `result.parting_face_ids` (the code variable `parting_ids`, which is a dot-product classification `|n·d| ≤ 0.01`, NOT topological parting-line membership)
+- **Risk status**: available from `result.accessibility_risk_face_ids`
+- **Boolean status**: derived from result fields (`boolean_confirmed_face_ids`, `boolean_no_interference_face_ids`, `boolean_failed_face_ids`, `boolean_skipped_face_ids`)
+- **Volume**: from `interference_by_face[fid].volume_mm3` (local dict passed to the helper)
+
+To expose per-face volume to the standalone diagnostic script: add `boolean_volume_by_face: dict[int, float]` to `UndercutDetectionResult` (defined in `undercut_detector.py` line 603), populated from `interference_by_face` at the return site.
+
+Output format:
+```
+face_id | draft_angle | normal        | n·d     | mold_side | risk | proxy | perp_dot | boolean_status | volume_mm3
+--------|-------------|---------------|---------|-----------|------|-------|----------|----------------|----------
+42      | 0.12°       | (0.99,0.02,0) | 0.002   | parting   | no   | yes   | yes      | confirmed      | 0.0031
+117     | 32.1°       | (-0.5,-0.8,0) | -0.846  | core      | yes  | no    | no       | confirmed      | 12.41
+203     | 0.45°       | (0.01,1.0,0)  | 0.008   | parting   | yes  | yes   | yes      | no_interf      | 0.0
+```
+
+This runs for BOTH Part1 +Z AND Part3 (selected direction) during Phase 5 validation (real OCC). The same full diagnostic format is used for both parts.
+
+### Distinguishing evidence
+
+- If T1+Fix D are correct: after excluding perpendicular-dot faces, `boolean_candidate_total` drops to ~10-20, well under 80 budget → `boolean_validation_complete=True` naturally
+- If U1 is correct: the diagnostic will show perpendicular-dot faces (`|n·d| ≤ 0.01`) with non-zero Boolean volume being falsely confirmed — these faces will disappear after Fix D
+- Part3 diagnostic: same full format, verifying that non-principal directions still produce correct undercut classifications and that no genuine undercut is lost by the exclusion
+
+---
+
+## 4. UNDERCUT FIX — IMPLEMENTATION-SPECIFIC FAILURE ANALYSIS AND CANDIDATE EXCLUSION
+
+### Terminology clarification
+
+The code variable `parting_ids` (line 3282) is populated by a **dot-product threshold** classification: `|n·d| ≤ 0.01` (line 3302, hardcoded at line 3285). It is NOT derived from actual parting-line topology (which is computed separately by `parting_line.py` via silhouette edge detection). Throughout this plan, we use **"perpendicular-dot faces"** to describe these faces accurately: faces whose outward normal is nearly perpendicular to the pull direction. The code variable name `parting_ids` is retained for compatibility but does not imply topological parting-line membership.
+
+### 4.1 What `_face_access_direction()` does at |n·d| ≈ 0
+
+`_face_access_direction()` (lines 2217-2227) selects the mold-withdrawal direction for a given face:
+
+```python
+def _face_access_direction(face, pull_direction):
+    signed = face.signed_dot(pull_direction)  # n·d
+    if signed < 0.0:
+        return (-pull_direction[0], -pull_direction[1], -pull_direction[2])
+    return pull_direction
+```
+
+For faces where `|n·d| ≈ 0`:
+- The sign of `n·d` is **numerically unstable** — floating-point noise in the normal computation can flip the sign between `+ε` and `-ε`
+- The function returns either `+d` or `-d` based on this unstable sign
+- **Either choice produces a direction perpendicular to the face normal**, since `n ⊥ d` when `n·d = 0`
+- The mold-side assignment ("cavity half" vs. "core half") has no well-defined physical meaning for these faces
+
+### 4.2 Why the current offset+sweep+intersect formulation produces false positives
+
+`_swept_face_interference_volume()` (line 2766) performs three geometric operations using the access direction from `_face_access_direction()`:
+
+1. **Offset**: translates the face by `epsilon` in the access direction (`gp_Vec(access * epsilon)`, line 2823)
+2. **Sweep**: extrudes the offset face by `sweep_distance` in the same access direction (`gp_Vec(access * sweep_distance)`, line 2832)
+3. **Intersect**: computes `BRepAlgoAPI_Common(part.occ_shape, swept)` (line 2840)
+
+For a face whose normal `n` is perpendicular to pull `d` (i.e., `|n·d| ≈ 0`):
+- The access direction is `±d`, which is **perpendicular to `n`**
+- **Step 1 (offset)**: moves the face laterally along its own surface plane, NOT away from the part material behind it. The face remains at roughly the same distance from the part interior.
+- **Step 2 (sweep)**: extends the face further in the same lateral direction, creating a prism that runs **alongside or through the part body**
+- **Step 3 (intersect)**: this prism necessarily intersects the part solid because it extends through adjacent part material in the pull direction → **non-zero volume that does not represent mold-withdrawal obstruction**
+
+The result represents the fact that part material exists adjacent to the face in the pull direction — trivially true for any face on a closed solid — not that the mold is physically trapped.
+
+**This is a failure specific to this implementation's access-direction formulation** (`_face_access_direction() → ±pull_dir`). A formulation that swept along the face normal, or used local accessibility cones, could analyze perpendicular faces correctly. The exclusion below is a deliberate policy for THIS detector, not a claim about surface-accessibility analysis in general.
+
+### 4.3 Distinguishing face categories
+
+Four independent classifications exist in `detect_undercuts()`, and they must not be conflated:
+
+| Category | Code variable | Condition | Line | Derivation |
+|---|---|---|---|---|
+| **Perpendicular-dot** | `parting_ids` | `\|n·d\| ≤ 0.01` | 3302 | Dot-product threshold — NOT topological parting line |
+| **Proxy undercut** | `proxy_undercut_ids` | `draft_angle < 0.5°` | 3305-3306 | Draft angle threshold |
+| **Accessibility risk** | `risk_face_ids` | `n·d < -threshold` AND `≥1 concave edge` | 3358 via `_compute_accessibility_risk()` | Orientation + edge topology |
+| **Actual parting line** | (separate module) | Silhouette edge topology | `parting_line.py` | NOT used in undercut detection |
+
+Key overlaps and distinctions:
+- Nearly every `proxy_undercut_ids` face is also in `parting_ids` (since `sin(0.5°) = 0.0087 < 0.01`, line 3336 comment)
+- A face CAN be in both `risk_face_ids` AND `parting_ids` if `n·d` is between `-0.01` and `0` with a concave edge
+- `risk_face_ids` requires BOTH core-side orientation AND concave edge topology — it is independent of draft angle
+- `parting_ids` in the code is a perpendicular-dot classification; it is NOT the same as actual parting-line geometry from `parting_line.py`
+
+### 4.4 Proposed exclusion: policy justification for THIS detector
+
+The proposed change at line 3383:
+```python
+perpendicular_set = set(parting_ids)  # faces where |n·d| ≤ 0.01
+check_ids = sorted((set(proxy_undercut_ids) | set(risk_face_ids)) - perpendicular_set)
+```
+
+This is justified as a **deliberate policy for this detector's current swept-face formulation**:
+
+1. **The implementation-specific failure**: when `|n·d| ≤ 0.01`, the access direction selected by `_face_access_direction()` is perpendicular to the face normal. The offset+sweep+intersect sequence produces unreliable (always-positive) results because the swept prism passes through adjacent part material rather than testing mold-withdrawal clearance (see §4.2).
+
+2. **The exclusion threshold matches the existing classification**: `parting_dot_threshold = 0.01` (line 3285) is already used throughout `detect_undercuts()` to identify these faces. We are applying an existing classification, not introducing a new threshold.
+
+3. **This is NOT a claim about Bassi accessibility analysis in general**: perpendicular surfaces are a legitimate category in surface-accessibility methodology. A different formulation (e.g., sweeping along the face normal, or using local accessibility cones) could analyze them correctly. The exclusion is specific to the current `_face_access_direction() → ±pull_dir` formulation.
+
+### 4.5 What about genuine undercuts on perpendicular-dot faces?
+
+A re-entrant feature (hook, snap-fit, lateral slot) near the perpendicular region consists of multiple faces:
+- The **walls** of the feature extend into the core side, with normals having significant `n·d` components (i.e., `n·d << -0.01`). These are core-side faces caught by `_compute_accessibility_risk()` (core-side + concave edge → risk face → Boolean-tested).
+- The **tip** of the feature may have a perpendicular normal. But the tip alone does not trap the mold — the walls are the obstruction, and they ARE tested.
+
+**This claim MUST be verified on real geometry before implementation — see §4.6.**
+
+### 4.6 Pre-implementation verification requirements (MANDATORY)
+
+Before applying the exclusion, run the current (UNMODIFIED) code on real OCC geometry and produce the following evidence:
+
+**Part1 +Z:**
+1. List ALL faces in the current Boolean candidate pool (`check_ids`) that have `|n·d| ≤ 0.01`
+2. For each such face that is Boolean-confirmed as undercut: show that its non-zero intersection volume is caused by the access-direction/sweep failure (access direction perpendicular to face normal → prism through part body)
+3. Verify these are NOT genuine undercuts by inspecting their geometry (vertical walls, not re-entrant hooks)
+4. For every genuine re-entrant undercut feature on Part1: verify that at least one adjacent face with `|n·d| > 0.01` is in `risk_face_ids` and would catch the feature
+
+**Part3 (selected direction):**
+5. Perform the same analysis: list perpendicular-dot faces in `check_ids`, verify their Boolean results are implementation artifacts, verify no genuine undercut is lost by the exclusion
+
+**STOP condition**: If any genuine undercut exists on a perpendicular-dot face that is NOT covered by an adjacent non-perpendicular risk face, do NOT proceed with blanket exclusion. Instead, redesign the candidate classification or access-direction selection.
+
+### Fix D: Exclude perpendicular-dot faces from Boolean candidate pool
+
+**File: `backend/geometry/undercut_detector.py`**
+
+**Change at line 3383:**
+
+Current:
+```python
+check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))
+```
+
+New:
+```python
+# Perpendicular-dot faces (|n·d| ≤ parting_dot_threshold) are excluded from
+# Boolean swept-face validation because the current access-direction formulation
+# (_face_access_direction → ±pull_dir) selects a sweep direction perpendicular
+# to the face normal for these faces. The offset+sweep+intersect sequence then
+# produces unreliable (always-positive) results: the swept prism passes through
+# adjacent part material rather than testing mold-withdrawal clearance.
+# This is a policy for THIS detector's formulation, not a general property of
+# surface-accessibility analysis. See plan §4.2 for the full analysis.
+perpendicular_set = set(parting_ids)
+check_ids = sorted((set(proxy_undercut_ids) | set(risk_face_ids)) - perpendicular_set)
+```
+
+**Impact on `boolean_validation_complete`:**
+
+Before fix: `boolean_candidate_total ≈ 230` (Part1 +Z), `max_faces=80` → `checked ≤ 80 < 230` → `validation_complete=False`
+
+After fix: `boolean_candidate_total ≈ 15-20` (only non-perpendicular risk faces), `max_faces=80` → `checked ≤ 20 < 80` → all candidates checked → `validation_complete=True`
+
+The semantic meaning of `boolean_validation_complete` is preserved: every candidate in the pool has been checked. The pool is smaller because faces that the current formulation cannot reliably analyze have been excluded, not because the definition of "complete" was weakened.
+
+### Fix E: Suppress `no_interference` rendering
+
+**File: `backend/api/main.py`**
+
+**Change at line 416-417 in `_undercut_mesh_visual_payload()`:**
+
+Current:
+```python
+elif face_id in no_interference_ids:
+    style_key = "no_interference"
+```
+
+New:
+```python
+elif face_id in no_interference_ids:
+    style_key = "accessible"
+```
+
+The data remains in the API response (`boolean_no_interference_face_ids`) for programmatic access. The face just renders as neutral gray instead of pale green.
+
+---
+
+## 5. PERFORMANCE FIX
+
+### Primary fix: candidate pool reduction (Fix D) solves both correctness AND performance
+
+With perpendicular-dot faces excluded from the Boolean candidate pool:
+
+| Metric | Before Fix D | After Fix D |
+|---|---|---|
+| Candidate pool (Part1 +Z) | ~230 (proxy+risk) | ~15-20 (non-perpendicular risk only) |
+| Budget-limited? | Yes (230 > 80) | No (20 < 80) |
+| `boolean_validation_complete` | False | True |
+| Suitability gate | Always rejects | Can accept |
+| Boolean ops per direction | 80 (budget-capped) | ~15-20 (all candidates) |
+| Time per direction | ~8-16s | ~2-4s |
+
+### Secondary fix: Remove expanded validation (Fix B+C)
+
+**File: `backend/geometry/direction_optimizer.py`**
+
+**Change at lines 1157-1165 (Stage 1 early exit), 1230-1238 (Stage 2), 1368-1376 (Stage 3):**
+
+Replace all three expanded validation calls:
+```python
+optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
+    ...
+    max_boolean_faces=cfg.final_direction_max_boolean_faces,  # 150
+    boolean_check_all_core_side=True,
+)
+```
+
+With standard-parameter calls:
+```python
+optimal_undercuts, cache_hit = _cached_detect_boolean_undercuts(
+    ...
+    max_boolean_faces=cfg.boolean_refine_max_faces,  # 80
+)
+```
+
+**Effect:** The final pass uses the SAME parameters as the per-candidate scoring pass. Since the winning direction was already Boolean-refined during candidate evaluation with identical parameters, `_lookup_direction_cache()` finds a matching entry → **cache HIT** → zero additional Boolean ops.
+
+When `mutate=True` and a cache hit occurs, `_apply_undercut_result_to_part()` (line 363) applies face overlays from the cached result. This is correct and fast.
+
+### Tertiary fix: Remove `boolean_check_all_core_side` infrastructure
+
+Since the expanded validation is removed, the `boolean_check_all_core_side` parameter and `final_direction_max_boolean_faces` config are dead code.
+
+**Files:**
+- `undercut_detector.py`: Remove `boolean_check_all_core_side` parameter from `detect_undercuts()` (line 3235) and the associated `check_ids` expansion block (lines 3385-3397)
+- `direction_optimizer.py`: Remove `boolean_check_all_core_side` from `DirectionUndercutCacheKey` (line 55-62), `_direction_cache_key()` (line 303-321), `_lookup_direction_cache()` (line 337-361), `_cached_detect_boolean_undercuts()` (line 400-439)
+- `config.py`: Remove `final_direction_max_boolean_faces` from `DirectionSearchSettings`
+- `config.yaml`: Remove `final_direction_max_boolean_faces: 150` (line 71)
+
+### Expected performance after all fixes
+
+With `suitability_max_bad_draft_pct` unchanged at 30.0:
+
+- Stage 1: +Z has `bad_pct=71.7% > 30.0%` → all 6 principals fail cheap screen → NO early exit
+- Stage 2: some diagonals may pass cheap screen → Boolean-refine with ~15-20 candidates → `validation_complete=True` → possible early exit
+- Stage 3 (if needed): full search, ~5 Boolean refinements with ~15-20 candidates each
+- Final pass: cache hit (zero cost)
+
+| Phase | Boolean-refined dirs | Candidates per dir | OCC ops | Time est. |
+|---|---|---|---|---|
+| Initial +Z | 1 | ~15 risk faces | ~15 | ~2s |
+| Stage 1 cheap | 6 | 0 (boolean_refine=False) | 0 | ~0.5s |
+| Stage 2 cheap | 12 | 0 | 0 | ~1s |
+| Stage 2 Boolean | ~4 | ~15 each | ~60 | ~8s |
+| Stage 3 (if needed) | ~5 | ~15 each | ~75 | ~10s |
+| Final pass | 1 | **cache hit** | 0 | ~0s |
+| **Total (worst case)** | | | **~150** | **~22s** |
+
+Pre-R1-R5 baseline was ~13s. Target: < 30s. This is achievable.
+
+---
+
+## 6. DIRECTION-SELECTION FIX
+
+### How +Z correctly wins Part1
+
+Even without Stage 1 early exit (threshold stays at 30.0):
+
+1. Stage 2/3 scores +Z and many other directions cheaply
+2. +Z gets Boolean-refined: ~15 risk faces checked, few/no confirmed undercuts → low score
+3. +Z has `axis_preference` penalty = 0 (perfect principal alignment, weight 0.25)
+4. The scoring formula (`direction_optimizer.py:598-673`) favors +Z because:
+   - Low `confirmed_undercut_pct` (few Boolean-confirmed faces)
+   - Zero axis preference penalty
+   - Bad draft contribution is high but CONSISTENT across most directions for Part1 (the part has many walls regardless of direction)
+5. +Z wins as best validated direction
+6. `validation_fallback=False` because +Z has `boolean_refined=True` and `boolean_validation_complete=True`
+
+### How Part3 handles non-principal directions
+
+Part3 (414 faces, 68mm diagonal) has different geometry. Its optimal direction may be off-axis:
+- All three stages still execute when no early exit occurs
+- The scoring formula applies identically to all directions
+- Boolean candidate pool (risk faces only) varies per direction based on geometry
+- The `axis_preference` penalty (weight 0.25) provides only a tiebreaker
+- Part3 freely selects diagonal or spherical directions based on scoring
+
+### Verification
+
+Both parts must be validated with the face-level diagnostic (Phase 0) before declaring correctness.
+
+---
+
+## 7. FRONTEND FIX
+
+### Only change: suppress `no_interference` green rendering (Fix E in Section 4)
+
+No other frontend changes needed. The confirmed/suspected distinction is already correctly wired:
+- `critical_boolean_confirmed` = red (RGB 255,50,50) — confirmed undercuts
+- `suspected_undercut` = amber (RGB 255,200,80) — inconclusive Boolean
+- `no_interference` → changed to `accessible` = neutral gray (Fix E)
+- `proxy_undercut` = light orange (RGB 255,230,150) — heuristic evidence only
+
+The legend data and API response fields remain unchanged.
+
+---
+
+## 8. TEST PLAN
+
+### New tests
+
+**File: `tests/test_undercut_semantic_contract.py`** (append)
+
+| Test | Scenario | Expected |
+|---|---|---|
+| `test_perpendicular_dot_faces_excluded_from_boolean_candidates` | Face with `|n·d|=0.005`, draft=0.3° (proxy + perpendicular-dot) | NOT in `boolean_checked_face_ids` |
+| `test_risk_face_not_perpendicular_is_boolean_tested` | Face with `n·d=-0.5`, concave edge (risk, NOT perpendicular-dot) | IN `boolean_checked_face_ids` |
+| `test_perpendicular_risk_face_excluded_if_also_perpendicular` | Face with `n·d=-0.005` (perpendicular-dot + risk) | NOT in `boolean_checked_face_ids` (perpendicular-dot exclusion takes precedence) |
+| `test_no_interference_rendered_as_accessible` | API-level: `no_interference` face in mesh payload | `undercut_classification == "accessible"` |
+| `test_vertical_wall_not_confirmed_undercut` | Vertical wall face (n·d≈0, draft≈0°) with Boolean | NOT in `undercut_face_ids`; IS in `suspected_undercut_face_ids` |
+| `test_pool_reduction_enables_validation_complete` | 20 candidates, max_faces=80, all 20 checked | `boolean_validation_complete=True` (naturally, not redefined) |
+
+**File: `tests/test_direction_optimizer.py`** (append/update)
+
+| Test | Scenario | Expected |
+|---|---|---|
+| `test_final_pass_uses_standard_params` | Mock optimizer to select a direction | Final `_cached_detect_boolean_undercuts` uses `max_faces=80`, NOT 150; no `boolean_check_all_core_side` |
+| `test_final_pass_is_cache_hit` | Direction already Boolean-refined | Final call returns `cache_hit=True` |
+
+### Existing test updates
+
+- `test_direction_optimizer.py`: Remove `boolean_check_all_core_side` kwarg from mock functions (parameter removed)
+- `test_undercut_semantic_contract.py`: Verify T6 (budget exhaustion) still correctly reports `boolean_validation_complete=False` when checked < candidate_total — no semantic change to this test
+
+### Real OCC regression commands
+
+```bash
+# Part1 face-level diagnostic (Phase 5 — MANDATORY before declaring correctness)
+# Reports ALL promised fields: face_id, draft_angle, normal, n·d, mold_side,
+# risk, proxy, perp_dot (perpendicular-dot status), boolean_status, volume
+python -c "
+import time
+from backend.geometry.step_loader import load_step_cached
+from backend.geometry.undercut_detector import detect_undercuts
+from backend.geometry.draft_analyzer import precompute_directional_metrics
+from backend.config import settings
+
+part = load_step_cached('data/parts/Part1.stp')
+d = (0.0, 0.0, 1.0)
+metrics = precompute_directional_metrics(part, d)
+t0 = time.perf_counter()
+r = detect_undercuts(part, d, mutate=False, boolean_refine=True, max_boolean_faces=80)
+elapsed = time.perf_counter() - t0
+
+# Compute proxy set from draft metrics (draft_angle < marginal_threshold)
+marginal_thresh = settings.dfm.draft.marginal_threshold_deg  # 0.5
+proxy_set = {fid for fid, m in metrics.items() if m.draft_angle_deg < marginal_thresh}
+perp_set = set(r.parting_face_ids)
+risk_set = set(r.accessibility_risk_face_ids)
+confirmed_set = set(r.undercut_face_ids)
+no_interf_set = set(r.boolean_no_interference_face_ids)
+failed_set = set(r.boolean_failed_face_ids)
+skipped_set = set(r.boolean_skipped_face_ids)
+# Per-face volume from boolean_volume_by_face (added to result)
+vol_map = getattr(r, 'boolean_volume_by_face', {})
+
+print(f'elapsed={elapsed:.1f}s confirmed={len(r.undercut_face_ids)} suspected={len(r.suspected_undercut_face_ids)} no_interf={len(r.boolean_no_interference_face_ids)} validation_complete={r.boolean_validation_complete}')
+print(f'candidate_total={r.boolean_candidate_count} checked={len(r.boolean_checked_face_ids)} failed={len(r.boolean_failed_face_ids)} skipped={len(r.boolean_skipped_face_ids)}')
+
+def _status(fid):
+    if fid in confirmed_set: return 'confirmed'
+    if fid in no_interf_set: return 'no_interf'
+    if fid in failed_set: return 'failed'
+    if fid in skipped_set: return 'skipped'
+    return 'not_checked'
+
+def _print_face(fid, label=''):
+    f = part.get_face(fid)
+    m = metrics.get(fid)
+    if not m: return
+    vol = vol_map.get(fid, '?')
+    vol_str = f'{vol:.4f}' if isinstance(vol, float) else str(vol)
+    print(f'  face={fid:3d} draft={m.draft_angle_deg:.2f} n=({f.normal[0]:.3f},{f.normal[1]:.3f},{f.normal[2]:.3f}) nd={m.signed_dot:.4f} side={m.mold_side} risk={fid in risk_set} proxy={fid in proxy_set} perp_dot={fid in perp_set} status={_status(fid)} vol={vol_str}')
+
+print()
+print('=== CONFIRMED UNDERCUTS ===')
+for fid in sorted(r.undercut_face_ids):
+    _print_face(fid)
+print()
+print('=== SUSPECTED UNDERCUTS ===')
+for fid in sorted(r.suspected_undercut_face_ids):
+    _print_face(fid)
+print()
+print('=== NO INTERFERENCE ===')
+for fid in sorted(r.boolean_no_interference_face_ids):
+    _print_face(fid)
+print()
+print('=== PERPENDICULAR-DOT FACES IN CANDIDATE POOL (pre-exclusion analysis) ===')
+checked_set = set(r.boolean_checked_face_ids)
+for fid in sorted(perp_set & checked_set):
+    _print_face(fid)
+"
+
+# Part1 direction optimization regression
+python -c "
+from backend.geometry.step_loader import load_step_cached
+from backend.geometry.direction_optimizer import optimize_mold_direction
+import time
+part = load_step_cached('data/parts/Part1.stp')
+t0 = time.perf_counter()
+r = optimize_mold_direction(part)
+elapsed = time.perf_counter() - t0
+print(f'Part1: {elapsed:.1f}s stage={r.search_stage_reached} dir=({r.best_direction[0]:.3f},{r.best_direction[1]:.3f},{r.best_direction[2]:.3f}) score={r.best_score:.4f}')
+print(f'  confirmed={len(r.optimal_undercuts.undercut_face_ids)} suspected={len(r.optimal_undercuts.suspected_undercut_face_ids)} no_interf={len(r.optimal_undercuts.boolean_no_interference_face_ids)}')
+print(f'  validation_complete={r.optimal_undercuts.boolean_validation_complete} fallback={r.validation_fallback}')
+assert r.best_direction[2] > 0.9, f'+Z expected, got {r.best_direction}'
+assert r.validation_fallback == False
+assert elapsed < 30, f'Performance regression: {elapsed:.1f}s'
+"
+
+# Part3 face-level diagnostic (same full format as Part1 — MANDATORY)
+python -c "
+import time
+from backend.geometry.step_loader import load_step_cached
+from backend.geometry.undercut_detector import detect_undercuts
+from backend.geometry.direction_optimizer import optimize_mold_direction
+from backend.geometry.draft_analyzer import precompute_directional_metrics
+from backend.config import settings
+
+part = load_step_cached('data/parts/Part3.stp')
+
+# First find the optimal direction
+t0 = time.perf_counter()
+opt = optimize_mold_direction(part)
+elapsed_opt = time.perf_counter() - t0
+d = opt.best_direction
+print(f'Part3 optimization: {elapsed_opt:.1f}s dir=({d[0]:.3f},{d[1]:.3f},{d[2]:.3f}) score={opt.best_score:.4f}')
+print(f'  validation_complete={opt.optimal_undercuts.boolean_validation_complete} fallback={opt.validation_fallback}')
+assert elapsed_opt < 60, f'Performance regression: {elapsed_opt:.1f}s'
+
+# Then run full face-level diagnostic for the selected direction
+metrics = precompute_directional_metrics(part, d)
+r = detect_undercuts(part, d, mutate=False, boolean_refine=True, max_boolean_faces=80)
+
+marginal_thresh = settings.dfm.draft.marginal_threshold_deg
+proxy_set = {fid for fid, m in metrics.items() if m.draft_angle_deg < marginal_thresh}
+perp_set = set(r.parting_face_ids)
+risk_set = set(r.accessibility_risk_face_ids)
+confirmed_set = set(r.undercut_face_ids)
+no_interf_set = set(r.boolean_no_interference_face_ids)
+failed_set = set(r.boolean_failed_face_ids)
+skipped_set = set(r.boolean_skipped_face_ids)
+vol_map = getattr(r, 'boolean_volume_by_face', {})
+
+def _status(fid):
+    if fid in confirmed_set: return 'confirmed'
+    if fid in no_interf_set: return 'no_interf'
+    if fid in failed_set: return 'failed'
+    if fid in skipped_set: return 'skipped'
+    return 'not_checked'
+
+def _print_face(fid):
+    f = part.get_face(fid)
+    m = metrics.get(fid)
+    if not m: return
+    vol = vol_map.get(fid, '?')
+    vol_str = f'{vol:.4f}' if isinstance(vol, float) else str(vol)
+    print(f'  face={fid:3d} draft={m.draft_angle_deg:.2f} n=({f.normal[0]:.3f},{f.normal[1]:.3f},{f.normal[2]:.3f}) nd={m.signed_dot:.4f} side={m.mold_side} risk={fid in risk_set} proxy={fid in proxy_set} perp_dot={fid in perp_set} status={_status(fid)} vol={vol_str}')
+
+print(f'\\ncandidate_total={r.boolean_candidate_count} checked={len(r.boolean_checked_face_ids)} validation_complete={r.boolean_validation_complete}')
+print()
+print('=== CONFIRMED UNDERCUTS ===')
+for fid in sorted(r.undercut_face_ids):
+    _print_face(fid)
+print()
+print('=== SUSPECTED UNDERCUTS ===')
+for fid in sorted(r.suspected_undercut_face_ids):
+    _print_face(fid)
+print()
+print('=== NO INTERFERENCE ===')
+for fid in sorted(r.boolean_no_interference_face_ids):
+    _print_face(fid)
+print()
+print('=== PERPENDICULAR-DOT FACES IN CANDIDATE POOL ===')
+checked_set = set(r.boolean_checked_face_ids)
+for fid in sorted(perp_set & checked_set):
+    _print_face(fid)
+
+# Verify no genuine undercut lost: check that every confirmed undercut face
+# has |n·d| > 0.01 (i.e., is NOT a perpendicular-dot face)
+perp_confirmed = perp_set & confirmed_set
+if perp_confirmed:
+    print(f'\\nWARNING: {len(perp_confirmed)} perpendicular-dot faces are confirmed undercuts: {sorted(perp_confirmed)}')
+    print('Inspect these manually — if genuine, do NOT proceed with blanket exclusion.')
+else:
+    print(f'\\nOK: No perpendicular-dot faces in confirmed undercuts.')
+"
+
+# Full test suite
+pytest tests/ -v --tb=short
+```
+
+---
+
+## 9. ACCEPTANCE CRITERIA
+
+| # | Criterion | Measurement | Pass |
+|---|---|---|---|
+| AC1 | Part1 direction ≈ +Z | `best_direction[2] > 0.9` | Yes/No |
+| AC2 | Part1 runtime < 30s | Wall-clock `optimize_mold_direction()` in Docker/conda | Yes/No |
+| AC3 | Part1 `validation_fallback == False` | Result field | Yes/No |
+| AC4 | Part1 `boolean_validation_complete == True` | Result field (via pool reduction, NOT redefinition) | Yes/No |
+| AC5 | No extra green faces in Part1 visualization | `no_interference` faces rendered as neutral/accessible | Yes/No |
+| AC6 | Perpendicular-dot faces NOT confirmed undercuts | Face-level diagnostic: no face with `|n·d| ≤ 0.01` in `undercut_face_ids` | Yes/No |
+| AC7 | Confirmed undercuts are genuine re-entrant features | Face-level diagnostic: confirmed faces have `|n·d| > 0.01` (non-perpendicular) | Yes/No |
+| AC8 | Part3 produces a valid direction with full face-level diagnostic | No timeout, no crash, direction norm ≈ 1.0, full diagnostic produced, no perpendicular-dot face in confirmed undercuts without adjacent risk face coverage | Yes/No |
+| AC9 | Draft analysis unchanged | `draft.bad_pct`, `draft.good_pct` identical pre/post | Yes/No |
+| AC10 | All existing tests pass | `pytest tests/ -v` | Yes/No |
+| AC11 | `confirmed ∩ suspected == ∅` | R1-R5 invariant preserved | Yes/No |
+| AC12 | `boolean_validation_complete` semantics unchanged | True IFF all candidates checked/resolved; partial coverage is False | Yes/No |
+| AC13 | `suitability_max_bad_draft_pct` unchanged | Config value remains 30.0 | Yes/No |
+| AC14 | Face-level diagnostic produced for Part1 +Z | Full report with all fields: face_id, draft_angle, normal, n·d, mold_side, risk, proxy, perp_dot, boolean_status, volume | Yes/No |
+| AC15 | Face-level diagnostic produced for Part3 (selected direction) | Same full format as Part1; no perpendicular-dot face in confirmed undercuts without adjacent risk coverage | Yes/No |
+
+---
+
+## 10. FILES TO CHANGE
+
+| File | Changes | Why |
+|---|---|---|
+| `backend/geometry/undercut_detector.py` | (1) Line 3383: exclude `parting_ids` (perpendicular-dot faces) from `check_ids` with implementation-specific justification comment (see §4.2). (2) Lines 3385-3397: remove `boolean_check_all_core_side` block. (3) Line 3235: remove `boolean_check_all_core_side` parameter. (4) Add instrumentation logging at lines 3398, 3446. (5) Add `boolean_volume_by_face: dict[int, float]` field to `UndercutDetectionResult` (line ~603), populated from `interference_by_face` at the return site. (6) Add `_dump_face_diagnostic()` helper with all promised fields (proxy from draft metrics, perp_dot from `parting_ids`, volume from `interference_by_face`). | Fixes U1 (false positives), reduces candidate pool (fixes T1 indirectly), enables full diagnostic |
+| `backend/geometry/direction_optimizer.py` | (1) Lines 1157-1165, 1230-1238, 1368-1376: replace expanded validation with standard params. (2) Remove `boolean_check_all_core_side` from `DirectionUndercutCacheKey`, `_direction_cache_key()`, `_lookup_direction_cache()`, `_cached_detect_boolean_undercuts()`. (3) Add instrumentation logging. | Fixes T2 (redundant expanded validation), simplifies cache |
+| `backend/api/main.py` | Line 416-417: render `no_interference` as `accessible`. | Fixes U2 (extra green face) |
+| `backend/config.py` | Remove `final_direction_max_boolean_faces` from `DirectionSearchSettings`. | Dead config cleanup |
+| `config.yaml` | Remove `final_direction_max_boolean_faces: 150` (line 71). | Dead config cleanup |
+| `tests/test_undercut_semantic_contract.py` | Add 6 new tests (see Test Plan section). | Regression coverage for parting exclusion and rendering |
+| `tests/test_direction_optimizer.py` | Remove `boolean_check_all_core_side` from mocks. Add 2 new tests. | Interface cleanup + regression |
+| `CHANGELOG.md` | Append entry documenting all changes with geometric rationale. | Project tracking |
+| `STATUS.md` | Update undercut detector and direction optimizer rows. | Project tracking |
+| `TODO.md` | Mark completed items, note real-OCC validation results. | Project tracking |
+
+---
+
+## 11. FILES NOT TO CHANGE
+
+| File/Module | Reason |
+|---|---|
+| `backend/geometry/parting_line.py` | Unrelated pipeline |
+| `backend/geometry/core_cavity.py` | Unrelated pipeline |
+| `backend/geometry/side_core.py` | Unrelated pipeline |
+| `backend/geometry/draft_analyzer.py` | Working correctly, explicitly protected |
+| `backend/geometry/step_loader.py` | Stable, no changes needed |
+| `backend/agent/` | Unrelated pipeline |
+| `backend/report/` | Unrelated pipeline |
+| `frontend/app.py` | No frontend changes needed (backend fix sufficient) |
+| `data/parts/` | Read-only fixtures, never modify |
+| `backend/models/geometry_models.py` | R1-R5 fields preserved; no new fields needed |
+
+---
+
+## 12. RISK / ROLLBACK PLAN
+
+### Risk 1: Part3 loses genuine undercuts after perpendicular-dot exclusion
+
+**Risk:** Part3's optimal direction may create genuine undercuts on perpendicular-dot faces that would be excluded by Fix D.
+
+**Mitigation:** The full face-level diagnostic (Phase 5) must be run on Part3 to verify. If a genuine undercut is found on a perpendicular-dot face that is NOT covered by an adjacent non-perpendicular risk face, the exclusion must not proceed as blanket policy — the candidate classification or access-direction selection must be redesigned instead (see §4.6 STOP condition). The analysis in §4.5 predicts this won't happen: re-entrant feature walls have `|n·d| >> 0.01` and are caught by `_compute_accessibility_risk()`.
+
+**Rollback:** Revert line 3383 to original `check_ids = sorted(set(proxy_undercut_ids) | set(risk_face_ids))`.
+
+### Risk 2: Candidate pool still exceeds budget after perpendicular-dot exclusion
+
+**Risk:** For some Part3 direction, `risk_face_ids` alone may exceed 80 → `boolean_validation_complete=False` → suitability gate still rejects.
+
+**Mitigation:** Monitor `boolean_candidate_total` in instrumentation. If risk faces exceed 80 for Part3, the budget (`boolean_refine_max_faces`) may need to be raised for that part, OR the risk heuristic may need tightening. This would be a separate, evidence-driven follow-up.
+
+**Rollback:** N/A — `boolean_validation_complete` semantics are preserved; the gate correctly reports incomplete validation when budget is exceeded.
+
+### Risk 3: `boolean_check_all_core_side` removal breaks tests
+
+**Risk:** Existing tests may reference the removed parameter.
+
+**Mitigation:** Search for all `boolean_check_all_core_side` references before removal. Known locations: `test_direction_optimizer.py` (2 mock functions), `test_undercut_semantic_contract.py` (possible references). Update mocks to remove the parameter.
+
+**Rollback:** Keep the parameter but hardcode to `False` everywhere (effectively disabled).
+
+### Git safety
+
+All changes are on the `feat/pull-direction` branch. Main branch is untouched. Each phase produces an independently testable commit. If any phase causes regression, that commit can be reverted without losing the others.
+
+---
+
+## Implementation Order
+
+```
+Phase 0: Instrumentation + face-level diagnostic function + boolean_volume_by_face field
+         (additive, no control flow changes)
+   ↓
+Phase 0b: Pre-implementation baseline diagnostic (run UNMODIFIED code on Part1 +Z
+          to establish which perpendicular-dot faces are false-positive confirmed —
+          this is the §4.6 pre-implementation evidence, run before Fix D)
+   ↓
+Phase 1: Exclude perpendicular-dot faces from Boolean candidates (Fix D — core correctness fix)
+   ↓
+Phase 2: Remove expanded validation / boolean_check_all_core_side (Fix B+C — performance)
+   ↓
+Phase 3: Suppress no_interference rendering (Fix E — visual fix)
+   ↓
+Phase 4: Tests (new + updated, run full mock-based suite)
+   ↓
+Phase 5: Real OCC validation with full face-level diagnostic (Part1 + Part3 in Docker/conda)
+         — MANDATORY: same format for both parts, verify §4.6 requirements
+   ↓
+Phase 6: Documentation (CHANGELOG, STATUS, TODO)
+```
+
+Each phase is independently testable. Phase 0b establishes the baseline evidence that perpendicular-dot faces produce false positives under the current formulation. Phase 5 is the decisive validation gate — correctness is not declared until the face-level diagnostic confirms that:
+1. No perpendicular-dot face appears in confirmed undercuts (post-fix)
+2. Every confirmed undercut is a genuine re-entrant feature (non-perpendicular risk face)
+3. No genuine undercut is lost by the exclusion (Part3 coverage check)
