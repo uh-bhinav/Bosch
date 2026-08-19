@@ -1902,3 +1902,101 @@ class TestAccessibilityRisk:
         assert result_with.accessibility_risk_area_mm2 == pytest.approx(
             result_without.accessibility_risk_area_mm2
         )
+
+
+class TestConcaveNeighborFeatureClosure:
+    """
+    Regression tests for the 2026-08-19 grouping fix (see CHANGELOG.md):
+    a face with genuine undercut evidence sharing a CONCAVE edge with an
+    immediately adjacent face is the SAME physical notch/pocket feature as
+    that neighbor, even when the neighbor's own individual evidence never
+    independently flagged it. These test the GEOMETRIC RULE itself (any
+    flagged-face/concave-neighbor pair, on synthetic geometry) -- never
+    Part1's specific face IDs, which appear nowhere in this file.
+    """
+
+    def test_concave_neighbor_is_merged_into_the_same_feature(self):
+        """
+        Face 0 is zero-draft (flagged, proxy undercut evidence). Face 1 is
+        perfectly pull-aligned (never independently flagged) but shares a
+        CONCAVE edge with face 0. detect_undercuts must report ONE feature
+        containing both faces, not two separate single-face features.
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        flagged_face = _make_face(0, (1.0, 0.0, 0.0))  # perpendicular to pull -> zero-draft
+        clear_face = _make_face(1, (0.0, 0.0, 1.0))  # aligned with pull -> never flagged alone
+        concave_edge = _make_edge(0, [0, 1], convexity="concave")
+        part = _make_part(
+            [flagged_face, clear_face],
+            adjacency={0: [1], 1: [0]},
+            edges=[concave_edge],
+            face_to_edges={0: [0], 1: [0]},
+        )
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert len(result.features) == 1
+        assert set(result.features[0].face_ids) == {0, 1}
+
+    def test_convex_shared_edge_does_not_merge_neighbor(self):
+        """
+        Same layout as above, but the edge SHARED WITH THE NEIGHBOR is
+        CONVEX (an ordinary outward corner, not a pocket) -- the neighbor
+        must stay excluded. Face 0 also carries its own separate concave
+        edge (not shared with face 1) so it stays genuinely flagged on its
+        own merits, isolating "does a convex shared edge pull in a
+        neighbor" from the unrelated convexity-suppression mechanism
+        (an all-convex/tangent-edged zero-draft face is its own, different,
+        pre-existing false-positive guard -- not what this test targets).
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        flagged_face = _make_face(0, (1.0, 0.0, 0.0))
+        clear_face = _make_face(1, (0.0, 0.0, 1.0))
+        own_concave_edge = _make_edge(0, [0], convexity="concave")
+        shared_convex_edge = _make_edge(1, [0, 1], convexity="convex")
+        part = _make_part(
+            [flagged_face, clear_face],
+            adjacency={0: [1], 1: [0]},
+            edges=[own_concave_edge, shared_convex_edge],
+            face_to_edges={0: [0, 1], 1: [1]},
+        )
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert len(result.features) == 1
+        assert result.features[0].face_ids == [0]
+
+    def test_hub_face_touching_two_flagged_features_never_bridges_them(self):
+        """
+        Faces 0 and 2 are each independently flagged (zero-draft) but NOT
+        adjacent to each other -- both are adjacent to face 1 (a hub, e.g.
+        a central boss) via a concave edge. Face 1 must NOT be added to
+        either feature, and features 0 and 2 must NOT be merged into one:
+        a closure candidate concave-bordering faces from TWO DIFFERENT
+        already-flagged groups is a structural connector between distinct
+        physical features, never part of just one of them (Part1's 4
+        cantilever legs sharing one central boss face is the real case this
+        guards against).
+        """
+        from backend.geometry.undercut_detector import detect_undercuts
+
+        face_a = _make_face(0, (1.0, 0.0, 0.0))  # zero-draft, flagged
+        hub_face = _make_face(1, (0.0, 0.0, 1.0))  # never independently flagged
+        face_b = _make_face(2, (0.0, 1.0, 0.0))  # zero-draft, flagged, separate feature
+        edge_a = _make_edge(0, [0, 1], convexity="concave")
+        edge_b = _make_edge(1, [1, 2], convexity="concave")
+        part = _make_part(
+            [face_a, hub_face, face_b],
+            adjacency={0: [1], 1: [0, 2], 2: [1]},
+            edges=[edge_a, edge_b],
+            face_to_edges={0: [0], 1: [0, 1], 2: [1]},
+        )
+
+        result = detect_undercuts(part, (0.0, 0.0, 1.0), mutate=False, boolean_refine=False)
+
+        assert len(result.features) == 2
+        all_reported_faces = {fid for f in result.features for fid in f.face_ids}
+        assert 1 not in all_reported_faces
+        assert {frozenset(f.face_ids) for f in result.features} == {frozenset({0}), frozenset({2})}

@@ -23,7 +23,13 @@ dfm:
     # O24: max concurrent isolated fresh-child undercut-detection processes
     # per optimize_mold_direction() call. 1 = O22's original sequential
     # behavior. See DirectionSearchSettings.direction_parallelism docstring.
-    direction_parallelism: 6
+    # 2026-08-19: raised 6 -> 8 to match this machine's physical core count
+    # (measured via `sysctl hw.physicalcpu`) -- each unit is a real, isolated
+    # OS subprocess doing genuine OCC Boolean work (O22), so throughput is
+    # bounded by physical cores, not an arbitrary choice. Live-measured
+    # before/after on Part1.stp: see CHANGELOG.md's 2026-08-19 entry for the
+    # actual wall-clock numbers this was validated against.
+    direction_parallelism: 8
     boolean_refine_score_margin: 0.25
     # D-042 fix: g=n.d tolerance for "geometrically tangent to the pull
     # direction" -- below this, the swept-volume Boolean test is not

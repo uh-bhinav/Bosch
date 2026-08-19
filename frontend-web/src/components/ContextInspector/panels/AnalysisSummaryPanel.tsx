@@ -23,6 +23,7 @@ import { useState } from 'react';
 import { describeAnalysisOutcome } from '../../../analysis/describeAnalysisOutcome';
 import { runPartingLineOnly } from '../../../analysis/runIndividualAnalyses';
 import { runManualAnalysis } from '../../../analysis/runManualAnalysis';
+import { undercutCategoryOverlayColorHex } from '../../../geometry/overlayColors';
 import { useAnalysisStore, type CoreCavityLayers } from '../../../store/analysisStore';
 import { AuthorizationEditor } from './AuthorizationEditor';
 import { Legend } from './Legend';
@@ -127,7 +128,15 @@ function CoreCavityExtras() {
             })),
             { color: '#c026d3', label: 'Core Pin — Purple' },
             { color: 'var(--vis-side-action)', label: 'Side Action (delegated faces, colored per group)' },
-            { color: '#ff2020', label: 'Undercut (confirmed evidence)' },
+            { color: undercutCategoryOverlayColorHex('proxy_undercut') ?? '#ff2020', label: 'Undercut (confirmed evidence)' },
+            {
+              color: undercutCategoryOverlayColorHex('tangent_boundary_undercut') ?? '#c96060',
+              label: 'Undercut — tangent/zero-draft boundary face (same feature, not independently confirmed)',
+            },
+            {
+              color: undercutCategoryOverlayColorHex('ray_verified_clear') ?? '#5fb894',
+              label: 'Ray-verified clear (geometric clearance check, not Boolean proof)',
+            },
           ]}
         />
       </section>

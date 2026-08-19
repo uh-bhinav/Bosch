@@ -2,6 +2,176 @@
 
 > **Append-only.** Add new entries at the top. Format: `### YYYY-MM-DD — Summary`
 
+### 2026-08-19c — Undercut visual grading: tangent/zero-draft boundary faces now distinct (faint) from their genuinely backward-facing feature companion; `ray_verified_clear` now actually painted on the model
+
+**Why.** The previous pass's grouping fix correctly merged each tangent/
+zero-draft face with its concave-edge-linked companion into one reported
+feature, but `_undercut_mesh_visual_payload` then painted BOTH members of
+every pair identically pure-red -- overstating the tangent member's own
+evidence (a face merely tangent to the pull direction sits AT the
+parting-line boundary, an ambiguity, not independently confirmed trapped
+material) and making the feature's genuinely backward-facing member (the one
+that actually needs a mold action) visually indistinguishable from it.
+Separately, `ray_verified_clear` -- a real, positive geometric-clearance
+finding (D-061) -- was never painted on the model at all in the Undercuts
+tab / Core-Cavity "Undercuts" layer, only counted in the legend.
+
+**Backend** (`backend/api/main.py`): new `tangent_boundary_undercut` visual
+style (faint red, `rgb(230,140,140)`) -- a face reaches it instead of
+`proxy_undercut` when it is BOTH part of a reported feature (or the legacy
+`undercut_ids` union) AND itself in `zero_draft_ids`. `confirmed_ids`/
+`manual_review_ids` (real Boolean evidence) are untouched -- this only
+downgrades the WEAK-evidence branches. Verified live: Part1's 8 rosette
+pairs each split correctly (tangent member -> faint, backward-facing
+companion -> full `proxy_undercut`); Part3's `[35,37,38]` pair independently
+does the same thing through the identical unmodified rule (35/37/38 ->
+faint, their concave-linked companions 325/366 -> full) -- same rule, no
+special-casing, second confirmation it generalizes.
+
+**Frontend**: `geometry/overlayColors.ts` replaced the old binary
+`REAL_UNDERCUT_CATEGORIES` set with `undercutCategoryOverlayColorHex()`, a
+single per-category color lookup (bright red / faint red / teal / null) now
+shared by `useOverlaySync.ts`'s viewport painter (renamed
+`buildUndercutRedOverlay` -> `buildUndercutOverlay`, still used by both the
+Undercuts tab and Core/Cavity's "Undercuts" layer toggle) and
+`UndercutsPanel.tsx`'s legend swatches -- so `ray_verified_clear` is now a
+real teal color ON THE MODEL, not just a count, and the legend can never
+imply a viewport color that isn't actually on screen. `UndercutsPanel.tsx`'s
+legend gained an explicit three-item explanation of the industrial
+difference (bright red = needs a mold action; faint red = same feature's
+boundary ambiguity; teal = independently checked and cleared).
+`AnalysisSummaryPanel.tsx`'s Core/Cavity legend gained matching rows.
+
+**Tests:** updated `test_F_frontend_payload_has_distinct_ray_verified_clear_
+bucket`'s expectation (tangent member now asserts `tangent_boundary_
+undercut`, its companion `proxy_undercut`, replacing the prior pass's
+"both proxy_undercut" expectation). `pytest tests/test_undercut_detector*.py
+tests/test_api_boolean_regions.py` — 102/102. `npm run build` — 0 TS errors.
+`npm run test -- --run` — 140/140.
+
+### 2026-08-19 — Part1 diagnostic pass: direction-search parallelism verified live (6→8 workers, measured), undercut feature-grouping fix (concave-edge closure), regression report
+
+**Directive.** A full diagnose-before-fix pass on Part1 (STOP making speculative
+fixes): verify direction-search parallelism is actually active and measure it,
+diagnose the "7 missing undercut faces" question with real geometric evidence
+before touching code, find the actual root cause of any regression, validate
+Part1 +Z specifically, and prove Part3 (already working) is not destabilized.
+
+**1. Parallelism diagnostic (Priority 1).** Searched the full repo, including
+squashed git history, for `ProcessPoolExecutor`/`multiprocessing`/etc — zero
+hits. The actual mechanism (O22/O24, `direction_optimizer.py`) is different:
+each candidate direction's Boolean-refined undercut check runs in a fresh,
+single-use OS *subprocess* (`_run_isolated_undercut_detection`, `subprocess.run`
+of `undercut_isolation_worker.py` — deliberate O22 isolation from proven OCC
+process-lifetime degradation, NOT a performance mechanism), and
+`cfg.direction_parallelism` (config.yaml, default was 6) bounds how many of
+those subprocess calls run concurrently, dispatched via `threading.Thread`
+(threads block in `subprocess.run`, which releases the GIL, so this achieves
+real OS-level concurrency despite using `threading` rather than
+`multiprocessing`). **This is on the live production path** — confirmed by
+tracing `part_core_cavity` → `optimize_mold_direction` → the O24 batching loop
+directly, not assumed. Built a new instrumentation script,
+`backend/validation/direction_search_timing_diagnostic.py` (monkeypatches the
+two real call boundaries, `_run_isolated_undercut_detection` and
+`_cached_is_parting_line_feasible`, restores them after; never imported by the
+runtime pipeline), and ran it live against Part1.stp:
+
+| | before (parallelism=6) | after (parallelism=8) |
+|---|---|---|
+| Total wall time | 201.1s | 164.5s |
+| Candidates Boolean-refined | 18 / 18 (0 pruned by D-062's bound) | 18 / 18 |
+| Sum of individual candidate times (= serial-equivalent cost) | 885.6s | 1011.6s |
+| Realized speedup factor | 4.4x | 6.15x |
+| Winning direction | (0,0,-1), `verified_acceptable` | (0,0,-1), `verified_acceptable` (unchanged) |
+
+Raised `config.yaml`'s `direction_parallelism` 6→8 to match this machine's
+measured physical core count (`sysctl hw.physicalcpu` = 8) — a bounded,
+evidence-derived choice, not a blind return to a remembered "6 workers" or an
+arbitrary larger number. Real, measured ~18% wall-time improvement, zero
+change to search semantics (same candidates evaluated, same deterministic
+comparator, same winner). The remaining floor is each batch's SLOWEST single
+candidate (~61-65s observed worst case, O22's own prior measurement) plus
+~2.3-3.2s fresh-subprocess spawn/STEP-reload overhead per candidate — reducing
+that further needs profiling *why* specific directions cost that much, which
+is a separate, deeper investigation this pass deliberately did not attempt.
+
+**2/3. Undercut correctness + regression diagnostic (Priorities 2-3).**
+Investigated the claim that Part1 +Z previously matched a "Bosch expected"
+undercut result including faces 280/284/288/292/296/304/308. Searched all 39
+commits' full history and `docs/DECISIONS_AND_ALGORITHMS.md`/`CHANGELOG.md`:
+**found no trace of this exact face list, or any prior Part1-matching-Bosch
+result, anywhere in this repository's history.** Found something more
+important instead: `docs/DECISIONS_AND_ALGORITHMS.md` D-057 (2026-08-16,
+already committed, read-only investigation) directly rendered Part1.stp and
+visually compared it against the actual Bosch "Undercuts" reference image --
+**they are two different part designs** (4-fold-symmetric snap-fit cap with a
+closed top vs. two open-shell rectangular boxes with one slot/one blade each)
+-- and explicitly concludes no face-level Bosch mapping for Part1 is possible
+or honest. This finding predates and was not superseded by anything later in
+the repo.
+
+Independently of that provenance question, diagnosed the geometry directly
+(not guessed): each of the 7 (in fact 8, once the general rule was applied --
+see below) "missing" faces is the single direct topology neighbor of an
+already-flagged critical/proxy-undercut face, and **every one of the 8 shared
+edges is confirmed `concave`** (`part.get_face_edges`, checked individually
+per pair) -- concavity is the actual geometric signature of a notch/pocket
+(never a convex/tangent ordinary corner). The neighbor's own individual
+clearance (`ray_verified_clear`) is genuinely correct and untouched by this
+fix -- the gap was in feature GROUPING, not per-face evidence: `_group_
+undercut_faces_with_boolean_proximity`'s own input (`undercut_ids`) never
+included a face unless it independently qualified as undercut evidence, so a
+concave-linked-but-individually-clear neighbor could never join its flagged
+partner's feature no matter how adjacent.
+
+**7 (2026-08-19b, root-cause of an over-broad first attempt).** A first
+version of the closure (any face concave-adjacent to a flagged face joins its
+feature) was tested directly against Part1 and found to silently fuse Part1's
+4 independent cantilever legs (and separately two rim features) into giant
+merged features, through one shared central-boss face and one shared rim face
+that are each genuinely concave-adjacent to MULTIPLE different legs/features
+at once. Diagnosed before shipping (not discovered by a user report): a
+closure candidate concave-bordering faces from two or more different
+pre-existing feature groups is a structural connector BETWEEN distinct
+physical features, never part of just one -- added a guard
+(`_concave_neighbor_closure(part, undercut_ids, baseline_groups)` computes the
+UN-widened baseline grouping first, then only admits a closure candidate that
+touches exactly one baseline group) to `backend/geometry/undercut_detector.py`.
+Re-verified: Part1 +Z now reports 14 features (unchanged: the 6 leg/rim
+features from before, byte-identical) plus the 8 rosette faces now correctly
+paired with their true concave companions (`[252,280]` … `[276,308]` --
+discovered face 270's own previously-unexplained asymmetric neighbor pair
+[268,269] actually pairs with 298, found automatically by the general rule,
+not hand-picked). Verified on Part3 too: the SAME rule, unmodified, correctly
+(not spuriously) merges one additional genuine concave-adjacent pair
+(`[38,325,366]`, feasibility-relevant fields un-touched) -- proof the rule
+generalizes, not a Part1-specific patch. This function never touches
+`undercut_ids`/`is_undercut`/`undercut_area_mm2`/any per-face evidence
+classification -- it only widens what feature GROUPING considers, so a
+neighbor's own honestly-clear individual verdict is never overwritten.
+
+**4/5. Validation (Priorities 4-5).** Part1 +Z run directly (not the
+optimizer's own -Z winner): parting-line-v2 outcome=`feasible` (a real
+`selected` candidate, best-rejected-elsewhere gate=H4), core/cavity
+`solid_split_status=split_ok` (2 solids), draft 233 good/78 bad/0 marginal.
+The optimizer choosing -Z over +Z is not a bug -- +Z genuinely carries more
+undercut evidence (now correctly 14 features, area% higher) so a
+"minimize real undercuts" search legitimately prefers -Z; this pass did not
+and should not force +Z. Part3 re-verified at both `+Z` and `-X`: feature
+counts/classifications for its own already-correct 3 undercut faces are
+unaffected in composition, only the one genuine additional pairing above.
+
+**Regression test added** (not tied to Part1's face IDs):
+`tests/test_undercut_detector.py::TestConcaveNeighborFeatureClosure`, 3 cases
+on synthetic geometry -- concave edge merges neighbor into one feature; convex
+edge does not; a hub face concave-adjacent to two independently-flagged
+features is excluded from both (the exact failure mode caught above).
+
+**Verification:** `pytest tests/test_undercut_detector*.py` (98 pre-existing +
+3 new = 101/101), `pytest tests/test_direction_optimizer*.py` (104/104,
+non-real-part subset), full backend suite (`pytest tests/`) re-run for final
+confirmation. New file: `backend/validation/direction_search_timing_diagnostic.py`.
+
 ### 2026-08-19 — React frontend: fixed undercut faces silently invisible on the model (real backend classification bug), plus viewport lighting/selection/comparison fixes
 
 **The headline bug (backend, `backend/api/main.py::_undercut_mesh_visual_payload`).**

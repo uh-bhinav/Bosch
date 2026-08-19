@@ -12,12 +12,11 @@
  */
 
 import { runUndercutsOnly } from '../../../analysis/runIndividualAnalyses';
-import { REAL_UNDERCUT_CATEGORIES } from '../../../geometry/overlayColors';
+import { undercutCategoryOverlayColorHex } from '../../../geometry/overlayColors';
 import { useAnalysisStore } from '../../../store/analysisStore';
 import { Legend } from './Legend';
 import styles from './sharedPanel.module.css';
 
-const VIEWPORT_RED = 'rgb(255, 32, 32)';
 const VIEWPORT_UNCOLORED = 'rgb(124, 135, 148)';
 
 export function UndercutsPanel() {
@@ -116,19 +115,42 @@ export function UndercutsPanel() {
             <section className={styles.section}>
               <h4 className={styles.sectionTitle}>Legend</h4>
               <p className={styles.hint}>
-                The viewport shows every face with real undercut evidence in a single RED so nothing is missed at a
-                glance. The category breakdown below is the same backend evidence-source/severity detail, shown as
-                counts rather than repainting the model in ten shades -- so its swatches match what's actually on
-                screen HERE (red for evidence, grey for everything else), not the backend's own nuanced per-category
-                color (which you'll see instead on the Parting Line tab, where each category IS painted its own
-                shade).
+                Three colors do real work on the model here -- everything else (parting/silhouette, accessible, and
+                "zero-draft, no independent risk evidence") stays uncolored, shown only as a count below.
               </p>
+              <ul className={styles.hint} style={{ margin: '0 0 8px', paddingLeft: 18 }}>
+                <li>
+                  <strong style={{ color: undercutCategoryOverlayColorHex('proxy_undercut') ?? undefined }}>
+                    Bright red
+                  </strong>{' '}
+                  -- genuine undercut evidence: Boolean-confirmed at any severity, draft-proxy evidence, or
+                  Boolean-inconclusive-with-risk-evidence.
+                </li>
+                <li>
+                  <strong style={{ color: undercutCategoryOverlayColorHex('tangent_boundary_undercut') ?? undefined }}>
+                    Faint red
+                  </strong>{' '}
+                  -- the tangent/zero-draft BOUNDARY face of that same physical feature (its normal sits almost
+                  exactly perpendicular to the pull direction). Industrially, this is a parting-line ambiguity, not
+                  independently confirmed trapped material -- it's reported because it's part of the same pocket, not
+                  because it was itself proven to block the pull. Never painted as loudly as the feature's genuinely
+                  backward-facing member.
+                </li>
+                <li>
+                  <strong style={{ color: undercutCategoryOverlayColorHex('ray_verified_clear') ?? undefined }}>
+                    Teal
+                  </strong>{' '}
+                  -- ray-verified clear: an independent geometric clearance check (adaptive ray casting, not a
+                  Boolean operation) found no material blocking this face along its own natural mold-access
+                  direction.
+                </li>
+              </ul>
               <Legend
                 items={Object.entries(summary.legend)
                   .filter(([key]) => (summary.counts[key] ?? 0) > 0)
                   .sort((a, b) => b[1].priority - a[1].priority)
                   .map(([key, entry]) => ({
-                    color: REAL_UNDERCUT_CATEGORIES.has(key) ? VIEWPORT_RED : VIEWPORT_UNCOLORED,
+                    color: undercutCategoryOverlayColorHex(key) ?? VIEWPORT_UNCOLORED,
                     label: entry.label,
                     count: summary.counts[key] ?? 0,
                   }))}

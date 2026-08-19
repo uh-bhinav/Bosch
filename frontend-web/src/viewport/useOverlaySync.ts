@@ -23,7 +23,7 @@
 
 import { useEffect } from 'react';
 import * as THREE from 'three';
-import { buildFaceColorMap, REAL_UNDERCUT_CATEGORIES } from '../geometry/overlayColors';
+import { buildFaceColorMap, undercutCategoryOverlayColorHex } from '../geometry/overlayColors';
 import { useAnalysisStore, type CoreCavityLayers, type CoreCavityOverlayLayer } from '../store/analysisStore';
 import type { Vec3 } from '../domain/types';
 import { getViewportEngine } from './engineSingleton';
@@ -58,14 +58,34 @@ function buildFilteredColorMap(faceIds: number[] | undefined, rgb: unknown, colo
   return map.size > 0 ? map : null;
 }
 
-const UNDERCUT_RED = new THREE.Color('#ff2020');
+const undercutColorCache = new Map<string, THREE.Color>();
+function undercutColorFor(category: string): THREE.Color | null {
+  const hex = undercutCategoryOverlayColorHex(category);
+  if (!hex) return null;
+  let color = undercutColorCache.get(hex);
+  if (!color) {
+    color = new THREE.Color(hex);
+    undercutColorCache.set(hex, color);
+  }
+  return color;
+}
 
-function buildUndercutRedOverlay(faceIds: number[] | undefined, classifications: unknown): Map<number, THREE.Color> | null {
+/**
+ * F12 §9/§10/F16 (2026-08-19c): every face with real undercut evidence gets
+ * ONE of three distinct colors -- bright red (confirmed/proxy/manual-review),
+ * faint red (a feature's tangent/zero-draft boundary member -- real evidence,
+ * but a parting-line ambiguity, never as loud as the feature's genuinely
+ * backward-facing member), or teal (`ray_verified_clear`, a real positive
+ * clearance finding worth SEEING, not just counting) -- everything else
+ * (parting/accessible/zero-draft-inapplicable/neutral) stays uncolored.
+ */
+function buildUndercutOverlay(faceIds: number[] | undefined, classifications: unknown): Map<number, THREE.Color> | null {
   if (!faceIds || !Array.isArray(classifications) || classifications.length !== faceIds.length) return null;
   const map = new Map<number, THREE.Color>();
   faceIds.forEach((faceId, i) => {
     if (map.has(faceId)) return;
-    if (REAL_UNDERCUT_CATEGORIES.has(classifications[i] as string)) map.set(faceId, UNDERCUT_RED);
+    const color = undercutColorFor(classifications[i] as string);
+    if (color) map.set(faceId, color);
   });
   return map.size > 0 ? map : null;
 }
@@ -206,16 +226,15 @@ export function useOverlaySync(): void {
         engine.setOverlayColors(null);
       }
     } else if (activeTool === 'undercuts' && undercutsResult?.display_mesh) {
-      // F12 §9/§10: a single, unambiguous RED for every face with genuine
-      // undercut evidence, ALL shown simultaneously (never one-at-a-time) --
-      // the rich 10-category backend breakdown (severity/evidence-source)
-      // stays available as counts/text in the Undercuts panel and its own
-      // legend, this is just the headline viewport color. Clicking a face
-      // still only SELECTS it (accent highlight, ViewportEngine's existing
+      // F12 §9/§10/F16: every face with genuine undercut evidence, ALL shown
+      // simultaneously (never one-at-a-time) -- bright red for strong
+      // evidence, faint red for a feature's tangent/zero-draft boundary
+      // member, teal for ray_verified_clear. Clicking a face still only
+      // SELECTS it (accent highlight, ViewportEngine's existing
       // selection-wins-over-overlay precedence) -- it never removes any
       // other undercut face from view.
       engine.setOverlayColors(
-        buildUndercutRedOverlay(
+        buildUndercutOverlay(
           undercutsResult.display_mesh.face_ids,
           undercutsResult.display_mesh.undercut_classification,
         ),
@@ -241,7 +260,7 @@ export function useOverlaySync(): void {
       // undercut/core-pin/side-action layers from the SAME resolved
       // direction's OTHER already-fetched responses drawn on top, each its
       // own independently toggleable layer, each only touching the faces it
-      // actually applies to (buildFilteredColorMap/buildUndercutRedOverlay
+      // actually applies to (buildFilteredColorMap/buildUndercutOverlay
       // never overwrite an unrelated face with a neutral placeholder).
       const mesh = analysisResult.display_mesh;
       const topologicalSideByFaceId = coreCavityLayers.partingZone
@@ -263,7 +282,7 @@ export function useOverlaySync(): void {
           : null;
       const undercutLayer =
         coreCavityLayers.undercuts && undercutsResult?.display_mesh
-          ? buildUndercutRedOverlay(undercutsResult.display_mesh.face_ids, undercutsResult.display_mesh.undercut_classification)
+          ? buildUndercutOverlay(undercutsResult.display_mesh.face_ids, undercutsResult.display_mesh.undercut_classification)
           : null;
       // F14: when two of these three overlay layers both claim the SAME
       // face (e.g. a face is both a core-pin interface and undercut

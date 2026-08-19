@@ -18,23 +18,42 @@
 
 import * as THREE from 'three';
 
+/** Full-intensity red -- genuine undercut evidence (Boolean-confirmed at any severity, proxy, or Boolean-inconclusive-with-risk-evidence). */
+export const UNDERCUT_STRONG_HEX = '#ff2020';
+/** Faint/desaturated red -- the tangent/zero-draft BOUNDARY member of a confirmed feature (see backend's `tangent_boundary_undercut`): real evidence, but a parting-line ambiguity, not independently confirmed trapped material, so it must never read as loudly as the feature's genuinely backward-facing member. */
+export const UNDERCUT_BOUNDARY_HEX = '#612727'; //'#c96060'; 
+/** Distinct teal -- `ray_verified_clear`: a real, positive geometric-clearance finding (adaptive ray casting, D-061), never Boolean proof, but genuine "checked and found not blocked" evidence worth seeing on the model, not just a legend count. */
+export const RAY_VERIFIED_CLEAR_HEX = '#5fb894';
+
 /**
- * F12 §10 / F15: the undercut-classification style keys that carry genuine
- * undercut EVIDENCE (backend/api/main.py's `UNDERCUT_FACE_VISUAL_STYLES`) --
- * as opposed to "parting"/"accessible"/"zero_draft_not_applicable"/
- * "ray_verified_clear"/"neutral", which are real backend outcomes but never
- * undercut evidence itself. `useOverlaySync.ts`'s Undercuts-tab/Core-Cavity
- * overlays paint every one of these a single unambiguous red and leave
- * everything else uncolored (F12 §9); `UndercutsPanel.tsx`'s legend swatches
- * use the SAME set so the legend never implies a viewport color (e.g. the
- * backend's own pale-beige `proxy_undercut` RGB) that isn't actually what's
- * on screen in THIS tab -- one shared source of truth for both.
+ * F12 §10 / F15 / F16 (2026-08-19c): maps an undercut-classification style
+ * key (backend/api/main.py's `UNDERCUT_FACE_VISUAL_STYLES`) to the ONE color
+ * it actually paints in the Undercuts tab / Core-Cavity "Undercuts" layer --
+ * `null` for every category that stays uncolored there ("parting"/
+ * "accessible"/"zero_draft_not_applicable"/"neutral"). `useOverlaySync.ts`'s
+ * overlay builder and `UndercutsPanel.tsx`'s legend swatches both call this
+ * SAME function, so the legend can never imply a viewport color that isn't
+ * actually on screen in this tab.
  */
-export const REAL_UNDERCUT_CATEGORIES = new Set([
-  'critical_boolean_confirmed', 'high_boolean_confirmed', 'medium_boolean_confirmed',
-  'moderate_boolean_confirmed', 'low_boolean_confirmed', 'minor_boolean_confirmed',
-  'proxy_undercut', 'manual_review_undercut',
-]);
+export function undercutCategoryOverlayColorHex(category: string): string | null {
+  switch (category) {
+    case 'critical_boolean_confirmed':
+    case 'high_boolean_confirmed':
+    case 'medium_boolean_confirmed':
+    case 'moderate_boolean_confirmed':
+    case 'low_boolean_confirmed':
+    case 'minor_boolean_confirmed':
+    case 'proxy_undercut':
+    case 'manual_review_undercut':
+      return UNDERCUT_STRONG_HEX;
+    case 'tangent_boundary_undercut':
+      return UNDERCUT_BOUNDARY_HEX;
+    case 'ray_verified_clear':
+      return RAY_VERIFIED_CLEAR_HEX;
+    default:
+      return null;
+  }
+}
 
 export function buildFaceColorMap(
   faceIds: number[] | undefined,

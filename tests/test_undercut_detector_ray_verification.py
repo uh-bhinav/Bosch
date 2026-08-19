@@ -307,15 +307,21 @@ def test_F_frontend_payload_has_distinct_ray_verified_clear_bucket():
     itself stayed uniformly grey -- their faces were each their own
     single-face, `severity=minor..critical`, `evidence_source=proxy-only`
     feature that ALSO happened to be geometrically zero-draft, so the
-    zero-draft bucket silently outranked the feature report). These 8 exact
-    Part1 faces turn out to be the identical situation: each is its own
-    single-face `severity=minor`, `evidence_source=proxy-only` feature
-    (verified directly against `result.features`) that is ALSO zero-draft.
-    Reported-feature membership now wins over the passive zero-draft/
-    ray-verified-clear buckets precisely because it is the more specific,
-    already-user-visible verdict; painting these as `zero_draft_not_
-    applicable` again would silently contradict the SAME response's own
-    Undercuts panel, exactly the bug this fixes.
+    zero-draft bucket silently outranked the feature report). Fixed by
+    letting reported-feature membership win over the passive zero-draft/
+    ray-verified-clear buckets.
+
+    2026-08-19c: these 8 exact Part1 faces are each the TANGENT/zero-draft
+    boundary member of a 2-face feature (`_concave_neighbor_closure` merges
+    each with its genuinely backward-facing, concave-edge-linked neighbor --
+    298 for 270, matching the same pattern the user's own list already had
+    for the other 7). Painting the tangent member identically to its
+    backward-facing companion overstated its own evidence (a face merely
+    tangent to the pull is a parting-line boundary ambiguity, not
+    independently confirmed trapped material) -- it now gets the distinct
+    `tangent_boundary_undercut` style (a faint variant), while its
+    companion keeps the full-intensity `proxy_undercut` style, so the
+    feature's genuinely backward-facing member reads as the primary face.
     """
     from backend.geometry.step_loader import load_step as _load_step
     from backend.geometry.undercut_detector import detect_undercuts
@@ -345,9 +351,15 @@ def test_F_frontend_payload_has_distinct_ray_verified_clear_bucket():
         )
     for fid in result.ray_verified_clear_face_ids[:4]:
         assert face_id_to_class.get(fid) == "ray_verified_clear"
-    # Each of these 8 is verified below to be its own single-face,
-    # proxy-only, individually-reported feature -- see the docstring.
+    # Each of these 8 is verified below to be part of an individually-
+    # reported feature (paired with its concave-edge-linked companion) --
+    # see the docstring. The tangent/zero-draft member gets the faint
+    # variant; its genuinely backward-facing companion keeps full-intensity
+    # `proxy_undercut`.
     reported_face_ids = {fid for f in result.features for fid in f.face_ids}
-    for fid in (252, 255, 258, 262, 265, 270, 272, 276):
+    companions = {252: 280, 255: 284, 258: 288, 262: 292, 265: 296, 270: 298, 272: 304, 276: 308}
+    for fid, companion_fid in companions.items():
         assert fid in reported_face_ids, f"face {fid} was expected to be an individually-reported feature"
-        assert face_id_to_class.get(fid) == "proxy_undercut"
+        assert face_id_to_class.get(fid) == "tangent_boundary_undercut"
+        assert companion_fid in reported_face_ids, f"face {companion_fid} was expected in the same feature as {fid}"
+        assert face_id_to_class.get(companion_fid) == "proxy_undercut"

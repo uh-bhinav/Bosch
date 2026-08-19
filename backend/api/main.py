@@ -135,6 +135,14 @@ UNDERCUT_FACE_VISUAL_STYLES = {
         "rgb": _rgb_byte_triplet(255, 230, 150),
         "priority": 25,
     },
+    "tangent_boundary_undercut": {
+        "label": (
+            "Tangent/zero-draft boundary face of a confirmed undercut feature "
+            "(parting-line ambiguity, not independently confirmed trapped material)"
+        ),
+        "rgb": _rgb_byte_triplet(230, 140, 140),
+        "priority": 20,
+    },
     "manual_review_undercut": {
         "label": "Manual review / possible undercut (Boolean inconclusive, risk evidence present)",
         "rgb": _rgb_byte_triplet(255, 180, 60),
@@ -537,7 +545,18 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
             # own `evidence_source` is proxy-only or Boolean-inconclusive by
             # construction, or it would already have matched `confirmed_ids`/
             # `manual_review_ids` above).
-            style_key = "proxy_undercut"
+            #
+            # 2026-08-19b: a face merely tangent to the pull direction
+            # (zero-draft, `g approx 0`) sits AT the parting-line boundary --
+            # ambiguous by construction, not independently confirmed as
+            # trapped material -- distinct from a genuinely backward-facing
+            # companion face in the SAME feature (real signed_dot < 0,
+            # individually ray-verified but pulled in only because it shares
+            # the feature's concave crease, see `_concave_neighbor_closure`).
+            # Painting both identically pure-red overstated the tangent
+            # face's own evidence; it gets the faint variant instead so the
+            # feature's genuinely-backward member reads as the primary face.
+            style_key = "tangent_boundary_undercut" if face_id in zero_draft_ids else "proxy_undercut"
         elif face_id in zero_draft_ids:
             style_key = "zero_draft_not_applicable"
         elif face_id in ray_verified_clear_ids:
@@ -546,7 +565,7 @@ def _undercut_mesh_visual_payload(result: object, mesh: object) -> dict[str, lis
             # Remaining legacy-union members not covered above (e.g.
             # boolean_skipped_face_ids, or a not_applicable face that also
             # carries risk evidence -- rare, but not silently dropped).
-            style_key = "proxy_undercut"
+            style_key = "tangent_boundary_undercut" if face_id in zero_draft_ids else "proxy_undercut"
         elif face_id in parting_ids or face_id in accessible_ids:
             style_key = "parting" if face_id in parting_ids else "accessible"
         else:
@@ -1414,7 +1433,7 @@ def part_parting_line_v2(
             payload["parting_line_path"] = {
                 "label": "Parting Line (selected candidate)",
                 "points": [[round(c, 6) for c in p] for p in result.selected.points],
-                "hex": "#22c55e",
+                "hex": "#7ebef0", #"#22c55e"
                 "width": 6,
             }
 

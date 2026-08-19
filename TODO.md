@@ -13,23 +13,29 @@
 ## Before presenting to a panel
 
 - [ ] **Pull-direction search timing risk.** `optimize_mold_direction(Part1.stp)`
-      was measured at ~29.6 minutes in one real run (2026-08-16),
-      attributed to per-direction OCC Boolean-retry cost variance across
-      the 18 principal/diagonal directions D-048 always Boolean-refines —
-      not candidate-pool size (Part1 +Z's real pool is 68 faces against an
-      80 budget, zero truncation). A ~15s run was also observed once in a
-      "calm environment" before this rework, which points toward
-      environmental/OCC-retry variance rather than a structural
-      regression, but that is not proven. **This is the single largest
-      risk to a live, undelayed demo.** Either instrument per-direction
-      Boolean wall time to root-cause it, or pre-run the analysis on the
-      demo part(s) before presenting and rely on cached/known-good timing.
+      was measured at ~29.6 minutes in one real run (2026-08-16). 2026-08-19
+      instrumented pass (`backend/validation/direction_search_timing_diagnostic.py`,
+      live on Part1): confirmed O24's real subprocess-per-candidate
+      parallelism IS active on the production path and delivering a real
+      4.4-6.15x speedup (not the bottleneck) — raised
+      `config.yaml`'s `direction_parallelism` 6→8 (matches this machine's
+      physical core count), measured 201.1s→164.5s. The remaining floor is
+      each batch's single SLOWEST candidate (~61-65s observed) plus fresh-
+      subprocess spawn/reload overhead per candidate (~2.3-3.2s) — root-
+      causing WHY specific directions cost that much (not just confirming
+      parallelism works) is the next step, still not done. **Still the
+      single largest risk to a live, undelayed demo** given the 29.6-minute
+      outlier is unexplained by parallelism alone. Either instrument
+      per-direction Boolean wall time further, or pre-run the analysis on
+      the demo part(s) before presenting and rely on cached/known-good timing.
 - [ ] Part3 has not been live-timed for the same risk — only Part1 was
-      measured on 2026-08-16.
-- [ ] Part1's evidence-driven optimizer winner is a 45° diagonal
-      `(-0.707, 0, 0.707)`, not `+Z` — `evidence_tier=verified_acceptable`,
-      0% confirmed undercut, vs. `+Z`'s 4 Boolean-FAILED faces
-      (manual-review). This is a product decision, not a bug: does the
+      measured (2026-08-16 and 2026-08-19).
+- [ ] Part1's evidence-driven optimizer winner as of 2026-08-19 is `-Z`
+      `(0, 0, -1)`, `evidence_tier=verified_acceptable` (live-measured
+      during the same diagnostic pass) — this line previously said a 45°
+      diagonal was the winner; re-verify before relying on either claim,
+      since the undercut feature-grouping fix landed the same day and can
+      shift relative scoring. This is a product decision, not a bug: does the
       demo present the optimizer's genuine best-evidence answer, or is a
       principal-axis pull expected regardless? Decide before demoing so
       the presenter isn't surprised live.

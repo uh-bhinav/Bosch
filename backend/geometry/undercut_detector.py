@@ -2605,6 +2605,78 @@ def _group_undercut_faces_with_boolean_proximity(
     )
 
 
+def _concave_neighbor_closure(
+    part: PartGeometry,
+    face_ids: list[int],
+    baseline_groups: list[list[int]],
+) -> set[int]:
+    """
+    Discovered 2026-08-19 (Part1 +Z diagnostic pass, see CHANGELOG.md): a
+    face with genuine undercut evidence can share a CONCAVE edge with an
+    immediately adjacent face that, evaluated entirely on its own, clears
+    (e.g. `ray_verified_clear`) -- Part1's rim rosette is the concrete case:
+    each near-zero-draft "critical" face's one ~45deg-backward neighbor
+    passes its own ray-clearance check along ITS natural access direction
+    (`_face_access_direction`), yet the two faces share a concave crease --
+    the actual geometric signature of a notch/pocket (a convex or tangent
+    edge is an ordinary outward corner, never this). Individually-correct
+    per-face evidence for the neighbor is not in question and is left
+    completely untouched by this function (it never touches `undercut_ids`,
+    `is_undercut`, or any area/percentage total) -- this ONLY widens the
+    candidate pool handed to feature GROUPING, so the two faces can be
+    reported as the single physical feature they actually are, via the
+    EXISTING, unmodified adjacency-based grouping BFS in
+    `_group_undercut_faces_with_boolean_proximity`.
+
+    ``baseline_groups`` (the SAME grouping function's own output on the
+    UN-widened ``face_ids``, computed by the caller first) is the guard a
+    first version of this function (2026-08-19) was missing, and it is not
+    optional: Part1's 4 cantilever legs each independently satisfied the
+    "concave edge to an already-flagged face" test against the SAME central
+    stepped-boss face (a real, single face genuinely concave-bordering all
+    4 legs, per D-057's part description) -- a naive per-face closure
+    silently fused all 4 legs (and separately, two adjacent rim features)
+    into one giant feature through that shared hub face. A closure
+    candidate is only a genuine single-feature "completion" if it concave-
+    borders flagged faces from EXACTLY ONE pre-existing baseline group; one
+    that concave-borders two or more groups is a structural connector
+    BETWEEN distinct physical features (e.g. the boss, or a rim transition),
+    never part of just one of them, and must never be added -- doing so
+    would silently misrepresent N independent problems as one.
+
+    Deliberately narrow and NOT face-ID-specific: any face directly
+    (one-hop) adjacent to an already-flagged face via a concave shared edge
+    qualifies (subject to the single-group guard above), regardless of part
+    or location.
+    """
+    group_of: dict[int, int] = {}
+    for group_index, group in enumerate(baseline_groups):
+        for fid in group:
+            group_of[fid] = group_index
+
+    candidate_sources: dict[int, set[int]] = {}
+    flagged = set(face_ids)
+    for face_id in face_ids:
+        own_edges = {e.edge_id: e for e in part.get_face_edges(face_id)}
+        if not own_edges:
+            continue
+        for neighbor_id in part.face_adjacency.get(face_id, []):
+            if neighbor_id in flagged:
+                continue
+            neighbor_edge_ids = {e.edge_id for e in part.get_face_edges(neighbor_id)}
+            shared = set(own_edges) & neighbor_edge_ids
+            if not shared:
+                continue
+            if any(own_edges[eid].convexity == "concave" for eid in shared):
+                candidate_sources.setdefault(neighbor_id, set()).add(group_of.get(face_id, face_id))
+
+    return {
+        neighbor_id
+        for neighbor_id, source_groups in candidate_sources.items()
+        if len(source_groups) == 1
+    }
+
+
 def _face_access_direction(face: FaceData, pull_direction: Vec3) -> Vec3:
     """
     Choose which mold half should access this face.
@@ -4361,10 +4433,20 @@ def detect_undercuts(
     features: list[UndercutFeature] = []
     boolean_failed_set = set(boolean_failed)
     boolean_skipped_set = set(boolean_skipped)
-    grouping_result = _group_undercut_faces_with_boolean_proximity(
+    baseline_grouping = _group_undercut_faces_with_boolean_proximity(
         part=part,
         face_ids=undercut_ids,
         interference_by_face=interference_by_face,
+    )
+    concave_neighbor_closure = _concave_neighbor_closure(part, undercut_ids, baseline_grouping.groups)
+    grouping_result = (
+        _group_undercut_faces_with_boolean_proximity(
+            part=part,
+            face_ids=sorted(set(undercut_ids) | concave_neighbor_closure),
+            interference_by_face=interference_by_face,
+        )
+        if concave_neighbor_closure
+        else baseline_grouping
     )
     for feature_id, group in enumerate(grouping_result.groups):
         faces = [part.get_face(fid) for fid in group]
