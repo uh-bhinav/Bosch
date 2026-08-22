@@ -14,12 +14,12 @@
 # cadquery==2.4.0            ← install via conda: conda install -c cadquery cadquery
 
 # ── Visualization ─────────────────────────────────────────────────────────
-pyvista==0.44.1
-# VTK is installed by conda in the backend and pinned in Dockerfile.frontend.
+# ── Visualization ─────────────────────────────────────────────────────────
+
+pyvista==0.48.4
 streamlit==1.33.0
 stpyvista==0.0.11           # Streamlit + PyVista integration widget
 plotly==5.21.0
-
 
 
 # ── Data / API ─────────────────────────────────────────────────────────────
